@@ -145,7 +145,7 @@ jobs:
       - name: FastAPI 이미지 내부 모듈 검사
         run: |
           docker run --rm -e APP_ENV=test -e LLM_LIVE=false mitjip-api:ci \
-            python -c "from app.main import app; assert any(r.path == '/health/live' for r in app.routes)"
+            python -c "from app.main import app; assert '/health/live' in app.openapi()['paths']"
       - name: Next.js 운영 이미지 빌드
         run: docker build --target prod --tag mitjip-web:ci ./frontend
       - name: Next.js 컨테이너 HTTP 응답 검사
