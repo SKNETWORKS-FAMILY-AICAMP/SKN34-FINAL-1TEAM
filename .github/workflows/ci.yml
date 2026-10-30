@@ -1,17 +1,21 @@
 name: CI
 
-# PR과 main에 올라온 코드를 확인한다. 유료 API(LLM)는 부르지 않는다 (LLM_LIVE=false).
+# PR과 통합 브랜치에 올라온 코드를 확인한다. 유료 API(LLM)는 부르지 않는다 (LLM_LIVE=false).
 # - repository-checks: 저장소 공통 점검 (JSON 문법, 충돌 표시, 줄 끝 공백, .env 추적)
-# - backend: ruff, migration head가 하나인지, pytest(실제 PostgreSQL · Redis, migration up → down → up), API 명세 저장
+# - backend: ruff, migration head 단일 검증, pytest(실제 PostgreSQL · Redis), 스키마 차이 검사, API 명세 저장
 # - frontend: API 타입이 명세와 같은지, typecheck, lint, build
+# - containers: Compose 설정, 운영용 API · 웹 이미지 빌드, 컨테이너 실행 확인
 
 on:
   push:
     branches:
       - main
+      - integration
   pull_request:
     branches:
       - main
+      - integration
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -72,9 +76,15 @@ jobs:
         run: |
           heads=$(uv run alembic heads | wc -l)
           echo "heads: $heads"
-          test "$heads" -le 1
+          test "$heads" -eq 1
       - name: pytest
         run: uv run pytest -q
+      - name: DB 모델과 마이그레이션 일치 검사
+        env:
+          APP_ENV: test
+        run: |
+          export DATABASE_URL="postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${DB_HOST_PORT}/mitjip_test"
+          uv run alembic check
       # 서버를 띄우지 않고 앱에서 바로 뽑는다. 백그라운드 서버가 남으면 setup-uv의 캐시 정리가 잠금을 기다리다 실패한다
       - name: API 명세 저장 (프런트 타입 비교용)
         env:
@@ -115,3 +125,40 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
+
+  containers:
+    name: Containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Docker Compose 개발·운영 구성 검증
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f compose.yaml -f compose.override.yaml config --quiet
+      - name: FastAPI 운영 이미지 빌드
+        run: docker build --target prod --tag mitjip-api:ci ./backend
+      - name: FastAPI 이미지 내부 모듈 검사
+        run: |
+          docker run --rm -e APP_ENV=test -e LLM_LIVE=false mitjip-api:ci \
+            python -c "from app.main import app; assert any(r.path == '/health/live' for r in app.routes)"
+      - name: Next.js 운영 이미지 빌드
+        run: docker build --target prod --tag mitjip-web:ci ./frontend
+      - name: Next.js 컨테이너 HTTP 응답 검사
+        run: |
+          docker run -d --name ci-web --publish 127.0.0.1:38080:3000 mitjip-web:ci
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:38080/login > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ci-web
+          exit 1
+      - name: 테스트 컨테이너 정리
+        if: always()
+        run: docker rm --force ci-web 2>/dev/null || true
