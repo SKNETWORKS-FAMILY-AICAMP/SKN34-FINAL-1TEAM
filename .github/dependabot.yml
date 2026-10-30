@@ -5,3 +5,29 @@ updates:
     schedule:
       interval: weekly
       timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+
+  # pnpm은 Dependabot의 npm 생태계로 관리한다.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
