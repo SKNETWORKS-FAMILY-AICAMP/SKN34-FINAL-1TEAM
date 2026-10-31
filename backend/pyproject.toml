@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pillow>=13.0.0",
     "pillow-heif>=1.8.1",
+    "boto3>=1.42,<2",
 ]
 
 [dependency-groups]

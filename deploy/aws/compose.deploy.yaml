@@ -1,0 +1,80 @@
+# RDS와 S3를 쓰는 AWS 운영 구성. 로컬 compose.yaml과 섞어 실행하지 않는다.
+name: mitjip-staging
+
+services:
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env.runtime
+    restart: "no"
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    restart: unless-stopped
+    env_file: .env.runtime
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5)"]
+      interval: 10s
+      timeout: 7s
+      retries: 18
+      start_period: 20s
+
+  worker:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    command: ["arq", "app.worker.WorkerSettings"]
+    restart: unless-stopped
+    env_file: .env.runtime
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 6s
+      retries: 15
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DEPLOY_HOSTNAME: ${DEPLOY_HOSTNAME:?DEPLOY_HOSTNAME is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  caddy-data:
+  caddy-config:
