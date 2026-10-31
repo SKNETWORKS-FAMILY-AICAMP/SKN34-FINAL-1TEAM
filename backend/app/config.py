@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     session_days: int = 14
     # 올린 파일을 두는 폴더. 운영에서 객체 저장소로 바꾸면 files/storage.py만 고친다
     files_dir: str = "./data/files"
+    # 스테이징/운영에서만 사용. 비어 있으면 기존 로컬 디스크 저장소 유지
+    files_s3_bucket: str = ""
 
     @property
     def is_https(self) -> bool:

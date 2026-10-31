@@ -1,0 +1,136 @@
+name: Deploy staging
+
+# main의 기존 CI가 성공한 뒤에만 ECR 이미지 발행 및 SSM 배포를 수행한다.
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      rollback:
+        description: "이전 정상 이미지 버전으로 되돌리기 (DB 마이그레이션은 되돌리지 않음)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: mitjip-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Deploy staging
+    if: >-
+      github.repository == 'SKNETWORKS-FAMILY-AICAMP/SKN34-FINAL-1TEAM' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      AWS_REGION: ap-northeast-2
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ROLLBACK: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback && 'true' || 'false' }}
+    steps:
+      - name: Fetch approved source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Authenticate to AWS using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.MITJIP_AWS_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read CloudFormation outputs
+        id: stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          get_output() {
+            aws cloudformation describe-stacks --stack-name mitjip-staging \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue | [0]" --output text
+          }
+          echo "api_repo=$(get_output ApiRepositoryUri)" >> "$GITHUB_OUTPUT"
+          echo "web_repo=$(get_output WebRepositoryUri)" >> "$GITHUB_OUTPUT"
+          echo "instance=$(get_output InstanceId)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to private ECR
+        if: env.ROLLBACK != 'true'
+        uses: aws-actions/amazon-ecr-login@v2.1.7
+
+      - name: Build and publish exact commit images
+        if: env.ROLLBACK != 'true'
+        shell: bash
+        env:
+          API_REPO: ${{ steps.stack.outputs.api_repo }}
+          WEB_REPO: ${{ steps.stack.outputs.web_repo }}
+        run: |
+          set -euo pipefail
+          for service in api web; do
+            if [[ "$service" == api ]]; then
+              repo="$API_REPO"
+              context=./backend
+              repository_name=mitjip-staging-api
+            else
+              repo="$WEB_REPO"
+              context=./frontend
+              repository_name=mitjip-staging-web
+            fi
+            # ECR 태그는 불변. 같은 커밋의 수동 재배포 시 중복 push하지 않는다.
+            if aws ecr describe-images --repository-name "$repository_name" \
+              --image-ids "imageTag=$DEPLOY_SHA" >/dev/null 2>&1; then
+              echo "Already published: $service $DEPLOY_SHA"
+            else
+              docker build --target prod --tag "$repo:$DEPLOY_SHA" "$context"
+              docker push "$repo:$DEPLOY_SHA"
+            fi
+          done
+
+      - name: Deploy by SSM and verify health
+        shell: bash
+        env:
+          INSTANCE_ID: ${{ steps.stack.outputs.instance }}
+        run: |
+          set -euo pipefail
+          if [[ "$ROLLBACK" == true ]]; then
+            remote_args="--rollback"
+          else
+            remote_args="$DEPLOY_SHA"
+          fi
+          remote="set -e; curl -fsSL --retry 3 https://raw.githubusercontent.com/SKNETWORKS-FAMILY-AICAMP/SKN34-FINAL-1TEAM/$DEPLOY_SHA/deploy/aws/deploy.sh -o /opt/mitjip/deploy.sh; chmod 700 /opt/mitjip/deploy.sh; /bin/bash /opt/mitjip/deploy.sh $remote_args"
+          jq -n --arg cmd "$remote" \
+            '{commands:[$cmd],executionTimeout:["1800"]}' > /tmp/mitjip-ssm.json
+          command_id=$(aws ssm send-command --document-name AWS-RunShellScript \
+            --instance-ids "$INSTANCE_ID" --parameters file:///tmp/mitjip-ssm.json \
+            --comment "mitjip deploy $DEPLOY_SHA" \
+            --query 'Command.CommandId' --output text)
+          echo "SSM command: $command_id"
+          for n in $(seq 1 150); do
+            status=$(aws ssm get-command-invocation --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in
+              Success)
+                aws ssm get-command-invocation --command-id "$command_id" \
+                  --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation --command-id "$command_id" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query '{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}' --output json
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Deployment exceeded SSM polling timeout"
+          exit 1
