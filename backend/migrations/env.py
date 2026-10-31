@@ -26,8 +26,9 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
-# 접속 주소는 alembic.ini가 아니라 환경변수(DATABASE_URL)에서 읽는다
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# 접속 주소는 alembic.ini가 아니라 환경변수(DATABASE_URL)에서 읽는다.
+# RDS 비밀번호의 URL 인코딩(%xx)을 ConfigParser가 보간하지 않도록 %를 이스케이프한다.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
