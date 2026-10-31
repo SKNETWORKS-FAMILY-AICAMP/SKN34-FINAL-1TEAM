@@ -13,6 +13,7 @@ from app.shared.ids import uuid7
 def _root() -> Path:
     return Path(settings.files_dir).resolve()
 
+
 def _s3():
     return boto3.client("s3")
 
