@@ -6,7 +6,7 @@ import { AccountMenu } from "./AccountMenu";
 import { Bell } from "./Bell";
 import { MobileMenu } from "./MobileMenu";
 import { NavLinks } from "./NavLinks";
-import { LOGO_HREF, LOGO_TAG, accountLabel, type HeaderKind } from "./nav";
+import { LOGO_HREF, LOGO_TAG, accountLabel, vendorLock, type HeaderKind } from "./nav";
 import s from "./header.module.css";
 
 function LogoMark() {
@@ -24,13 +24,15 @@ export function HeaderBar({ session, admin = false, unread = 0, pending = false 
   const kind: HeaderKind = admin ? "admin" : session ? session.role : "guest";
   const tag = LOGO_TAG[kind];
   const account = session && kind !== "guest" ? { label: accountLabel({ name: session.name, role: kind }), role: kind } : null;
+  // 승인 전 업체: 작업함 · 일정 잠금 (심사 중 · 보완 요청 · 거절)
+  const lock = kind === "vendor" ? vendorLock(session?.vendorStatus) : null;
   return (
     <header className={s.header}>
       <div className={`mj-wrap ${s.in}`}>
         <Link href={LOGO_HREF[kind]} className={s.logo}><LogoMark />믿집{tag ? <small>{tag}</small> : null}</Link>
         {pending ? null : (
           <>
-            <nav aria-label="주 메뉴" className={s.nav}><NavLinks kind={kind} /></nav>
+            <nav aria-label="주 메뉴" className={s.nav}><NavLinks kind={kind} lock={lock} /></nav>
             <div className={s.who}>
               {kind === "customer" || kind === "vendor" ? <Bell unread={unread} /> : null}
               {account ? (
@@ -41,7 +43,7 @@ export function HeaderBar({ session, admin = false, unread = 0, pending = false 
                   <Link href="/signup" className="mj-btn mj-btn-sec mj-btn-sm">가입</Link>
                 </div>
               )}
-              <MobileMenu kind={kind} account={account} />
+              <MobileMenu kind={kind} account={account} lock={lock} />
             </div>
           </>
         )}

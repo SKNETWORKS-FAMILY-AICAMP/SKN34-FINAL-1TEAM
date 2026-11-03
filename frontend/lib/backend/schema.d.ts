@@ -289,7 +289,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 업체 회원가입 · 기본 정보 + 사업자등록증, 승인대기로 시작 */
+        /** 업체 가입 신청 · 신청서 + 사업자등록증, 심사 중으로 시작 */
         post: operations["vendor_signup_auth_vendor_signup_post"];
         delete?: never;
         options?: never;
@@ -304,8 +304,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 업체관리 · 상태별 목록 */
+        /** 업체 심사 목록 · 기다림 · 보완 요청 · 처리함, 상호 · 사업자번호로 찾기 */
         get: operations["list_vendors_admin_vendors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/vendors/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 업체 심사 칸별 수 */
+        get: operations["vendor_summary_admin_vendors_summary_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -321,7 +338,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 업체 상세 */
+        /** 업체 심사 자세히 · 처리 기록 */
         get: operations["get_vendor_admin_vendors__vendor_id__get"];
         put?: never;
         post?: never;
@@ -331,7 +348,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/vendors/{vendor_id}/approve": {
+    "/admin/vendors/{vendor_id}/review": {
         parameters: {
             query?: never;
             header?: never;
@@ -340,15 +357,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 업체 가입 승인 */
-        post: operations["approve_admin_vendors__vendor_id__approve_post"];
+        /** 업체 심사 결정 저장 · 승인 · 보완 요청 · 거절 (심사 중일 때만, 먼저 정했으면 409) */
+        post: operations["review_vendor_admin_vendors__vendor_id__review_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/admin/vendors/{vendor_id}/reject": {
+    "/vendor/application": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 내 가입 심사 (승인 전에도) · 낸 내용 · 최근 결정 · 열린 칸 */
+        get: operations["my_application_vendor_application_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/application/resubmit": {
         parameters: {
             query?: never;
             header?: never;
@@ -357,8 +391,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 업체 가입 반려 */
-        post: operations["reject_admin_vendors__vendor_id__reject_post"];
+        /** 보완해서 다시 보내기 (보완 요청 → 심사 중, 열린 칸만) */
+        post: operations["resubmit_vendor_application_resubmit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/application/reapply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 거절 뒤 다시 신청 (같은 계정 · 같은 사업자등록번호) */
+        post: operations["reapply_vendor_application_reapply_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -417,6 +468,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vendor/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 가견적 단가 · 근거 파일 (고치는 중 · 확인한 묶음, 고객에게 보이는 모습 예) */
+        get: operations["prices_vendor_prices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/prices/{trade}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 가견적 단가 저장 (고치는 중인 묶음, 확인 전에는 고객에게 안 씀) */
+        put: operations["save_prices_vendor_prices__trade__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/prices/{trade}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 가견적 단가 확인했어요 (고치는 중 → 고객 가견적에 씀, 예전 묶음은 보관) */
+        post: operations["confirm_prices_vendor_prices__trade__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/price-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 가견적 근거 파일 붙이기 (먼저 POST /files kind=price_doc) */
+        post: operations["add_price_file_vendor_price_files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/price-files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 가견적 근거 파일 빼기 */
+        delete: operations["remove_price_file_vendor_price_files__file_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -461,6 +597,41 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ApplicationOut
+         * @description 업체 홈의 가입 심사 칸 (승인 전에도 본인만)
+         */
+        ApplicationOut: {
+            /** Status */
+            status: string;
+            /**
+             * Applied At
+             * @description 마지막으로 낸 때
+             */
+            applied_at: string | null;
+            /** Approved At */
+            approved_at: string | null;
+            /** Biz Name */
+            biz_name: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Biz No */
+            biz_no: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Trades */
+            trades: string[];
+            /** Areas */
+            areas: components["schemas"]["AreaOut"][];
+            license: components["schemas"]["LicenseOut"] | null;
+            /** @description 최근 관리자 결정 */
+            decision: components["schemas"]["DecisionOut"] | null;
+            /**
+             * Open Fields
+             * @description 보완 요청일 때 열리는 칸
+             */
+            open_fields: components["schemas"]["OpenFieldOut"][];
+        };
         /** AreaIn */
         AreaIn: {
             /** Sido */
@@ -486,20 +657,50 @@ export interface components {
         };
         /** Body_vendor_signup_auth_vendor_signup_post */
         Body_vendor_signup_auth_vendor_signup_post: {
-            /**
-             * Name
-             * @description 담당자 이름
-             */
-            name: string;
             /** Email */
             email: string;
             /** Password */
             password: string;
             /**
+             * Biz Name
+             * @description 상호
+             */
+            biz_name: string;
+            /**
+             * Owner Name
+             * @description 대표자 이름
+             */
+            owner_name: string;
+            /**
+             * Biz No
+             * @description 사업자등록번호 10자리
+             */
+            biz_no: string;
+            /**
+             * Phone
+             * @description 휴대폰
+             */
+            phone: string;
+            /**
+             * Trades
+             * @description 하는 공정 (dobae · mokgong, 여러 번)
+             */
+            trades: string[];
+            /**
+             * Areas
+             * @description 활동 지역 'seoul/노원구' (여러 번)
+             */
+            areas: string[];
+            /**
              * License File
              * @description 사업자등록증 (jpg · png · pdf)
              */
             license_file: string;
+            /**
+             * Name
+             * @description 담당자 이름 (비우면 대표자)
+             */
+            name?: string | null;
         };
         /** BudgetOut */
         BudgetOut: {
@@ -512,6 +713,20 @@ export interface components {
             status: "within" | "over" | "open";
             /** Over By */
             over_by: number | null;
+        };
+        /** DecisionOut */
+        DecisionOut: {
+            /** Action */
+            action: string;
+            /** Code */
+            code: string | null;
+            /** Note */
+            note: string | null;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
         };
         /** DobaeIn */
         DobaeIn: {
@@ -529,6 +744,68 @@ export interface components {
             spaces: string[];
             /** Grade */
             grade: ("economy" | "basic") | null;
+        };
+        /** EstimateLineOut */
+        EstimateLineOut: {
+            /**
+             * Key
+             * @description 표준견적서 줄 키
+             */
+            key: string;
+            /**
+             * Price Key
+             * @description 업체 단가 키 (도배지는 paper_basic · paper_economy)
+             */
+            price_key: string;
+            /** Name */
+            name: string;
+            /** Unit */
+            unit: string;
+            /** Qty */
+            qty: string;
+            /**
+             * Unit Price
+             * @description 다른 줄에 포함이면 비어 있다
+             */
+            unit_price: number | null;
+            /** Included In */
+            included_in: string | null;
+            /**
+             * Included In Name
+             * @description 포함한 줄 이름 (도배지 (실크))
+             */
+            included_in_name: string | null;
+            /** Amount */
+            amount: number;
+            /**
+             * Source
+             * @description 근거 파일 이름
+             */
+            source: string | null;
+        };
+        /**
+         * EstimateOut
+         * @description 가견적 (믿집 계산): 업체 단가 × 표준견적서 수량. 금액은 원, 부가세는 따로.
+         */
+        EstimateOut: {
+            /** Lines */
+            lines: components["schemas"]["EstimateLineOut"][];
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /** Total */
+            total: number;
+            /**
+             * Missing
+             * @description 업체 단가가 없어 뺀 표준 행 키
+             */
+            missing: string[];
+            /**
+             * Left Out
+             * @description 업체 단가를 받지 않는 줄이라 뺀 키 (짐 있는 집 할증)
+             */
+            left_out: string[];
         };
         /** FaqIn */
         FaqIn: {
@@ -561,6 +838,25 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** LicenseOut */
+        LicenseOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size */
+            size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** LinkIn */
         LinkIn: {
             /** Label */
@@ -592,6 +888,10 @@ export interface components {
             role: string;
             /** Vendor Status */
             vendor_status?: string | null;
+            /** Vendor Review Code */
+            vendor_review_code?: string | null;
+            /** Vendor Review Note */
+            vendor_review_note?: string | null;
             /** Vendor Reject Reason */
             vendor_reject_reason?: string | null;
         };
@@ -648,6 +948,16 @@ export interface components {
             items: components["schemas"]["NotificationOut"][];
             /** Unread */
             unread: number;
+        };
+        /** OpenFieldOut */
+        OpenFieldOut: {
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "biz_name" | "owner_name" | "license_file_id";
+            /** Required */
+            required: boolean;
         };
         /** PhotoIn */
         PhotoIn: {
@@ -821,6 +1131,125 @@ export interface components {
              * Format: uuid
              */
             file_id: string;
+        };
+        /**
+         * PriceFileIn
+         * @description 가견적 근거 파일 붙이기. 파일은 먼저 POST /files (kind=price_doc)로 올린다.
+         */
+        PriceFileIn: {
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /**
+             * Trade
+             * @enum {string}
+             */
+            trade: "dobae" | "mokgong";
+        };
+        /** PriceFileOut */
+        PriceFileOut: {
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Trade */
+            trade: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size */
+            size: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * PriceLineIn
+         * @description 표준 행 단가 한 줄: unit_price(원, 부가세 빼고) 또는 included_in(같은 묶음의 다른 줄 키)
+         */
+        PriceLineIn: {
+            /** Key */
+            key: string;
+            /** Unit Price */
+            unit_price?: number | null;
+            /** Included In */
+            included_in?: string | null;
+            /**
+             * Source File Id
+             * @description 근거 파일 (선택)
+             */
+            source_file_id?: string | null;
+        };
+        /** PriceLineOut */
+        PriceLineOut: {
+            /** Key */
+            key: string;
+            /** Unit Price */
+            unit_price: number | null;
+            /** Included In */
+            included_in: string | null;
+            /** Source File Id */
+            source_file_id: string | null;
+        };
+        /** PriceRowOut */
+        PriceRowOut: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Unit */
+            unit: string;
+        };
+        /**
+         * PriceSetIn
+         * @description 고치는 중인 단가 묶음(draft) 통째로 저장. 확인하기 전에는 고객에게 쓰지 않는다.
+         */
+        PriceSetIn: {
+            /** Lines */
+            lines?: components["schemas"]["PriceLineIn"][];
+        };
+        /** PriceSetOut */
+        PriceSetOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Version */
+            version: number;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Confirmed At */
+            confirmed_at: string | null;
+            /** Lines */
+            lines: components["schemas"]["PriceLineOut"][];
+            /** @description 고객에게 보이는 모습 · 32평 아파트(빈 집) 예 */
+            example: components["schemas"]["EstimateOut"];
+        };
+        /**
+         * PricesOut
+         * @description 업체 정보 '03 가견적에 쓸 견적서': 단가를 넣는 표준 행 · 근거 파일 · 고치는 중 · 확인한 묶음
+         */
+        PricesOut: {
+            /** Trade */
+            trade: string;
+            /** Rows */
+            rows: components["schemas"]["PriceRowOut"][];
+            /** Files */
+            files: components["schemas"]["PriceFileOut"][];
+            draft: components["schemas"]["PriceSetOut"] | null;
+            confirmed: components["schemas"]["PriceSetOut"] | null;
         };
         /**
          * ProfileIn
@@ -1057,10 +1486,106 @@ export interface components {
              */
             created_at: string;
         };
-        /** RejectIn */
-        RejectIn: {
-            /** Reason */
-            reason: string;
+        /**
+         * ReapplyIn
+         * @description 거절된 업체가 같은 계정 · 같은 사업자등록번호로 다시 신청. 새 등록증은 먼저 POST /files (kind=license).
+         */
+        ReapplyIn: {
+            /**
+             * Biz Name
+             * @description 상호
+             */
+            biz_name: string;
+            /**
+             * Owner Name
+             * @description 대표자 이름
+             */
+            owner_name: string;
+            /**
+             * Phone
+             * @description 휴대폰 (승인 뒤 실측을 요청한 고객에게 보인다)
+             */
+            phone: string;
+            /** Trades */
+            trades: ("dobae" | "mokgong")[];
+            /** Areas */
+            areas: components["schemas"]["AreaIn"][];
+            /** License File Id */
+            license_file_id?: string | null;
+        };
+        /**
+         * ResubmitIn
+         * @description 보완 요청에 다시 보내기. 관리자가 고른 사유에 맞게 열린 칸만 받는다(열리지 않은 칸은 422).
+         */
+        ResubmitIn: {
+            /** Biz Name */
+            biz_name?: string | null;
+            /** Owner Name */
+            owner_name?: string | null;
+            /** License File Id */
+            license_file_id?: string | null;
+        };
+        /**
+         * ReviewIn
+         * @description 관리자 결정 저장: 승인 · 보완 요청 · 거절. 직접 쓰기(other)면 업체에 보낼 말이 꼭 있어야 한다.
+         */
+        ReviewIn: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "needs_info" | "reject";
+            /** Code */
+            code?: string | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Opened On
+             * @description 등록증에서 읽은 개업일 (선택)
+             */
+            opened_on?: string | null;
+        };
+        /**
+         * ReviewOut
+         * @description 처리 기록 한 줄
+         */
+        ReviewOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Action */
+            action: string;
+            /** Code */
+            code: string | null;
+            /** Note */
+            note: string | null;
+            /**
+             * Changes
+             * @description 다시 낼 때 바뀐 칸의 전 값
+             */
+            changes: {
+                [key: string]: unknown;
+            } | null;
+            /** By Id */
+            by_id: string | null;
+            /** By Name */
+            by_name: string | null;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+        };
+        /** ReviewSummaryOut */
+        ReviewSummaryOut: {
+            /** Pending */
+            pending: number;
+            /** Needs Info */
+            needs_info: number;
+            /** Done */
+            done: number;
         };
         /**
          * SignupIn
@@ -1221,11 +1746,8 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
-        /**
-         * VendorAdminOut
-         * @description 관리자 업체관리 · 가입 승인 화면용. 업체 정보 칸은 승인 뒤 채워진다.
-         */
-        VendorAdminOut: {
+        /** VendorAdminDetailOut */
+        VendorAdminDetailOut: {
             /**
              * User Id
              * Format: uuid
@@ -1235,15 +1757,12 @@ export interface components {
             name: string;
             /** Email */
             email: string;
-            /**
-             * License File Id
-             * Format: uuid
-             */
-            license_file_id: string;
             /** Status */
             status: string;
-            /** Reject Reason */
-            reject_reason: string | null;
+            /** Review Code */
+            review_code: string | null;
+            /** Review Note */
+            review_note: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1251,6 +1770,32 @@ export interface components {
             created_at: string;
             /** Reviewed At */
             reviewed_at: string | null;
+            /** Approved At */
+            approved_at: string | null;
+            /** Opened On */
+            opened_on: string | null;
+            /**
+             * Submitted At
+             * @description 마지막으로 낸 때 (가입 · 보완 · 다시 신청)
+             */
+            submitted_at: string | null;
+            /**
+             * Waiting Days
+             * @description 낸 뒤 지난 날 수 (서울 날짜, 0 = 오늘)
+             */
+            waiting_days: number | null;
+            /**
+             * Resubmitted
+             * @description 보완 · 다시 신청으로 다시 낸 신청인지
+             */
+            resubmitted: boolean;
+            /**
+             * Changes
+             * @description 다시 낸 신청이면 바뀐 칸의 전 값
+             */
+            changes: {
+                [key: string]: unknown;
+            } | null;
             /** Biz Name */
             biz_name: string | null;
             /** Owner Name */
@@ -1266,9 +1811,98 @@ export interface components {
             /** Trades */
             trades: string[];
             /** Areas */
-            areas: components["schemas"]["AreaIn"][];
+            areas: components["schemas"]["AreaOut"][];
             /** Intro */
             intro: string;
+            /**
+             * License File Id
+             * Format: uuid
+             */
+            license_file_id: string;
+            license: components["schemas"]["LicenseOut"] | null;
+            /**
+             * Reviews
+             * @description 처리 기록 (최근 순)
+             */
+            reviews: components["schemas"]["ReviewOut"][];
+        };
+        /**
+         * VendorAdminOut
+         * @description 관리자 업체 심사 목록 · 자세히
+         */
+        VendorAdminOut: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
+            /** Status */
+            status: string;
+            /** Review Code */
+            review_code: string | null;
+            /** Review Note */
+            review_note: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Reviewed At */
+            reviewed_at: string | null;
+            /** Approved At */
+            approved_at: string | null;
+            /** Opened On */
+            opened_on: string | null;
+            /**
+             * Submitted At
+             * @description 마지막으로 낸 때 (가입 · 보완 · 다시 신청)
+             */
+            submitted_at: string | null;
+            /**
+             * Waiting Days
+             * @description 낸 뒤 지난 날 수 (서울 날짜, 0 = 오늘)
+             */
+            waiting_days: number | null;
+            /**
+             * Resubmitted
+             * @description 보완 · 다시 신청으로 다시 낸 신청인지
+             */
+            resubmitted: boolean;
+            /**
+             * Changes
+             * @description 다시 낸 신청이면 바뀐 칸의 전 값
+             */
+            changes: {
+                [key: string]: unknown;
+            } | null;
+            /** Biz Name */
+            biz_name: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Biz No */
+            biz_no: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Address */
+            address: string | null;
+            /** Site Url */
+            site_url: string | null;
+            /** Trades */
+            trades: string[];
+            /** Areas */
+            areas: components["schemas"]["AreaOut"][];
+            /** Intro */
+            intro: string;
+            /**
+             * License File Id
+             * Format: uuid
+             */
+            license_file_id: string;
+            license: components["schemas"]["LicenseOut"] | null;
         };
         /** WhenIn */
         WhenIn: {
@@ -1902,7 +2536,8 @@ export interface operations {
     list_vendors_admin_vendors_get: {
         parameters: {
             query?: {
-                status?: ("pending" | "approved" | "rejected") | null;
+                status?: ("pending" | "needs_info" | "done") | null;
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -1930,6 +2565,26 @@ export interface operations {
             };
         };
     };
+    vendor_summary_admin_vendors_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewSummaryOut"];
+                };
+            };
+        };
+    };
     get_vendor_admin_vendors__vendor_id__get: {
         parameters: {
             query?: never;
@@ -1947,7 +2602,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["VendorAdminOut"];
+                    "application/json": components["schemas"]["VendorAdminDetailOut"];
                 };
             };
             /** @description Validation Error */
@@ -1961,38 +2616,7 @@ export interface operations {
             };
         };
     };
-    approve_admin_vendors__vendor_id__approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                vendor_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VendorAdminOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_admin_vendors__vendor_id__reject_post: {
+    review_vendor_admin_vendors__vendor_id__review_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -2003,7 +2627,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RejectIn"];
+                "application/json": components["schemas"]["ReviewIn"];
             };
         };
         responses: {
@@ -2013,7 +2637,93 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["VendorAdminOut"];
+                    "application/json": components["schemas"]["VendorAdminDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_application_vendor_application_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationOut"];
+                };
+            };
+        };
+    };
+    resubmit_vendor_application_resubmit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResubmitIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reapply_vendor_application_reapply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReapplyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationOut"];
                 };
             };
             /** @description Validation Error */
@@ -2119,6 +2829,165 @@ export interface operations {
             header?: never;
             path: {
                 item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prices_vendor_prices_get: {
+        parameters: {
+            query: {
+                trade: "dobae" | "mokgong";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_prices_vendor_prices__trade__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trade: "dobae" | "mokgong";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceSetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_prices_vendor_prices__trade__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trade: "dobae" | "mokgong";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_price_file_vendor_price_files_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceFileIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceFileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_price_file_vendor_price_files__file_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                file_id: string;
             };
             cookie?: never;
         };

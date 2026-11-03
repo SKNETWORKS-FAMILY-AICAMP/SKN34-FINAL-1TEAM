@@ -10,6 +10,10 @@
 .nav a { display: inline-flex; align-items: center; min-height: 62px; color: var(--ink); text-decoration: none; border-bottom: 3px solid transparent; }
 .nav a:hover { color: var(--accent-ink); }
 .nav a[aria-current="page"] { border-bottom-color: var(--accent); font-weight: 700; color: var(--accent-ink); }
+/* 승인 전 업체: 잠근 메뉴(누를 수 없음) + 잠금 문구 */
+.nav a.locked { gap: 6px; color: var(--ink-mute); cursor: not-allowed; }
+.nav a.locked:hover { color: var(--ink-mute); }
+.lockMsg { display: inline-flex; align-items: center; min-height: 62px; font-size: var(--fs-sm); color: var(--ink-sub); }
 
 .who { display: flex; align-items: center; gap: 8px 16px; margin-left: auto; font-size: var(--fs-sm); }
 .wide { display: flex; align-items: center; gap: 8px; }
@@ -31,6 +35,9 @@ a.bell { position: relative; width: 44px; min-height: 44px; padding: 0; }
 li:first-child > .mrow { border-top: 0; }
 .mrow:hover { background: var(--surface); color: var(--ink); }
 .mrow[aria-current="page"] { color: var(--accent-ink); font-weight: 700; }
+.mrow.mlocked { gap: 8px; color: var(--ink-mute); cursor: not-allowed; }
+.mrow.mlocked:hover { background: none; color: var(--ink-mute); }
+.mnote { padding: 4px 16px 12px; font-size: var(--fs-sm); color: var(--ink-sub); }
 
 /* 폰 너비: 로고 + 알림 + '메뉴' 버튼. 펼치면 머리 아래 전체 폭 목록 */
 .mbox { display: contents; }

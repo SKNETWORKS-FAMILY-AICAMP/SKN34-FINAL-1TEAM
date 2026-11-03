@@ -4,11 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { Role } from "@/lib/types";
-import { ACCOUNT, NAV, isCurrent, type HeaderKind } from "./nav";
+import { ACCOUNT, NAV, VENDOR_LOCKED, isCurrent, type HeaderKind } from "./nav";
+import { LockMark } from "./NavLinks";
 import { logout } from "./logout";
 import s from "./header.module.css";
 
-export function MobileMenu({ kind, account }: { kind: HeaderKind; account: { label: string; role: Role } | null }) {
+export function MobileMenu({ kind, account, lock }: { kind: HeaderKind; account: { label: string; role: Role } | null; lock?: string | null }) {
   const router = useRouter();
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -34,9 +35,16 @@ export function MobileMenu({ kind, account }: { kind: HeaderKind; account: { lab
         <nav aria-label="주 메뉴">
           <ul>
             {nav.map((l) => (
-              <li key={l.id}><Link className={s.mrow} href={l.href} aria-current={isCurrent(l, path) ? "page" : undefined} onClick={close}>{l.label}</Link></li>
+              <li key={l.id}>
+                {lock && VENDOR_LOCKED.includes(l.id) ? (
+                  <a className={`${s.mrow} ${s.mlocked}`} role="link" aria-disabled="true" aria-describedby="mnav-lock"><LockMark />{l.label}</a>
+                ) : (
+                  <Link className={s.mrow} href={l.href} aria-current={isCurrent(l, path) ? "page" : undefined} onClick={close}>{l.label}</Link>
+                )}
+              </li>
             ))}
           </ul>
+          {lock ? <p id="mnav-lock" className={s.mnote}>{lock}</p> : null}
         </nav>
         {account ? (
           <>

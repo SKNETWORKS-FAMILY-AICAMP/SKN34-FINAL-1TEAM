@@ -40,6 +40,14 @@ export const ACCOUNT: Record<Role, NavItem[]> = {
   admin: [],
 };
 
+// 승인 전 업체는 작업함 · 일정을 잠근다(업체 정보는 연다). 시안 WVHome 머리
+export const VENDOR_LOCKED = ["inbox", "jobs"];
+/** 승인 전 업체의 잠금 문구. 승인됐으면 null */
+export function vendorLock(status: string | null | undefined): string | null {
+  if (status === "approved") return null;
+  return status === "rejected" ? "다시 신청해서 승인되면 열려요" : "심사 중이라 승인 뒤 열려요";
+}
+
 export const LOGO_HREF: Record<HeaderKind, string> = { guest: "/", customer: "/", vendor: "/vendor", admin: "/admin/vendors" };
 export const LOGO_TAG: Partial<Record<HeaderKind, string>> = { vendor: "업체", admin: "관리자" };
 

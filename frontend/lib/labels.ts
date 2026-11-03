@@ -61,3 +61,57 @@ export function projectTitle(region: string, trades: string[]) {
   const t = ["dobae", "mokgong"].filter((k) => trades.includes(k)).map(tradeLabel);
   return [region, ...t].join(" · ");
 }
+
+// ── 업체 가입 심사 (backend/app/vendor/models.py NEEDS_INFO_CODES · REJECT_CODES, service.py OPEN_FIELDS)
+
+export type Reason = { key: string; label: string };
+/** 보완 요청 사유. other(직접 쓰기)면 업체에 보낼 말이 꼭 있어야 한다 */
+export const NEEDS_INFO_REASONS: Reason[] = [
+  { key: "blurry", label: "사진이 흐려서 글자가 안 보여요" },
+  { key: "name_mismatch", label: "상호가 신청서와 달라요" },
+  { key: "owner_mismatch", label: "대표자가 신청서와 달라요" },
+  { key: "other", label: "직접 쓰기" },
+];
+export const REJECT_REASONS: Reason[] = [
+  { key: "wrong_business", label: "업종이 인테리어 공사와 맞지 않아요" },
+  { key: "closed", label: "휴업 · 폐업 상태예요" },
+  { key: "other", label: "직접 쓰기" },
+];
+/** 사유 화면 말. 직접 쓰기(other)는 사유 줄 없이 보낼 말만 보여서 null */
+export function reasonLabel(action: string, code: string | null | undefined): string | null {
+  if (!code || code === "other") return null;
+  const list = action === "reject" || action === "rejected" ? REJECT_REASONS : NEEDS_INFO_REASONS;
+  return list.find((r) => r.key === code)?.label ?? null;
+}
+/** 보완 요청 사유마다 업체 홈 첫 줄 */
+export function needsInfoTitle(code: string | null | undefined): string {
+  return code === "name_mismatch" ? "상호를 등록증과 같게 고쳐 주세요" : code === "owner_mismatch" ? "대표자를 등록증과 같게 고쳐 주세요" : "사업자등록증을 다시 올려 주세요";
+}
+/** 보완 요청 사유마다 업체에게 열리는 칸 (화면 안내용. 실제로 여는 것은 서버) */
+export function needsInfoOpenText(code: string | null | undefined): string {
+  return code === "name_mismatch" ? "상호 · 사업자등록증 파일" : code === "owner_mismatch" ? "대표자 이름 · 사업자등록증 파일" : "사업자등록증 파일";
+}
+export const VENDOR_STATUS_LABEL: Record<string, string> = { pending: "심사 기다림", needs_info: "보완 요청", approved: "승인", rejected: "거절" };
+/** 처리 기록 '한 일' */
+export const REVIEW_ACTION_LABEL: Record<string, string> = {
+  apply: "업체가 가입 신청", resubmit: "업체가 보완해서 다시 보냄", reapply: "업체가 다시 신청",
+  approve: "승인", needs_info: "보완 요청", reject: "거절",
+};
+/** 다시 낸 신청의 바뀐 칸 (service.py changes 키) */
+const CHANGED_LABEL: Record<string, string> = { biz_name: "상호", owner_name: "대표자", phone: "휴대폰", trades: "공정", areas: "활동 지역", file: "사업자등록증" };
+export function changedText(changes: Record<string, unknown> | null | undefined): string {
+  const ks = Object.keys(CHANGED_LABEL).filter((k) => changes && k in changes);
+  return ks.length ? ks.map((k) => CHANGED_LABEL[k]).join(" · ") : "없음";
+}
+/** "2148603518" → "214-86-03518" (화면 표시만) */
+export function bizNoText(v: string | null | undefined): string {
+  const d = (v ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}` : v ?? "";
+}
+/** "01061428830" → "010-6142-8830" (화면 표시만) */
+export function phoneText(v: string | null | undefined): string {
+  const d = (v ?? "").replace(/\D/g, "");
+  if (d.length === 11) return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+  return v ?? "";
+}
