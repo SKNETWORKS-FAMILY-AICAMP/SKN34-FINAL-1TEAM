@@ -133,7 +133,10 @@ export function ContactCard({ v, projectId, trade, titled, requestText, allHref,
       {v.status === "quoted" ? (
         <Link className={`mj-btn mj-btn-pri ${c.cmp}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>비교하기<span className="mj-sr">, {v.vendor_name} 실측 견적서</span></Link>
       ) : v.status === "chosen" ? (
-        <Link className={`mj-lnk ${c.sm}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>확정한 견적서 보기<span className="mj-sr">, {v.vendor_name}</span></Link>
+        <div className={c.acts}>
+          <Link className={`mj-lnk ${c.sm}`} href={`/projects/${projectId}/schedule?trade=${trade}`}>공사 날짜 보기<span className="mj-sr">, {v.vendor_name}</span></Link>
+          <Link className={`mj-lnk ${c.sm}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>확정한 견적서 보기<span className="mj-sr">, {v.vendor_name}</span></Link>
+        </div>
       ) : null}
       {open ? <Open v={v} requestText={requestText} /> : isLive(v.status) ? <p className="mj-small">연락처를 보일 수 있는 때가 지났어요.</p> : <Shut v={v} pickHref={pickHref} locked={locked} />}
       <div className={c.foot}>

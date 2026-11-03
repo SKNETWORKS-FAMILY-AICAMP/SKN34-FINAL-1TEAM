@@ -1,6 +1,6 @@
 // 업체 한 곳의 실측 견적서 열 (시안 WCompare .qc). 보낸 최신 버전의 파일 · 낼 금액 · 칸, 다시 올렸으면 바뀐 칸과 이전 버전.
 // 견적서를 기다리는 업체는 '견적서 기다림' 열. 숫자는 모두 API 값이고, 공급가 · 부가세는 견적서 합계 칸에서만 나눠 보인다.
-// 업체가 비워 둔 칸(공사 기간 · 유효기간 · 실측한 날)은 보이지 않는다. 확정 전 견적서 옴이면 '이 업체로 확정하기'(확정 화면)를 둔다.
+// 업체가 비워 둔 칸(공사 기간 · 유효기간 · 실측한 날)은 보이지 않는다. 확정 전 견적서 옴이면 '이 업체로 확정하기'(확정 화면), 확정한 업체는 '공사 날짜 보기'를 둔다.
 import Link from "next/link";
 import { Check } from "@/components/vendors/icons";
 import { eunNeun } from "@/components/vendors/text";
@@ -110,6 +110,7 @@ export function QuoteCard({ r, projectId, trade, tradeName, confirmHref }: Props
       ) : null}
 
       {r.status === "chosen" ? <p className={`mj-st mj-st-ok ${s.chosen}`}><Check />{eunNeun(tradeName)} {euro(name)} 확정했어요</p> : null}
+      {r.status === "chosen" ? <Link className={`mj-lnk ${s.dates}`} href={`/projects/${projectId}/schedule?trade=${trade}`}>공사 날짜 보기<span className="mj-sr"> · {name}</span></Link> : null}
       {confirmHref ? <Link className={`mj-btn mj-btn-sec ${s.go}`} href={confirmHref}>이 업체로 확정하기<span className="mj-sr"> · {name}</span></Link> : null}
     </li>
   );

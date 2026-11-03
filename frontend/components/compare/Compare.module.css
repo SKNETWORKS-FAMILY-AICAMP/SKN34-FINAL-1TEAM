@@ -42,3 +42,5 @@
 .chosen { margin-top: auto; font-size: var(--fs-md); white-space: normal; }
 /* 이 업체로 확정하기: 카드 아래에 붙인다 */
 .go { align-self: flex-start; margin-top: auto; }
+/* 확정한 업체: 공사 날짜 화면으로 */
+.dates { align-self: flex-start; }
