@@ -382,6 +382,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 공사 날짜: 공정마다 낸 날짜 · 다른 날짜 요청 · 겹침 · 요청 후보 */
+        get: operations["schedule_projects__project_id__schedule_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/deals/{deal_id}/dates/{proposal_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 낸 공사 날짜 수락 (겹치면 409, 그사이 다시 냈으면 409 dates_changed) */
+        post: operations["accept_dates_projects__project_id__deals__deal_id__dates__proposal_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/deals/{deal_id}/date-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 다른 공사 날짜 요청 (2번까지, 업체는 다음 날 18:00까지 다시 낸다) */
+        post: operations["request_dates_projects__project_id__deals__deal_id__date_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/jobs/{deal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 공사 날짜 내기 화면 (내 공사만) */
+        get: operations["job_vendor_jobs__deal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/jobs/{deal_id}/dates/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 낼 날짜 미리 계산: 일하는 날 · 그 인원의 필요한 기간 · 겹침 (저장하지 않음) */
+        get: operations["preview_dates_vendor_jobs__deal_id__dates_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/jobs/{deal_id}/dates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 공사 날짜 내기 · 다시 내기 (고객이 수락하기 전까지) */
+        post: operations["propose_dates_vendor_jobs__deal_id__dates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/vendor-signup": {
         parameters: {
             query?: never;
@@ -1196,6 +1298,83 @@ export interface components {
             address: string | null;
         };
         /**
+         * DateRequestIn
+         * @description 고객의 다른 날짜 요청 (2번까지)
+         */
+        DateRequestIn: {
+            /** Wish Dates */
+            wish_dates: string[];
+            /** Reason */
+            reason?: string | null;
+        };
+        /** DateRequestOut */
+        DateRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Wish Dates
+             * @description 시작해도 되는 날
+             */
+            wish_dates: string[];
+            /** Reason */
+            reason: string | null;
+            /**
+             * Due At
+             * Format: date-time
+             * @description 업체가 새 날짜를 낼 기한 (요청 다음 날 18:00)
+             */
+            due_at: string;
+            /** Overdue */
+            overdue: boolean;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * DatesIn
+         * @description 업체가 공사 날짜 내기 (수락 전에는 다시 낼 수 있다)
+         */
+        DatesIn: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /**
+             * Crew
+             * @description 하루 작업 인원
+             */
+            crew: number;
+            /**
+             * Method
+             * @description 믿집에서 내기 · 고객과 통화로 정함
+             * @enum {string}
+             */
+            method: "app" | "call";
+            /**
+             * Call On
+             * @description 통화로 정했으면 통화한 날 (필수)
+             */
+            call_on?: string | null;
+            /**
+             * Request Id
+             * @description 화면이 본 열린 요청 (그사이 바뀌었으면 409)
+             */
+            request_id?: string | null;
+        };
+        /**
          * DealOut
          * @description 업체 확정 한 건 (고객 쪽)
          */
@@ -1238,7 +1417,7 @@ export interface components {
             dates_due_at: string;
             /**
              * Overdue
-             * @description 기한이 지났는데 아직 날짜를 안 냄 (상태로 저장하지 않음)
+             * @description 기한 지남: 날짜를 아직 안 냈거나 다른 날짜 요청에 답하지 않음 (상태가 아님)
              */
             overdue: boolean;
             /** Start Date */
@@ -1440,10 +1619,41 @@ export interface components {
             /** Size */
             size: number;
         };
+        /**
+         * FitOut
+         * @description 날짜가 다른 공정과 겹치는지 · 겹치지 않는 자리
+         */
+        FitOut: {
+            /**
+             * Conflicts
+             * @description 겹치는 다른 공정 (있으면 수락할 수 없다)
+             */
+            conflicts: components["schemas"]["OtherTradeOut"][];
+            /**
+             * Start From
+             * @description 앞 공정이 끝난 다음 일하는 날
+             */
+            start_from: string | null;
+            /**
+             * End By
+             * @description 뒤 공정 시작 전 마지막 일하는 날
+             */
+            end_by: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HolidayOut */
+        HolidayOut: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Name */
+            name: string;
         };
         /** InboxPageOut */
         InboxPageOut: {
@@ -1526,6 +1736,31 @@ export interface components {
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
+            /** Dates State */
+            dates_state?: ("waiting" | "proposed" | "requested" | "scheduled" | "closed") | null;
+            /**
+             * Proposed Start
+             * @description 수락 기다리는 날짜
+             */
+            proposed_start?: string | null;
+            /** Proposed End */
+            proposed_end?: string | null;
+            /**
+             * Proposed Days
+             * @description 날짜를 낸 뒤 지난 날 (공사 탭)
+             */
+            proposed_days?: number | null;
+            /**
+             * Wish Dates
+             * @description 다른 날짜 요청: 고객이 고른 시작일
+             * @default []
+             */
+            wish_dates: string[];
+            /**
+             * Request Due At
+             * @description 다른 날짜 요청에 답할 기한
+             */
+            request_due_at?: string | null;
         };
         /** InboxSummaryOut */
         InboxSummaryOut: {
@@ -1542,6 +1777,73 @@ export interface components {
             jobs: number;
             /** @description 최근 30일: 받은 요청 · 보낸 견적서 · 확정 */
             recent: components["schemas"]["RecentOut"];
+        };
+        /**
+         * JobOut
+         * @description 업체 공사 날짜 내기 화면
+         */
+        JobOut: {
+            /**
+             * Deal Id
+             * Format: uuid
+             */
+            deal_id: string;
+            /** Trade */
+            trade: string;
+            /** Status */
+            status: string;
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /**
+             * Dates Due At
+             * Format: date-time
+             */
+            dates_due_at: string;
+            /** Overdue */
+            overdue: boolean;
+            /**
+             * Start Date
+             * @description 수락한 공사 날짜
+             */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
+            /** @description 집 · 고객 (연락처는 공개 규칙대로) */
+            visit: components["schemas"]["VendorVisitDetailOut"];
+            /** @description 확정한 견적서 버전 */
+            quote: components["schemas"]["QuoteBriefOut"];
+            /**
+             * Plan Version
+             * @description 지금 예상 공정표 버전
+             */
+            plan_version: number;
+            /**
+             * Plan Start
+             * @description 예상 공정표의 이 공정 시작일
+             */
+            plan_start: string | null;
+            /** Plan End */
+            plan_end: string | null;
+            /** @description 믿집 가정 인원으로 센 필요한 기간 */
+            need: components["schemas"]["NeedOut"];
+            /** Others */
+            others: components["schemas"]["OtherTradeOut"][];
+            /** Weekend Work */
+            weekend_work: boolean;
+            /** Holidays */
+            holidays: components["schemas"]["HolidayOut"][];
+            /**
+             * Dates State
+             * @enum {string}
+             */
+            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "closed";
+            proposal: components["schemas"]["ProposalOut"] | null;
+            request: components["schemas"]["DateRequestOut"] | null;
+            /** Requests Left */
+            requests_left: number;
         };
         /** LicenseOut */
         LicenseOut: {
@@ -1624,6 +1926,20 @@ export interface components {
             /** Items */
             items: ("molding" | "base" | "door" | "flatten")[];
         };
+        /**
+         * NeedOut
+         * @description 하루 인원으로 센 필요한 기간: 품 ÷ 인원을 반나절로 올리고 준비 · 마감을 더해 하루로 올림
+         */
+        NeedOut: {
+            /** Man Day */
+            man_day: string;
+            /** Crew */
+            crew: number;
+            /** Days */
+            days: number;
+            /** Steps */
+            steps: components["schemas"]["StepNeedOut"][];
+        };
         /** NotificationOut */
         NotificationOut: {
             /**
@@ -1663,6 +1979,26 @@ export interface components {
             field: "biz_name" | "owner_name" | "license_file_id";
             /** Required */
             required: boolean;
+        };
+        /**
+         * OtherTradeOut
+         * @description 이 집 다른 공정의 확정 날짜 (겹침 확인용)
+         */
+        OtherTradeOut: {
+            /** Trade */
+            trade: string;
+            /** Vendor Name */
+            vendor_name: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
         };
         /** PhotoIn */
         PhotoIn: {
@@ -1836,6 +2172,21 @@ export interface components {
              * Format: uuid
              */
             file_id: string;
+        };
+        /**
+         * PreviewOut
+         * @description 낼 날짜 미리 계산: 일하는 날 · 필요한 기간 · 겹침
+         */
+        PreviewOut: {
+            /** Workdays */
+            workdays: number;
+            need: components["schemas"]["NeedOut"];
+            /**
+             * Short
+             * @description 일하는 날이 필요한 기간보다 적음 (막지 않고 알린다)
+             */
+            short: boolean;
+            fit: components["schemas"]["FitOut"];
         };
         /**
          * PriceFileIn
@@ -2192,6 +2543,67 @@ export interface components {
             created_at: string;
         };
         /**
+         * ProposalOut
+         * @description 업체가 낸 공사 날짜
+         */
+        ProposalOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /**
+             * Workdays
+             * @description 낸 날짜 안의 일하는 날 (믿집 계산)
+             */
+            workdays: number;
+            /** Crew */
+            crew: number;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "app" | "call";
+            /**
+             * Call On
+             * @description 통화로 정했으면 통화한 날
+             */
+            call_on: string | null;
+            /** Kind */
+            kind: string;
+            /** Reason */
+            reason: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Request Id
+             * @description 답한 다른 날짜 요청
+             */
+            request_id: string | null;
+            /**
+             * Changed
+             * @description 앞서 낸 날짜를 바꿔 다시 냈는지 ('날짜가 바뀌었어요')
+             */
+            changed: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
+        };
+        /**
          * PublicProfileOut
          * @description 고객이 보는 업체 자세히. '업체가 적음' 칸(실내건축 · 보험)이 비면 '확인 안 됨'으로 보인다.
          */
@@ -2524,6 +2936,29 @@ export interface components {
             /** Done */
             done: number;
         };
+        /** ScheduleOut */
+        ScheduleOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Weekend Work
+             * @description 주말에도 공사 (아니면 토 · 일은 쉬는 날)
+             */
+            weekend_work: boolean;
+            /**
+             * Holidays
+             * @description 오늘부터 180일 안의 공휴일
+             */
+            holidays: components["schemas"]["HolidayOut"][];
+            /**
+             * Trades
+             * @description 목공 → 도배 순, 확정한 공정만
+             */
+            trades: components["schemas"]["TradeDatesOut"][];
+        };
         /**
          * SignupIn
          * @description 일반 회원가입
@@ -2659,6 +3094,55 @@ export interface components {
             crew: number;
             /** Notes */
             notes: string[];
+        };
+        /** StartOptionOut */
+        StartOptionOut: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description 같은 일하는 날 수로 끝나는 날 (믿집 계산)
+             */
+            end: string;
+        };
+        /** StepNeedOut */
+        StepNeedOut: {
+            /** Name */
+            name: string;
+            /** Half Days */
+            half_days: number;
+        };
+        /**
+         * TradeDatesOut
+         * @description 한 공정의 공사 날짜 (고객 쪽)
+         */
+        TradeDatesOut: {
+            deal: components["schemas"]["DealOut"];
+            /**
+             * Dates State
+             * @enum {string}
+             */
+            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "closed";
+            /** @description 수락 기다리는 날짜 */
+            proposal: components["schemas"]["ProposalOut"] | null;
+            /** @description 열린 다른 날짜 요청 */
+            request: components["schemas"]["DateRequestOut"] | null;
+            /**
+             * Requests Left
+             * @description 다른 날짜 요청 남은 수 (2번까지)
+             */
+            requests_left: number;
+            /** @description 수락 기다리는 날짜가 다른 공정과 맞는지 */
+            fit: components["schemas"]["FitOut"] | null;
+            /**
+             * Start Options
+             * @description 다른 날짜 요청 후보: 겹치지 않는 첫날부터, 같은 기간으로 끝나는 날
+             */
+            start_options: components["schemas"]["StartOptionOut"][];
         };
         /** TradesIn */
         TradesIn: {
@@ -4028,6 +4512,207 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InboxSummaryOut"];
+                };
+            };
+        };
+    };
+    schedule_projects__project_id__schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_dates_projects__project_id__deals__deal_id__dates__proposal_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_dates_projects__project_id__deals__deal_id__date_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DateRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_vendor_jobs__deal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_dates_vendor_jobs__deal_id__dates_preview_get: {
+        parameters: {
+            query: {
+                start: string;
+                end: string;
+                crew: number;
+            };
+            header?: never;
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_dates_vendor_jobs__deal_id__dates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
