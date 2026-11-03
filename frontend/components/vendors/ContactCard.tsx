@@ -110,6 +110,9 @@ export function ContactCard({ v, projectId, trade, titled, requestText, allHref 
         <VisitState status={v.status} />
         {titled ? null : <span className="mj-small mj-num">{when(v.created_at)}</span>}
       </div>
+      {v.status === "quoted" ? (
+        <Link className={`mj-btn mj-btn-pri ${c.cmp}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>비교하기<span className="mj-sr">, {v.vendor_name} 실측 견적서</span></Link>
+      ) : null}
       {open ? <Open v={v} requestText={requestText} /> : isLive(v.status) ? <p className="mj-small">연락처를 보일 수 있는 때가 지났어요.</p> : <Shut v={v} pickHref={pickHref} />}
       <div className={c.foot}>
         {allHref ? <Link className={`mj-lnk ${c.sm}`} href={allHref}>요청한 업체 모두 보기</Link> : <span className="mj-small mj-num">{when(v.created_at)} 요청</span>}

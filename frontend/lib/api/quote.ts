@@ -16,6 +16,12 @@ export async function getMyQuoteBoard(visitId: string) {
   return isUuid(visitId) ? serverGet<VendorQuoteBoard>(`/vendor/visits/${visitId}/quote`) : null;
 }
 
+export type QuoteCompare = Schemas["CompareOut"];
+/** 고객: 한 공정의 실측 견적서 비교(표준견적서 · 업체마다 최신 버전 · 이전 버전). 남의 공사 · 고르지 않은 공정이면 null */
+export async function getQuoteCompare(projectId: string, trade: "dobae" | "mokgong") {
+  return isUuid(projectId) ? serverGet<QuoteCompare>(`/projects/${projectId}/quotes?trade=${trade}`) : null;
+}
+
 // 아래는 예시 프로젝트(p1) 화면이 쓰는 예시 데이터
 
 export async function getStandardQuote(_projectId: string) { return { ...FX.standard, createdAt: "2026-10-20" }; }

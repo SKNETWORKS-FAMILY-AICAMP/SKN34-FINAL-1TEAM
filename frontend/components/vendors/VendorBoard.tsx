@@ -137,6 +137,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                       <div className={s.state}>
                         <VisitState status={vis.status} />
                         {vis.status === "requested" ? <Link className={`mj-lnk ${s.sm}`} href={`${base}/visits?trade=${trade}`}>연락처 보기<span className="mj-sr">, {name}</span></Link> : null}
+                        {vis.status === "quoted" ? <Link className={`mj-lnk ${s.sm}`} href={`${base}/quotes?trade=${trade}`}>비교하기<span className="mj-sr">, {name} 실측 견적서</span></Link> : null}
                       </div>
                     ) : (
                       <>

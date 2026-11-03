@@ -1,6 +1,6 @@
 // 작업함 (시안 WVInbox): 탭(할 일 · 기다림 · 공사 · 끝남) + 고른 탭의 표 + 오른쪽 카드 3개.
 // 탭은 주소(?tab=)로 바꾼다. 수는 GET /vendor/visits/summary, 줄은 GET /vendor/visits?tab=.
-// 공사 탭은 업체 확정이 생기는 뒤에 채운다(지금은 늘 0). 할 일에서 본 요청은 '견적서 올리기'로 실측 견적서 화면에 간다(기다림의 '보낸 견적서 보기'는 아직 없다).
+// 공사 탭은 업체 확정이 생기는 뒤에 채운다(지금은 늘 0). 할 일에서 본 요청은 '견적서 올리기', 기다림은 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
 import Link from "next/link";
 import type { InboxPage, InboxSummary } from "@/lib/api/visit";
 import type { VendorPrices, VendorProfile } from "@/lib/api/vendor";
@@ -63,7 +63,12 @@ function WaitRow({ v }: { v: Row }) {
       <td className="r mj-num">{pyeongText(v.pyeong)}</td>
       <td><span className="mj-st mj-st-off"><Dash />실측 견적서 보냄</span><br /><span className="mj-small">고객 결정 기다림</span></td>
       <td className="r mj-num">{v.waiting_days ? `${v.waiting_days}일째` : "오늘"}</td>
-      <td className="r"><Link className={`mj-lnk ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link></td>
+      <td className="r">
+        <div className={s.acts}>
+          <Link className={`mj-btn mj-btn-sec mj-btn-sm ${s.go}`} href={`/vendor/requests/${v.id}/quote`} aria-label={`${whoOf(v)} 보낸 견적서 보기`}>보낸 견적서 보기</Link>
+          <Link className={`mj-lnk ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link>
+        </div>
+      </td>
     </tr>
   );
 }

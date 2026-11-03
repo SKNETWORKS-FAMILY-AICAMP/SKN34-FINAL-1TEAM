@@ -72,6 +72,16 @@
 .sum dt { flex: none; color: var(--ink-sub); }
 .sum dd { margin: 0; min-width: 0; text-align: right; }
 
+/* 다시 올리기: 고치는 중 안내 · 보낸 버전 목록 */
+.reHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
+.reHead > p { flex: 1 1 320px; }
+.vers { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.verList { list-style: none; margin: 0; padding: 0; }
+.verList li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; padding-block: 10px; border-bottom: 1px solid var(--line-soft); }
+.verNo { flex: 0 0 64px; }
+.verWhen { flex: 1 1 140px; }
+.verAmt { flex: 1 1 160px; font-weight: 700; }
+
 /* '견적서를 보낼까요?' 확인 창 */
 .dlg { width: min(560px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 28px 24px 24px; border: 0; border-radius: var(--radius-l); background: var(--bg); color: var(--ink); box-shadow: var(--shadow-pop); overflow-y: auto; overscroll-behavior: contain; }
 .dlg[open] { display: flex; flex-direction: column; gap: 16px; }

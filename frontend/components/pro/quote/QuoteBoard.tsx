@@ -1,7 +1,8 @@
 "use client";
 // 실측 견적서 올리기 (시안 WVQuote). 견적서 파일(필수 · 여러 개 · 순서) + 요약 칸 → 임시 저장(PUT, 통째) → 보내기(POST .../send).
 // 칸을 고치면 잠깐 쉬었다가(600ms) 임시 저장하고, '고객에게는 ○○원으로 보여요'는 저장 응답의 total(계산 엔진)만 보인다.
-// 보낸 뒤에는 보낸 버전만 읽기로 보인다(다시 올리기는 18번). 요청이 닫혔으면 쓰기를 막고 서버 문장을 보인다.
+// 보낸 뒤에는 보낸 버전을 읽기로 보이고, 견적서 옴이면 '고쳐서 다시 올리기'로 다음 버전 임시 저장본(PUT, 보낸 칸 그대로 · 파일은 새로)을
+// 만들어 같은 쓰기 화면을 연다 → 다시 올리기(POST .../send). 확정 · 닫힘 뒤에는 다시 올리기를 막고 서버 문장을 보인다.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,9 +12,9 @@ import { PRICE_DOC, digitsText, fileKind, fileProblem } from "@/components/pro/p
 import { ApiError, call, errorText, type Schemas } from "@/lib/backend/client";
 import { fileSize, stampSeoul, won } from "@/lib/format";
 import { DateField } from "./DateField";
-import { DocIcon, SentQuote } from "./SentQuote";
+import { DocIcon, SentQuote, Versions } from "./SentQuote";
 import {
-  AMOUNT_MAX, CLOSED, MISSING, ORDER, VAT_LABEL, amountDigits, dayDigits,
+  AMOUNT_MAX, CHOSEN_TEXT, CLOSED, MISSING, ORDER, VAT_LABEL, amountDigits, dayDigits, resendBody, totalTail,
   type Board, type Body, type Errs, type Key, type QFile, type VatMode,
 } from "./text";
 import s from "./quote.module.css";
@@ -114,6 +115,9 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
   const [bad, setBad] = useState<Bad[]>([]);
   const [lock, setLock] = useState<string | null>(null); // 쓰는 중에 요청이 닫힘(409) → 서버 문장
   const [note, setNote] = useState<string | null>(null); // 보낸 뒤 맨 위 한 줄
+  const [editing, setEditing] = useState(false); // 보낸 뒤 다음 버전을 고치는 중
+  const [reBusy, setReBusy] = useState(false);
+  const [reErr, setReErr] = useState("");
 
   const cur = useRef(f); // 저장할 때 읽는 최신 칸 값
   const edits = useRef(0); // 칸을 고친 횟수
@@ -241,6 +245,44 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
     }, 0);
   }
 
+  /** 쓰기 화면을 이 저장본 값으로 연다 (저장할 것이 없는 상태로) */
+  function startEdit(b: Board) {
+    const next = fieldsOf(b);
+    cur.current = next;
+    setF(next);
+    done.current = edits.current;
+    setStale(false);
+    setErrs({}); setBad([]); setMsg(""); setActMsg(""); setSaveErr("");
+    setEditing(true);
+    setTimeout(() => document.getElementById("q-title")?.focus(), 0);
+  }
+
+  /** '고쳐서 다시 올리기': 고치던 저장본이 있으면 그대로, 없으면 보낸 칸으로 다음 버전 저장본을 만든다 */
+  async function reopen() {
+    const last = board.sent[0];
+    if (reBusy || lock || !last) return;
+    setNote(null); setReErr("");
+    if (board.draft) { startEdit(board); return; }
+    setReBusy(true);
+    try {
+      const out = await call<Board>("PUT", path, resendBody(last, modes));
+      setBoard(out);
+      startEdit(out);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.code === "invalid_state") { setLock(e.message); router.refresh(); }
+      else setReErr(errorText(e));
+    } finally {
+      setReBusy(false);
+    }
+  }
+
+  /** '그만 고치기': 고친 값은 저장본에 남기고 보낸 견적서 보기로 돌아간다 */
+  function stopEdit() {
+    void save();
+    setEditing(false);
+    setTimeout(() => document.getElementById("q-re")?.focus(), 0);
+  }
+
   async function saveNow() {
     if (busy || lock) return;
     setActMsg("");
@@ -270,7 +312,8 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
     try {
       const out = await call<Board>("POST", `${path}/send`);
       setBoard(out);
-      setNote("실측 견적서를 보냈어요.");
+      setEditing(false);
+      setNote(board.sent.length ? "실측 견적서를 다시 올렸어요." : "실측 견적서를 보냈어요.");
       dlg.current?.close();
       router.refresh();
     } catch (e) {
@@ -279,6 +322,7 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
       if (fe) { dlg.current?.close(); setErrs((m) => ({ ...m, ...fe })); focusFirst(fe); return; }
       if (e.code === "already_sent") {
         dlg.current?.close();
+        setEditing(false);
         setNote(e.message);
         setBoard(await call<Board>("GET", path).catch(() => board));
         router.refresh();
@@ -293,11 +337,16 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
 
   const sent = board.sent[0] ?? null;
   const closed = lock ?? (CLOSED.has(board.visit_status) ? closedText ?? "닫힌 요청이에요." : null);
+  const chosen = board.visit_status === "chosen";
   const d = board.draft;
   const code = d?.code ?? sent?.code ?? null;
-  const state = sent ? (board.visit_status === "chosen" ? "고객이 확정함" : "보냄") : closed ? "닫힘" : "보내기 전";
-  const form = !sent && (!closed || !!lock);
+  const form = (!sent || editing) && (!closed || !!lock);
+  const shown = form ? d : sent; // 머리 줄 버전
+  const state = form && sent ? "다시 올리는 중" : sent ? (chosen ? "고객이 확정함" : "보냄") : closed ? "닫힘" : "보내기 전";
+  const title = form ? (sent ? "실측 견적서 다시 올리기" : "실측 견적서 올리기") : sent ? "보낸 실측 견적서" : "실측 견적서";
+  const noResend = lock ?? (chosen ? CHOSEN_TEXT : null); // 다시 올릴 수 없는 까닭 (서버 문장)
   const err = (k: Key) => (errs[k] ? `${FOCUS[k]}-e` : undefined);
+  const vendorFile = (id: string) => `/api/vendor/visits/${visitId}/quote/files/${id}`;
 
   return (
     <>
@@ -305,9 +354,9 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
         <div className={s.headRow}>
           <div className={s.head}>
             <p className="mj-small">
-              {code ? <>실측 견적서 <span className={s.code}>{code}</span></> : <>실측 요청 <span className={s.code}>{requestCode}</span></>} · {work} · {state}
+              {code ? <>실측 견적서 <span className={s.code}>{code}</span>{sent && shown ? <> · 버전 {shown.version}</> : null}</> : <>실측 요청 <span className={s.code}>{requestCode}</span></>} · {work} · {state}
             </p>
-            <h1 id="q-title" className="mj-h1">{sent ? "보낸 실측 견적서" : closed && !lock ? "실측 견적서" : "실측 견적서 올리기"}</h1>
+            <h1 id="q-title" className="mj-h1" tabIndex={-1}>{title}</h1>
           </div>
           {form && !lock ? (
             <p className={`mj-small mj-num ${s.stamp}`}>
@@ -320,21 +369,32 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
 
       {note ? <DoneNote text={note} /> : null}
 
-      {sent ? (
+      {sent && !form ? (
         <section aria-labelledby="qs-sent-t" className={s.sent}>
           <div className={s.sentHead}>
             <h2 id="qs-sent-t" className="mj-h2">보낸 견적서 <span className={s.light}>· 읽기만 돼요</span></h2>
             {closed ? <p className="mj-st mj-st-off">{closed}</p>
-              : board.visit_status === "chosen" ? <p className="mj-st mj-st-ok"><Check />고객이 확정했어요</p>
-              : <p className="mj-st mj-st-ok"><Check /><span className="mj-num">보냈어요 · {stampSeoul(new Date(sent.sent_at ?? sent.updated_at))} · 고객이 보고 있어요</span></p>}
+              : chosen ? <p className="mj-st mj-st-ok"><Check />고객이 확정했어요</p>
+              : <p className="mj-st mj-st-ok"><Check /><span className="mj-num">보냈어요 · {board.sent.length > 1 ? "다시 올렸어요 " : ""}{stampSeoul(new Date(sent.sent_at ?? sent.updated_at))}{board.sent.length > 1 ? "" : " · 고객이 보고 있어요"}</span></p>}
           </div>
-          <SentQuote q={sent} label="보낸" />
+          <SentQuote q={sent} label="보낸" fileHref={vendorFile} />
+          {noResend ? (
+            <p role={lock ? "alert" : undefined} className={`mj-notice ${lock ? "mj-notice-warn" : ""}`}><span><b>{noResend}</b></span></p>
+          ) : board.visit_status === "quoted" ? (
+            <div className={s.row}>
+              <button id="q-re" type="button" className="mj-btn mj-btn-pri" onClick={() => void reopen()} disabled={reBusy} aria-describedby="q-re-h">
+                {reBusy ? "여는 중이에요" : d ? "이어서 고치기" : "고쳐서 다시 올리기"}
+              </button>
+              <p id="q-re-h" className="mj-small">고객이 확정하기 전까지 다시 올릴 수 있어요.{d ? " 고치던 내용이 임시 저장돼 있어요." : ""}</p>
+            </div>
+          ) : null}
+          {reErr ? <FieldError id="q-re-e" alert>{reErr}</FieldError> : null}
           <div className={s.row}>
             <Link className="mj-btn mj-btn-sec" href="/vendor?tab=waiting">작업함 기다림으로 가기</Link>
             <p className="mj-small">고객이 확정하거나 다른 업체로 정하면 알림으로 알려 드려요.</p>
           </div>
         </section>
-      ) : closed && !lock ? (
+      ) : closed && !lock && !sent ? (
         <section aria-label="닫힌 요청" className={s.sent}>
           <p className="mj-notice mj-notice-warn"><span><b>{closed}</b> · 이 요청에는 견적서를 올릴 수 없어요.</span></p>
         </section>
@@ -343,6 +403,14 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
       {form ? (
         <form aria-labelledby="q-title" noValidate onSubmit={(e) => { e.preventDefault(); void ask(); }}>
           {lock ? <p role="alert" className={`mj-notice mj-notice-bad ${s.lock}`}><span><b>{lock}</b></span></p> : null}
+          {sent && !lock ? (
+            <div className={s.reHead}>
+              <p className="mj-notice">
+                <span><b>{d ? `버전 ${d.version} 고치는 중이에요` : "다음 버전 고치는 중이에요"}</b> · 다시 올리기 전까지 고객에게는 앞에 보낸 버전 {sent.version}만 보여요. 견적서 파일은 새로 올려요.</span>
+              </p>
+              <button type="button" className="mj-btn mj-btn-sec mj-btn-sm" onClick={stopEdit}>그만 고치기</button>
+            </div>
+          ) : null}
           <fieldset className={s.form} disabled={!!lock}>
             <section aria-labelledby="qf-t" className={`${s.col} ${s.colFiles}`}>
               <div className={s.secHead}>
@@ -370,7 +438,7 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
                     </li>
                   ))}
                 </ol>
-              ) : <p className={s.none}>아직 올린 견적서 파일이 없어요.</p>}
+              ) : <p className={s.none}>{sent ? "다시 올릴 견적서 파일을 올려 주세요. 앞에 보낸 파일은 기록으로 남아요." : "아직 올린 견적서 파일이 없어요."}</p>}
               <div className={s.row}>
                 <button ref={upBtn} id="qf-up" type="button" className="mj-btn mj-btn-sec" aria-describedby={["qf-h", err("files")].filter(Boolean).join(" ")}
                   disabled={busy === "upload" || f.files.length >= max || !!lock} onClick={() => fileIn.current?.click()}>
@@ -458,28 +526,48 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
 
               <div className={s.acts}>
                 <button type="button" className="mj-btn mj-btn-sec" onClick={() => void saveNow()} disabled={!!busy || !!lock}>임시 저장</button>
-                <button id="q-send" type="submit" className="mj-btn mj-btn-pri" disabled={!!busy || !!lock}>{busy === "check" ? "확인하는 중이에요" : "견적서 보내기"}</button>
+                <button id="q-send" type="submit" className="mj-btn mj-btn-pri" disabled={!!busy || !!lock}>{busy === "check" ? "확인하는 중이에요" : sent ? "다시 올리기" : "견적서 보내기"}</button>
               </div>
               {saveErr ? <FieldError id="q-err" alert>{saveErr}</FieldError> : null}
               <p className="mj-small" role="status">{actMsg}</p>
+              <p className="mj-small">고객이 확정하기 전까지 다시 올릴 수 있어요.</p>
             </section>
           </fieldset>
         </form>
       ) : null}
 
-      <dialog ref={dlg} className={s.dlg} aria-labelledby="qd-t" onClose={() => { if (!board.sent.length) document.getElementById("q-send")?.focus(); }}>
+      <dialog ref={dlg} className={s.dlg} aria-labelledby="qd-t" onClose={() => { if (form) document.getElementById("q-send")?.focus(); }}>
         <button type="button" className={s.x} aria-label="닫기" onClick={() => dlg.current?.close()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
         </button>
-        <h2 id="qd-t" className="mj-h3">실측 견적서를 보낼까요?</h2>
-        <p>{who ? `${who} 님에게` : "고객에게"} 이렇게 보여요. 보내면 고객에게 알림이 가요.</p>
-        {d ? <SentQuote q={d} label="보낼" /> : null}
+        {sent ? (
+          <>
+            <h2 id="qd-t" className="mj-h3">견적서를 다시 올릴까요?</h2>
+            {d && d.total != null && sent.total != null ? (
+              <p className={`mj-num ${s.cust}`}>
+                <span>고객에게 보이는 낼 금액 {won(sent.total)} → <b className={s.big}>{won(d.total)}</b> · {totalTail(d.vat_mode)}</span>
+                <span className={s.chip}>믿집 계산</span>
+              </p>
+            ) : null}
+            <p>{who ? `${who} 님` : "고객"} 비교 화면에 &lsquo;다시 올렸어요&rsquo;와 올린 날짜 · 시각이 보이고 알림이 가요. 앞 파일은 기록으로 남아요.</p>
+          </>
+        ) : (
+          <>
+            <h2 id="qd-t" className="mj-h3">실측 견적서를 보낼까요?</h2>
+            <p>{who ? `${who} 님에게` : "고객에게"} 이렇게 보여요. 보내면 고객에게 알림이 가요.</p>
+          </>
+        )}
+        {d ? <SentQuote q={d} label={sent ? "다시 올릴" : "보낼"} /> : null}
         {sendErr ? <FieldError id="qd-e" alert>{sendErr}</FieldError> : null}
         <div className={s.dlgBtns}>
-          <button type="button" className="mj-btn mj-btn-sec" onClick={() => dlg.current?.close()}>더 고치기</button>
-          <button type="button" className="mj-btn mj-btn-pri" onClick={() => void send()} disabled={busy === "send"}>{busy === "send" ? "보내는 중이에요" : "보내기"}</button>
+          <button type="button" className="mj-btn mj-btn-sec" onClick={() => dlg.current?.close()}>{sent ? "돌아가기" : "더 고치기"}</button>
+          <button type="button" className="mj-btn mj-btn-pri" onClick={() => void send()} disabled={busy === "send"}>
+            {busy === "send" ? (sent ? "올리는 중이에요" : "보내는 중이에요") : sent ? "다시 올리기" : "보내기"}
+          </button>
         </div>
       </dialog>
+
+      {sent ? <Versions sent={board.sent} /> : null}
 
       <p className={s.links}>
         <Link className="mj-lnk" href={`/vendor/requests/${visitId}`}>요청 자세히 보기</Link>
