@@ -423,7 +423,7 @@ def _card(v: Vendor, trades: list[str], areas: list[tuple[str, str]]) -> dict:
         "biz_name": v.biz_name,
         "trades": sorted(trades),
         "areas": [AreaOut(sido=a, sgg=b, label=region_label(a, b)) for a, b in sorted(areas)],
-        "verified_at": v.reviewed_at,
+        "verified_at": v.approved_at,
         "contact_method": v.contact_method,
         "call_start": v.call_start,
         "call_end": v.call_end,
@@ -573,6 +573,18 @@ async def public_profile(s: AsyncSession, vendor_id: uuid.UUID) -> PublicProfile
     if v is None or v.status != "approved":
         raise AppError(404, "not_found", "업체를 찾을 수 없어요.")
     return PublicProfileOut(**await _detail(s, v))
+
+
+async def listed(s: AsyncSession, vendor_id: uuid.UUID, trade: str, sido: str, sgg: str) -> bool:
+    """list_public에 나오는 업체인지 (승인 · 그 공정 · 그 지역 · 연락 방식을 정함)"""
+    return bool(await repo.approved_ids(s, trade, sido, sgg, vendor_id))
+
+
+async def portfolio_file(s: AsyncSession, vendor_id: uuid.UUID, file_id: uuid.UUID) -> File | None:
+    """그 업체 시공 사진의 파일 행. 시공 사진이 아니면(근거 파일 · 등록증 등) None."""
+    if await repo.portfolio_file_id(s, vendor_id, file_id) is None:
+        return None
+    return (await repo.files_by_id(s, [file_id])).get(file_id)
 
 
 async def list_public(

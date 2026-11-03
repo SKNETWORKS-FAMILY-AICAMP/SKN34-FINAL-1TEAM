@@ -11,14 +11,17 @@ import uuid
 import zipfile
 import zlib
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.auth.models import User
+from app.config import settings
 from app.files import images, storage
 from app.files.models import File
 from app.shared import ratelimit
@@ -224,6 +227,29 @@ async def readable(s: AsyncSession, user: User, file_id: uuid.UUID) -> File | No
     if f.owner_id == user.id or user.role == "admin":
         return f
     return None
+
+
+async def respond(f: File) -> Response:
+    """파일 내용을 내준다. 볼 권한은 부르는 쪽(파일 · 업체 자세히 router)이 먼저 확인한다."""
+    headers = {
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(f.filename)}",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+        # 올린 파일 안의 스크립트가 우리 주소에서 돌지 못하게 (PDF · SVG 같은 것)
+        "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
+    }
+    if settings.files_s3_bucket:
+        try:
+            data = await run_in_threadpool(storage.read, f.storage_key)
+        except FileNotFoundError as exc:
+            log.error("파일 행은 있는데 S3에 없어요: %s", f.id)
+            raise AppError(404, "not_found", "파일을 찾을 수 없어요.") from exc
+        return Response(data, media_type=f.content_type, headers=headers)
+    path = storage.path_of(f.storage_key)
+    if not path.is_file():  # DB에는 있는데 디스크에 없다: 볼륨 유실 · 다른 서버
+        log.error("파일 행은 있는데 디스크에 없어요: %s", f.id)
+        raise AppError(404, "not_found", "파일을 찾을 수 없어요.")
+    return FileResponse(path, media_type=f.content_type, headers=headers)
 
 
 async def owned(

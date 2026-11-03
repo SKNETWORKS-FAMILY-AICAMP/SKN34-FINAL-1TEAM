@@ -194,6 +194,16 @@ async def _lines(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, list[
     return out
 
 
+async def standard_trade(
+    s: AsyncSession, p: ProjectOut, trade: str
+) -> tuple[StandardQuote, list[StandardQuoteLine]] | None:
+    """이 집 최신 표준견적서 한 공정과 그 줄 (그 공정을 고르지 않았으면 None). 가견적 수량에 쓴다."""
+    row = (await ensure_standard(s, p)).get(trade)
+    if row is None:
+        return None
+    return row, (await _lines(s, [row.id]))[row.id]
+
+
 async def standard_for(s: AsyncSession, user: User, project_id: uuid.UUID) -> StandardOut:
     """GET /projects/{id}/standard: 만든 사람 · 관리자만(남의 것은 404)."""
     p = await project_service.get_for(s, user, project_id)

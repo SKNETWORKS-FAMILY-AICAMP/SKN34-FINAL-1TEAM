@@ -204,6 +204,12 @@ def contact_until(work_done: date) -> date:
         return work_done.replace(year=year, day=28)
 
 
+def years_since(start: date, today: date) -> int:
+    """start부터 오늘까지 꽉 찬 햇수 (업력). 아직 안 온 날이면 0."""
+    years = today.year - start.year - ((today.month, today.day) < (start.month, start.day))
+    return max(years, 0)
+
+
 def days_since(at: datetime, today: date) -> int:
     """그 시각의 서울 날짜부터 오늘까지 지난 날 수 (같은 날이면 0). 심사 기다린 날에 쓴다."""
     if at.tzinfo is None:

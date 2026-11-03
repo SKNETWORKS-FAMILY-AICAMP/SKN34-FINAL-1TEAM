@@ -25,6 +25,7 @@ from app.shared.errors import (
 )
 from app.shared.request_guards import BodyLimit, CatchAll
 from app.vendor.router import router as vendor_router
+from app.visit.router import router as visit_router
 
 
 @asynccontextmanager
@@ -60,6 +61,7 @@ ROUTERS = [
     quote_router,
     schedule_router,
     vendor_router,
+    visit_router,
 ]
 for r in ROUTERS:
     app.include_router(r)

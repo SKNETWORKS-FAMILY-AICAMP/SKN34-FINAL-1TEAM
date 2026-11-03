@@ -19,6 +19,7 @@ from app.calc.schedule import (
     order_conflicts,
     trade_days,
     workdays,
+    years_since,
 )
 from app.refprice.book import DOBAE_2026H2 as D
 from app.refprice.book import MOKGONG_2026H2 as M
@@ -129,3 +130,10 @@ def test_days_since_counts_seoul_dates():
     assert days_since(datetime(2026, 11, 5, 0, 0, tzinfo=SEOUL), today) == 0  # 앞날은 0
     with pytest.raises(ValueError):
         days_since(datetime(2026, 11, 1, 10, 0), today)
+
+
+def test_years_since_counts_full_years():
+    assert years_since(date(2014, 3, 2), date(2026, 11, 2)) == 12  # 2014.03 · 업력 12년
+    assert years_since(date(2014, 11, 3), date(2026, 11, 2)) == 11  # 하루 모자람
+    assert years_since(date(2014, 11, 2), date(2026, 11, 2)) == 12
+    assert years_since(date(2027, 1, 1), date(2026, 11, 2)) == 0  # 앞날은 0

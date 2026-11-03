@@ -136,6 +136,15 @@ async def reviews_of(
     return [(r, name) for r, name in (await s.execute(q)).all()]
 
 
+async def portfolio_file_id(
+    s: AsyncSession, vendor_id: uuid.UUID, file_id: uuid.UUID
+) -> uuid.UUID | None:
+    q = select(VendorPortfolio.file_id).where(
+        VendorPortfolio.vendor_id == vendor_id, VendorPortfolio.file_id == file_id
+    )
+    return await s.scalar(q)
+
+
 async def files_by_id(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, File]:
     """사업자등록증 파일 정보 (파일 표는 읽기 조인에만 쓴다)"""
     return {f.id: f for f in (await s.execute(select(File).where(File.id.in_(ids)))).scalars()}
@@ -214,12 +223,18 @@ async def vendors_by_id(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID
 
 
 async def approved_ids(
-    s: AsyncSession, trade: str | None, sido: str | None, sgg: str | None
+    s: AsyncSession,
+    trade: str | None,
+    sido: str | None,
+    sgg: str | None,
+    vendor_id: uuid.UUID | None = None,
 ) -> list[uuid.UUID]:
-    """승인됐고 연락 방식을 정한 업체. 공정 · 지역(시 · 도 + 시 · 군 · 구)으로 좁힌다."""
+    """승인됐고 연락 방식을 정한 업체. 공정 · 지역(시 · 도 + 시 · 군 · 구) · 업체 한 곳으로 좁힌다."""
     q = select(Vendor.user_id).where(
         Vendor.status == "approved", Vendor.contact_method.is_not(None)
     )
+    if vendor_id is not None:
+        q = q.where(Vendor.user_id == vendor_id)
     if trade:
         q = q.where(
             select(VendorTrade.vendor_id)
