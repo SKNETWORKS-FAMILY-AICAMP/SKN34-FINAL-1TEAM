@@ -5,7 +5,8 @@ import { JobBoard } from "./JobBoard";
 import type { Job } from "./text";
 import s from "./jobs.module.css";
 
-export function JobPage({ job, today }: { job: Job; today: string }) {
+/** edit: 작업함 '공사 날짜 바꾸기'로 왔으면 바꾸기 칸을 펼쳐 둔다 */
+export function JobPage({ job, today, edit = false }: { job: Job; today: string; edit?: boolean }) {
   const v = job.visit;
   const here = `${v.customer?.name ?? v.code} · ${v.area_name} ${workText(v)} 공사 날짜`;
   return (
@@ -18,7 +19,7 @@ export function JobPage({ job, today }: { job: Job; today: string }) {
         </ol>
       </nav>
       <main id="main" className={`mj-wrap ${s.page}`}>
-        <JobBoard initial={job} today={today} />
+        <JobBoard initial={job} today={today} edit={edit} />
       </main>
     </>
   );

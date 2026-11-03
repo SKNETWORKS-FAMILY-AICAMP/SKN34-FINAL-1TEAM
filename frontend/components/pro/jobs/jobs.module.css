@@ -105,5 +105,6 @@
 .sum > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-block: 10px; border-bottom: 1px solid var(--line); }
 .sum dt { flex: none; color: var(--ink-sub); }
 .sum dd { margin: 0; min-width: 0; text-align: right; }
+.sumText { overflow-wrap: anywhere; white-space: pre-line; }
 .dlgBtns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 @media (max-width: 400px) { .dlg { padding: 24px 16px 16px; } }

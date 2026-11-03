@@ -9,27 +9,42 @@ export type Preview = Schemas["PreviewOut"];
 export type Need = Schemas["NeedOut"];
 export type Other = Schemas["OtherTradeOut"];
 export type Method = Schemas["DatesIn"]["method"];
-type JobRow = Pick<Schemas["InboxRowOut"], "dates_state" | "dates_due_at" | "overdue" | "start_date" | "end_date" | "proposed_start" | "proposed_end" | "request_due_at">;
+type JobRow = Pick<Schemas["InboxRowOut"], "dates_state" | "dates_due_at" | "overdue" | "start_date" | "end_date" | "proposed_start" | "proposed_end" | "request_due_at" | "wish_dates">;
 
 /** 하루 작업 인원 한도 (schedule.models CREW_MAX와 같다) */
 export const CREW_MAX = 20;
 
+/** 날짜 바꾸는 이유 길이 한도 (schedule.schemas Reason과 같다) */
+export const REASON_MAX = 300;
+
 /** 고객이 수락하기 전: 날짜를 내고 다시 낼 수 있다 */
 export const isOpen = (st: string | null | undefined) => st === "waiting" || st === "proposed" || st === "requested";
+
+/** 고객이 수락한 뒤: 수락한 날짜를 바꾸는 중이거나 바꿀 수 있다 */
+export const isAfter = (st: string | null | undefined) => st === "scheduled" || st === "change_requested" || st === "change_proposed";
+
+/** 수락한 날짜를 스스로 바꿀 수 있다 (공사 끝냈어요 전, 확정 status = scheduled) */
+export const canMove = (st: string | null | undefined, status: string | null | undefined) => st === "scheduled" && status === "scheduled";
 
 /** 다시 고른 공사 (서버가 409 invalid_state로 주는 문장과 같다) */
 export const RESELECTED = "고객이 업체를 다시 고르기로 했어요.";
 
-/** 공사 날짜 화면으로 가는 버튼 말 (수락한 뒤는 '공사 날짜 보기') */
-export function goLabel(st: string | null | undefined): string {
+/** 공사 날짜 화면으로 가는 버튼 말 (수락한 뒤 바꿀 수 있으면 '공사 날짜 바꾸기', 그 밖은 '공사 날짜 보기') */
+export function goLabel(st: string | null | undefined, status?: string | null): string {
   if (st === "waiting") return "공사 날짜 내기";
   if (st === "proposed") return "날짜 다시 내기";
   if (st === "requested") return "요청에 답하기";
+  if (st === "change_requested") return "새 날짜 올리기";
+  if (canMove(st, status)) return "공사 날짜 바꾸기";
   return "공사 날짜 보기";
 }
 
-/** 바로 해야 할 일이면 주 버튼 (날짜 내기 · 요청에 답하기) */
-export const needsAct = (st: string | null | undefined) => st === "waiting" || st === "requested";
+/** 공사 날짜 화면 주소. '공사 날짜 바꾸기'로 가면 바꾸기 칸을 펼쳐 둔다 (?change=1) */
+export const jobHref = (dealId: string, st: string | null | undefined, status?: string | null) =>
+  `/vendor/jobs/${dealId}${canMove(st, status) ? "?change=1" : ""}`;
+
+/** 바로 해야 할 일이면 주 버튼 (날짜 내기 · 요청에 답하기 · 바꾸기 요청에 새 날짜 올리기) */
+export const needsAct = (st: string | null | undefined) => st === "waiting" || st === "requested" || st === "change_requested";
 
 export const METHOD_LABEL: Record<Method, string> = { app: "믿집에서 날짜 내기", call: "고객과 통화로 정함" };
 
@@ -83,6 +98,18 @@ export function datesLine(r: JobRow): string {
     return r.overdue
       ? `고객이 다른 공사 날짜를 원해요. 답할 기한(${stamp(r.request_due_at)})이 지났어요.`
       : `고객이 다른 공사 날짜를 원해요. ${stamp(r.request_due_at)}까지 답해 주세요.`;
+  }
+  if (st === "change_requested") {
+    const wish = r.wish_dates.length ? ` 고객이 고른 시작일 ${r.wish_dates.map(md).join(" · ")}.` : "";
+    if (!r.request_due_at) return `고객이 공사 날짜 바꾸기를 요청했어요.${wish}`;
+    return r.overdue
+      ? `고객이 공사 날짜 바꾸기를 요청했어요.${wish} 새 날짜를 올릴 기한(${stamp(r.request_due_at)})이 지났어요.`
+      : `고객이 공사 날짜 바꾸기를 요청했어요.${wish} ${stamp(r.request_due_at)}까지 새 날짜를 올려 주세요.`;
+  }
+  if (st === "change_proposed") {
+    const next = r.proposed_start && r.proposed_end ? ` · ${span(r.proposed_start, r.proposed_end)}` : "";
+    const now = r.start_date && r.end_date ? ` 고객이 수락하기 전까지 ${span(r.start_date, r.end_date)} 그대로예요.` : "";
+    return `새 날짜 수락 기다림${next}.${now}`;
   }
   if (st === "closed") return RESELECTED;
   return r.start_date && r.end_date ? `공사 날짜 확정 ${span(r.start_date, r.end_date)}` : "공사 날짜가 확정됐어요.";

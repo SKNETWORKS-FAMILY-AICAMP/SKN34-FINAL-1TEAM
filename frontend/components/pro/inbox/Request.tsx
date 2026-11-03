@@ -6,7 +6,7 @@
 import Link from "next/link";
 import type { VendorProfile } from "@/lib/api/vendor";
 import { listInbox } from "@/lib/api/visit";
-import { datesLine, goLabel, needsAct } from "@/components/pro/jobs/text";
+import { datesLine, goLabel, jobHref, needsAct } from "@/components/pro/jobs/text";
 import { stampSeoul } from "@/lib/format";
 import { CONTACT_LABEL, phoneText, type ContactMethod } from "@/lib/labels";
 import { Dash } from "./Cells";
@@ -111,7 +111,7 @@ export async function Request({ v, profile }: { v: Detail; profile: VendorProfil
           ) : v.status === "chosen" ? (
             <div className={s.foot}>
               {job?.deal_id ? (
-                <Link className={`mj-btn ${needsAct(job.dates_state) ? "mj-btn-pri" : "mj-btn-sec"}`} href={`/vendor/jobs/${job.deal_id}`}>{goLabel(job.dates_state)}</Link>
+                <Link className={`mj-btn ${needsAct(job.dates_state) ? "mj-btn-pri" : "mj-btn-sec"}`} href={jobHref(job.deal_id, job.dates_state, job.deal_status)}>{goLabel(job.dates_state, job.deal_status)}</Link>
               ) : (
                 <Link className="mj-btn mj-btn-pri" href="/vendor?tab=jobs">공사 탭으로 가기</Link>
               )}
