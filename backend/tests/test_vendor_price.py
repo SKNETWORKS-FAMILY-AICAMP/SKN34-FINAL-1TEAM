@@ -230,7 +230,9 @@ def test_confirmed_prices_only_for_approved(api):
     vid = vendor_id()
     assert list(_run(service.confirmed_prices, [vid, uuid.uuid4()], "dobae")) == [vid]
     assert _run(service.confirmed_prices, [vid], "mokgong") == {}
-    query("update vendors set status = 'rejected', reject_reason = '흐려요'")
+    query(
+        "update vendors set status = 'rejected', review_code = 'other', review_note = '흐려요', approved_at = null"
+    )
     assert _run(service.confirmed_prices, [vid], "dobae") == {}
 
 

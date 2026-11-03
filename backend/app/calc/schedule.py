@@ -202,3 +202,10 @@ def contact_until(work_done: date) -> date:
         return work_done.replace(year=year)
     except ValueError:
         return work_done.replace(year=year, day=28)
+
+
+def days_since(at: datetime, today: date) -> int:
+    """그 시각의 서울 날짜부터 오늘까지 지난 날 수 (같은 날이면 0). 심사 기다린 날에 쓴다."""
+    if at.tzinfo is None:
+        raise ValueError("시각은 시간대가 있어야 해요")
+    return max((today - at.astimezone(SEOUL).date()).days, 0)

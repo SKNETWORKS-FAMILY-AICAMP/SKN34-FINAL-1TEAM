@@ -14,7 +14,7 @@ from app.shared.errors import AppError
 from app.vendor import repository as repo
 from app.vendor import service
 from tests.conftest import query
-from tests.helpers import JPEG, signup, upload, use, vendor_signup
+from tests.helpers import JPEG, biz_no_for, signup, upload, use, vendor_signup
 
 URL = "/vendor/profile"
 
@@ -23,7 +23,7 @@ def approved_vendor(api, email: str = "vendor@mitjip.test") -> str:
     """업체 가입 뒤 관리자가 승인한 것처럼 바꾼다. 세션 토큰을 돌려준다."""
     assert vendor_signup(api, email=email).status_code == 201
     query(
-        "update vendors set status = 'approved', reviewed_at = now()"
+        "update vendors set status = 'approved', reviewed_at = now(), approved_at = now()"
         " where user_id = (select id from users where email = $1)",
         email,
     )
@@ -77,7 +77,8 @@ def test_save_and_read_back(api):
     assert got["call_start"] == "09:00:00" and got["visit_fee"] == 0
     assert got["tax_kind"] == "general" and got["insurance"] is None
     assert got["updated_at"] is not None
-    assert got["biz_name"] is None and got["biz_no"] is None  # 심사 대상은 여기서 안 바뀐다
+    assert got["biz_name"] == "예시도배"  # 심사 대상은 여기서 안 바뀐다
+    assert got["biz_no"] == biz_no_for("vendor@mitjip.test")
     assert api.get(URL).json() == got
 
 
@@ -126,7 +127,9 @@ def test_only_approved_vendor_can_use_profile(api):
     for c in calls:  # 승인 전 업체
         r = c()
         assert r.status_code == 403 and r.json()["error"]["code"] == "vendor_not_approved"
-    query("update vendors set status = 'rejected', reject_reason = '흐려요'")
+    query(
+        "update vendors set status = 'rejected', review_code = 'other', review_note = '흐려요', approved_at = null"
+    )
     assert all(c().status_code == 403 for c in calls)
 
 
@@ -290,7 +293,8 @@ def test_public_profile_hides_contacts_and_needs_approval(api):
     assert e.value.status == 404
 
     query(
-        "update vendors set status = 'rejected', reject_reason = '흐려요' where user_id = $1", vid
+        "update vendors set status = 'rejected', review_code = 'other', review_note = '흐려요', approved_at = null where user_id = $1",
+        vid,
     )
     assert _run(service.list_public, "dobae", "seoul", "노원구") == []
     with pytest.raises(AppError):

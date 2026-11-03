@@ -13,6 +13,7 @@ from app.calc.schedule import (
     TradePlan,
     contact_until,
     count_workdays,
+    days_since,
     due_at,
     lay_out,
     order_conflicts,
@@ -116,3 +117,15 @@ def test_due_at_is_calendar_days_at_18_seoul():
 def test_contact_until_is_one_year_later():
     assert contact_until(date(2026, 11, 23)) == date(2027, 11, 23)
     assert contact_until(date(2028, 2, 29)) == date(2029, 2, 28)
+
+
+def test_days_since_counts_seoul_dates():
+    today = date(2026, 11, 2)
+    # 10.30(금) 18:47 서울 신청 → 11.02(월)에 3일째
+    assert days_since(datetime(2026, 10, 30, 9, 47, tzinfo=UTC), today) == 3
+    # UTC 10.31 15:30은 서울 11.01 00:30 → 1일째
+    assert days_since(datetime(2026, 10, 31, 15, 30, tzinfo=UTC), today) == 1
+    assert days_since(datetime(2026, 11, 2, 0, 0, tzinfo=SEOUL), today) == 0
+    assert days_since(datetime(2026, 11, 5, 0, 0, tzinfo=SEOUL), today) == 0  # 앞날은 0
+    with pytest.raises(ValueError):
+        days_since(datetime(2026, 11, 1, 10, 0), today)

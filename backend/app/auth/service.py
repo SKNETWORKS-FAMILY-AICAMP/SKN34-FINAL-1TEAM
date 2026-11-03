@@ -171,7 +171,7 @@ async def user_from_token(s: AsyncSession, token: str) -> User | None:
 
 
 async def me(s: AsyncSession, user: User) -> MeOut:
-    status = reason = None
+    status = code = note = None
     if user.role == "vendor":
         from app.vendor.repository import (
             review_of,  # 업체 기능이 auth를 쓰므로 여기서만 늦게 읽는다 (D7 예외)
@@ -179,7 +179,7 @@ async def me(s: AsyncSession, user: User) -> MeOut:
 
         got = await review_of(s, user.id)
         if got:
-            status, reason = got
+            status, code, note = got
     return MeOut(
         id=user.id,
         email=user.email,
@@ -187,7 +187,9 @@ async def me(s: AsyncSession, user: User) -> MeOut:
         phone=user.phone,
         role=user.role,
         vendor_status=status,
-        vendor_reject_reason=reason,
+        vendor_review_code=code,
+        vendor_review_note=note,
+        vendor_reject_reason=note if status == "rejected" else None,
     )
 
 

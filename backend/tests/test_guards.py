@@ -87,11 +87,12 @@ def test_failed_vendor_signup_leaves_no_license_file(api):
     assert {str(p.relative_to(settings.files_dir)).replace("\\", "/") for p in on_disk} >= stored
 
 
-def test_blank_reject_reason_is_refused(api):
+def test_blank_reject_note_is_refused(api):
     vendor_signup(api)
     make_admin(api)
     vid = api.get("/admin/vendors").json()[0]["user_id"]
-    r = api.post(f"/admin/vendors/{vid}/reject", json={"reason": "   "})
+    body = {"action": "reject", "code": "other", "note": "   "}
+    r = api.post(f"/admin/vendors/{vid}/review", json=body)
     assert r.status_code == 422
 
 

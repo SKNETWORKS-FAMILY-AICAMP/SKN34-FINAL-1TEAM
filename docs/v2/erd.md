@@ -50,7 +50,7 @@ erDiagram
 | users | 0002_v2_phone | `phone varchar(20)` 숫자만, CHECK `^01[0-9]{8,9}$` |
 | projects | 0004_v2_project | `code varchar(16)` UQ(MJ-2611-0142, 요청 번호 · 표준견적서 번호), `rev int`(집 정보를 고칠 때마다 +1), `locked_at`(첫 실측 요청 뒤 고치기 막음), `apt_name · dong · ho`(연락처 보낼 때 받음) |
 | vendors | 0007_v2_vendor_profile | `contact_method`(phone · sms · kakao · web) + `contact_url`(kakao · web이면 필수), `call_start < call_end`, `visit_fee bigint ≥0`(0 = 무료) + `visit_fee_refund`, `tax_kind`(general · exempt), `interior_license` · `insurance`(업체가 적음), `opened_on`, `updated_at` |
-| vendors | 0009_v2_vendor_review | status에 `needs_info`(보완). `review_code`(사유 코드), CHECK `(status in needs_info · rejected) = (review_code 있음)`. 0001의 사유 CHECK는 이것으로 바꾸고 기존 행을 채운다 |
+| vendors | 0009_v2_vendor_review | status에 `needs_info`(보완). `review_code`(사유 코드: 보완 blurry · name_mismatch · owner_mismatch · other / 거절 wrong_business · closed · other), CHECK `(status in needs_info · rejected) = (review_code 있음)`, other면 보낼 말 필수. `reject_reason` → `review_note`(≤300, 코드가 있을 때만). `approved_at`(승인일 때만). 0001의 사유 CHECK는 이것으로 바꾸고 기존 거절 행은 other로 채운다 |
 | vendor_portfolio | 0007_v2_vendor_profile | `space` · `pyeong` · `taken_on` |
 | files | 0007_v2_vendor_profile | kind에 `price_doc` · `quote_doc` · `work_photo`, `content_type` 100자(엑셀 MIME) |
 
@@ -69,7 +69,7 @@ erDiagram
 | vendor_price_files | 0008_v2_vendor_price | file PK · vendor · trade. 가견적 근거 파일 |
 | vendor_price_sets | 0008_v2_vendor_price | vendor · trade · version · status(draft · confirmed · retired) · confirmed_at. 부분 UQ: (vendor, trade) draft 하나, confirmed 하나 |
 | vendor_price_lines | 0008_v2_vendor_price | (set, key) PK. `unit_price` 또는 `included_in`(다른 줄에 포함) 둘 중 하나, source_file(지우면 NULL) |
-| vendor_reviews | 0009_v2_vendor_review | vendor · action(apply · approve · needs_info · reject · resubmit) · code · note ≤300 · by · at |
+| vendor_reviews | 0009_v2_vendor_review | vendor · action(apply · approve · needs_info · reject · resubmit(보완해서 다시 보냄) · reapply(거절 뒤 다시 신청)) · code(needs_info · reject만) · note ≤300 · `changes jsonb`(다시 낼 때 바뀐 칸의 전 값, resubmit · reapply만) · by(지우면 NULL, 업체 본인이면 업체 id) · at. 기존 업체마다 apply(+ 이미 정한 결정) 행을 채운다 |
 | visits | 0010_v2_visit | project · trade · vendor(지우면 NULL) · `vendor_name` 사본 · `slot 1~3` · status · share_contact · consent_ver · consent_at · message ≤300 · 가견적 사본(estimate_set · estimate_total) · decline_code · close_reason · `quote_ver` · contact_until · vendor_seen_at. 부분 UQ(project, trade, slot) · (project, trade, vendor) where status in requested · quoted · chosen |
 | visit_events | 0010_v2_visit | visit · from · to · by · code · at |
 | vendor_quotes | 0011_v2_vendor_quote | visit · `code`(Q-2611-0041) UQ · version · `sent_at`(비면 임시 저장) · measured_on · entered_amount · vat_mode(included · excluded · exempt) · supply · vat · total · days · valid_until. UQ(visit, version), 부분 UQ(visit) where sent_at is null |
@@ -85,7 +85,7 @@ erDiagram
 
 | 대상 | 전이 |
 | --- | --- |
-| vendors | pending → approved · needs_info · rejected / needs_info · rejected → pending(다시 신청) |
+| vendors | pending → approved · needs_info · rejected(관리자) / needs_info → pending(보완해서 다시 보냄) · rejected → pending(같은 번호로 다시 신청) |
 | visits | requested → quoted · cancelled(고객) · declined(업체, 사유 3종) / requested · quoted → closed(다른 업체 확정 · 다시 고르기) / quoted → chosen / chosen → closed(날짜 수락 전 다시 고르기) |
 | deals | confirmed → scheduled(날짜 수락) → checking(공사 끝냈어요) → done(고객 확인) 또는 fixing(남은 일) → checking / confirmed → reselected |
 | date_proposals | pending → accepted · superseded · withdrawn |

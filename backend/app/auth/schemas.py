@@ -77,6 +77,8 @@ class MeOut(BaseModel):
     name: str
     phone: str | None = None
     role: str
-    # 업체 회원만: pending(승인대기) · approved · rejected
+    # 업체 회원만: pending(심사 중) · needs_info(보완 요청) · approved · rejected. 승인 전에는 업체 기능이 잠긴다
     vendor_status: str | None = None
-    vendor_reject_reason: str | None = None
+    vendor_review_code: str | None = None  # 보완 요청 · 거절 사유 코드
+    vendor_review_note: str | None = None  # 관리자가 업체에 보낸 말
+    vendor_reject_reason: str | None = None  # 예전 칸 (거절일 때 vendor_review_note와 같다)

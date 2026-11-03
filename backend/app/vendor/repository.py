@@ -2,11 +2,13 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.files.models import File
 from app.vendor.models import (
+    SUBMIT_ACTIONS,
     Vendor,
     VendorArea,
     VendorFaq,
@@ -15,29 +17,48 @@ from app.vendor.models import (
     VendorPriceFile,
     VendorPriceLine,
     VendorPriceSet,
+    VendorReview,
     VendorTrade,
 )
 
 
-async def review_of(s: AsyncSession, user_id: uuid.UUID) -> tuple[str, str | None] | None:
-    """(승인 상태, 반려 사유)"""
+async def review_of(
+    s: AsyncSession, user_id: uuid.UUID
+) -> tuple[str, str | None, str | None] | None:
+    """(심사 상태, 사유 코드, 업체에 보낼 말)"""
     row = (
         await s.execute(
-            select(Vendor.status, Vendor.reject_reason).where(Vendor.user_id == user_id)
+            select(Vendor.status, Vendor.review_code, Vendor.review_note).where(
+                Vendor.user_id == user_id
+            )
         )
     ).first()
-    return (row[0], row[1]) if row else None
+    return (row[0], row[1], row[2]) if row else None
 
 
-async def list_with_users(s: AsyncSession, status: str | None) -> list[tuple[Vendor, User]]:
-    q = (
-        select(Vendor, User)
-        .join(User, User.id == Vendor.user_id)
-        .order_by(Vendor.created_at.desc())
-    )
-    if status:
-        q = q.where(Vendor.status == status)
-    return [(v, u) for v, u in (await s.execute(q)).all()]
+async def list_with_users(
+    s: AsyncSession, statuses: tuple[str, ...] | None, q: str | None
+) -> list[tuple[Vendor, User]]:
+    """상태 · 상호 · 사업자번호로 거른 업체 (정렬은 service가 마지막으로 낸 때로 한다)"""
+    query = select(Vendor, User).join(User, User.id == Vendor.user_id)
+    if statuses:
+        query = query.where(Vendor.status.in_(statuses))
+    if q:
+        cond = Vendor.biz_name.icontains(q, autoescape=True)
+        digits = "".join(c for c in q if c.isdigit())
+        if digits:
+            cond = cond | Vendor.biz_no.contains(digits)
+        query = query.where(cond)
+    return [(v, u) for v, u in (await s.execute(query)).all()]
+
+
+async def status_counts(s: AsyncSession) -> dict[str, int]:
+    rows = await s.execute(select(Vendor.status, func.count()).group_by(Vendor.status))
+    return {st: n for st, n in rows.all()}
+
+
+async def biz_no_taken(s: AsyncSession, biz_no: str) -> bool:
+    return (await s.scalar(select(Vendor.user_id).where(Vendor.biz_no == biz_no))) is not None
 
 
 async def get_with_user(s: AsyncSession, vendor_id: uuid.UUID) -> tuple[Vendor, User] | None:
@@ -46,6 +67,7 @@ async def get_with_user(s: AsyncSession, vendor_id: uuid.UUID) -> tuple[Vendor, 
             select(Vendor, User)
             .join(User, User.id == Vendor.user_id)
             .where(Vendor.user_id == vendor_id)
+            .execution_options(populate_existing=True)
         )
     ).first()
     return (row[0], row[1]) if row else None
@@ -69,22 +91,54 @@ async def trades_and_areas(s: AsyncSession, ids: list[uuid.UUID]) -> tuple[dict,
 
 
 async def set_status(
-    s: AsyncSession,
-    vendor_id: uuid.UUID,
-    *,
-    to: str,
-    allowed_from: tuple[str, ...],
-    reason: str | None,
-    by: uuid.UUID,
-    at: datetime,
+    s: AsyncSession, vendor_id: uuid.UUID, *, allowed_from: tuple[str, ...], values: dict
 ) -> bool:
     """지금 상태가 allowed_from일 때만 바꾼다 (동시에 두 관리자가 눌러도 한 번만 바뀜)."""
     res = await s.execute(
         update(Vendor)
         .where(Vendor.user_id == vendor_id, Vendor.status.in_(allowed_from))
-        .values(status=to, reject_reason=reason, reviewed_by=by, reviewed_at=at)
+        .values(**values)
+        .execution_options(synchronize_session=False)
     )
     return res.rowcount == 1
+
+
+async def replace_trades_areas(
+    s: AsyncSession, vendor_id: uuid.UUID, trades: list[str], areas: list[tuple[str, str]]
+) -> None:
+    for model in (VendorTrade, VendorArea):
+        await s.execute(delete(model).where(model.vendor_id == vendor_id))
+    s.add_all([VendorTrade(vendor_id=vendor_id, trade=t) for t in trades])
+    s.add_all([VendorArea(vendor_id=vendor_id, sido=a, sgg=b) for a, b in areas])
+
+
+async def last_submits(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, VendorReview]:
+    """업체마다 마지막으로 낸 이력 (가입 · 보완해서 다시 보냄 · 다시 신청)"""
+    q = (
+        select(VendorReview)
+        .where(VendorReview.vendor_id.in_(ids), VendorReview.action.in_(SUBMIT_ACTIONS))
+        .order_by(VendorReview.vendor_id, VendorReview.at.desc(), VendorReview.id.desc())
+        .ext(distinct_on(VendorReview.vendor_id))
+    )
+    return {r.vendor_id: r for r in (await s.execute(q)).scalars()}
+
+
+async def reviews_of(
+    s: AsyncSession, vendor_id: uuid.UUID
+) -> list[tuple[VendorReview, str | None]]:
+    """처리 기록 (최근 순)과 한 사람 이름"""
+    q = (
+        select(VendorReview, User.name)
+        .outerjoin(User, User.id == VendorReview.by_id)
+        .where(VendorReview.vendor_id == vendor_id)
+        .order_by(VendorReview.at.desc(), VendorReview.id.desc())
+    )
+    return [(r, name) for r, name in (await s.execute(q)).all()]
+
+
+async def files_by_id(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, File]:
+    """사업자등록증 파일 정보 (파일 표는 읽기 조인에만 쓴다)"""
+    return {f.id: f for f in (await s.execute(select(File).where(File.id.in_(ids)))).scalars()}
 
 
 async def save_if_unchanged(
@@ -108,10 +162,9 @@ async def replace_parts(
     faqs: list[tuple[str, str]],
     links: list[tuple[str | None, str]],
 ) -> None:
-    for model in (VendorTrade, VendorArea, VendorFaq, VendorLink):
+    await replace_trades_areas(s, vendor_id, trades, areas)
+    for model in (VendorFaq, VendorLink):
         await s.execute(delete(model).where(model.vendor_id == vendor_id))
-    s.add_all([VendorTrade(vendor_id=vendor_id, trade=t) for t in trades])
-    s.add_all([VendorArea(vendor_id=vendor_id, sido=a, sgg=b) for a, b in areas])
     s.add_all([VendorFaq(vendor_id=vendor_id, key=k, answer=v) for k, v in faqs])
     s.add_all(
         [

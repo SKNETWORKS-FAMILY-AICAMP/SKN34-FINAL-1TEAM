@@ -17,7 +17,7 @@ from app.config import settings
 from app.db import SessionLocal, engine
 from app.files import service as files_service
 from app.shared.clock import now_utc
-from app.vendor.models import Vendor
+from app.vendor.models import Vendor, VendorReview
 
 # (이메일, 이름, 역할, 업체 상태). 관리자를 먼저 만들어야 업체 승인자로 남길 수 있다.
 ACCOUNTS = [
@@ -87,6 +87,7 @@ async def _add_vendor(s, user_id, status: str, admin_id) -> None:
     )
     row = await files_service.persist(s, user_id, lic)
     approved = status == "approved"
+    now = now_utc()
     try:
         s.add(
             Vendor(
@@ -94,9 +95,14 @@ async def _add_vendor(s, user_id, status: str, admin_id) -> None:
                 license_file_id=row.id,
                 status=status,
                 reviewed_by=admin_id if approved else None,
-                reviewed_at=now_utc() if approved else None,
+                reviewed_at=now if approved else None,
+                approved_at=now if approved else None,
             )
         )
+        await s.flush()
+        s.add(VendorReview(vendor_id=user_id, action="apply", by_id=user_id, at=now))
+        if approved:
+            s.add(VendorReview(vendor_id=user_id, action="approve", by_id=admin_id, at=now))
         await s.flush()
     except Exception:
         files_service.discard(row)  # 업체 행을 못 만들었으면 등록증 파일도 남기지 않는다

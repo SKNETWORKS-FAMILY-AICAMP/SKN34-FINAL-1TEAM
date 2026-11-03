@@ -1,6 +1,7 @@
 """테스트에서 함께 쓰는 합성 데이터와 동작 (실제 사람 · 업체 정보 아님)."""
 
 import asyncio
+import hashlib
 import io
 
 from PIL import Image
@@ -45,10 +46,27 @@ def make_admin(api, email: str = "admin@mitjip.test") -> str:
     return api.cookies.get(settings.session_cookie)
 
 
+def biz_no_for(email: str) -> str:
+    """이메일마다 다른 합성 사업자등록번호 10자리 (실제 번호 아님)"""
+    return f"{int(hashlib.sha256(email.encode()).hexdigest(), 16) % 10**10:010d}"
+
+
 def vendor_signup(api, license=("사업자등록증.pdf", PDF), **over):
-    """업체 가입: 기본 회원정보 + 사업자등록증. license=None이면 파일 없이 보낸다."""
+    """업체 가입 신청: 신청서 + 사업자등록증. license=None이면 파일 없이 보낸다."""
     api.cookies.clear()
-    data = {"name": "예시 담당자", "email": "vendor@mitjip.test", "password": PASSWORD, **over}
+    email = over.pop("email", "vendor@mitjip.test")
+    data = {
+        "name": "예시 담당자",
+        "email": email,
+        "password": PASSWORD,
+        "biz_name": "예시도배",
+        "owner_name": "예시 대표",
+        "biz_no": biz_no_for(email),
+        "phone": PHONE,
+        "trades": ["dobae"],
+        "areas": ["seoul/노원구", "seoul/도봉구"],
+        **over,
+    }
     files = (
         {"license_file": (license[0], license[1], "application/octet-stream")} if license else None
     )

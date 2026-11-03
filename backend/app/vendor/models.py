@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -28,25 +29,49 @@ FAQ_KEYS = ("process", "pricing", "extra_cost", "duration", "as_refund")
 LINKS_MAX = 5  # 시공 사례 링크
 PORTFOLIO_MAX = 20  # 시공 사진
 PRICE_FILES_MAX = 10  # 공정마다 가견적 근거 파일
+# 심사 사유 코드. other(직접 쓰기)는 업체에 보낼 말이 꼭 있어야 한다
+NEEDS_INFO_CODES = ("blurry", "name_mismatch", "owner_mismatch", "other")
+REJECT_CODES = ("wrong_business", "closed", "other")
+# 심사 이력: 가입 신청 · 승인 · 보완 요청 · 거절 · 보완해서 다시 보냄 · 거절 뒤 다시 신청
+REVIEW_ACTIONS = ("apply", "approve", "needs_info", "reject", "resubmit", "reapply")
+SUBMIT_ACTIONS = ("apply", "resubmit", "reapply")  # 업체가 낸 것 (관리자가 볼 차례가 된다)
+
+_CODE_KIND = (
+    "{code} is null"
+    " or ({status} = '{info}' and {code} in ('blurry', 'name_mismatch', 'owner_mismatch', 'other'))"
+    " or ({status} = '{rej}' and {code} in ('wrong_business', 'closed', 'other'))"
+)
 
 
 class Vendor(Base):
-    """업체 회원. 가입 때는 사업자등록증만 받고, 관리자가 승인해야 업체 기능을 쓴다.
-
-    상호 · 사업자번호 · 연락처 · 주소 · 사이트는 승인 뒤 업체 정보 관리에서 채운다.
+    """업체 회원. 가입 신청(상호 · 대표자 · 사업자번호 · 휴대폰 · 공정 · 지역 + 사업자등록증)을
+    관리자가 심사해 승인해야 업체 기능을 쓴다. 보완 요청 · 거절이면 사유 코드와 보낼 말이 남는다.
     연락 방식 · 통화 시간 · 실측 비용은 고객에게 보이고, 휴대폰 · 채널 주소는 실측 요청 뒤에만 보인다.
     """
 
     __tablename__ = "vendors"
     __table_args__ = (
-        CheckConstraint("status in ('pending', 'approved', 'rejected')", name="status"),
+        CheckConstraint(
+            "status in ('pending', 'needs_info', 'approved', 'rejected')", name="status"
+        ),
         CheckConstraint("biz_no is null or biz_no ~ '^[0-9]{10}$'", name="biz_no"),
         CheckConstraint(
-            "(status = 'rejected') = (reject_reason is not null)", name="reject_reason"
+            "(status in ('needs_info', 'rejected')) = (review_code is not null)", name="review_code"
         ),
         CheckConstraint(
-            "reject_reason is null or length(btrim(reject_reason)) > 0", name="reject_reason_text"
+            _CODE_KIND.format(
+                code="review_code", status="status", info="needs_info", rej="rejected"
+            ),
+            name="review_code_kind",
         ),
+        CheckConstraint(
+            "review_note is null or (review_code is not null and length(btrim(review_note)) > 0)",
+            name="review_note",
+        ),
+        CheckConstraint(
+            "review_code is distinct from 'other' or review_note is not null", name="review_other"
+        ),
+        CheckConstraint("(status = 'approved') = (approved_at is not null)", name="approved_at"),
         CheckConstraint("phone ~ '^01[0-9]{8,9}$'", name="phone"),
         CheckConstraint(
             "contact_method in ('phone', 'sms', 'kakao', 'web')", name="contact_method"
@@ -77,8 +102,11 @@ class Vendor(Base):
     license_file_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("files.id"))
     intro: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending")
-    reject_reason: Mapped[str | None] = mapped_column(String(300))
-    # 처리한 관리자 계정이 지워져도 승인 기록은 남긴다 (누가 했는지만 비움)
+    # 보완 요청 · 거절 사유 코드와 업체에 보낼 말 (승인 · 심사 중이면 비어 있다)
+    review_code: Mapped[str | None] = mapped_column(String(20))
+    review_note: Mapped[str | None] = mapped_column(String(300))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 마지막으로 정한 관리자 · 시각. 계정이 지워져도 기록은 남긴다 (누가 했는지만 비움)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
@@ -252,3 +280,38 @@ class VendorPriceLine(Base):
     source_file_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("files.id", ondelete="SET NULL"), index=True
     )
+
+
+class VendorReview(Base):
+    """심사 이력 한 줄. 업체가 낸 것(apply · resubmit · reapply)과 관리자 결정(approve · needs_info ·
+    reject)을 쌓는다. by는 한 사람(업체 본인이면 업체 id), 시스템이면 비어 있다.
+    changes는 다시 낼 때 바뀐 칸의 전 값만 통째로 남긴다."""
+
+    __tablename__ = "vendor_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "action in ('apply', 'approve', 'needs_info', 'reject', 'resubmit', 'reapply')",
+            name="action",
+        ),
+        CheckConstraint("(action in ('needs_info', 'reject')) = (code is not null)", name="code"),
+        CheckConstraint(
+            _CODE_KIND.format(code="code", status="action", info="needs_info", rej="reject"),
+            name="code_kind",
+        ),
+        CheckConstraint(
+            "note is null or (code is not null and length(btrim(note)) > 0)", name="note"
+        ),
+        CheckConstraint("code is distinct from 'other' or note is not null", name="note_other"),
+        CheckConstraint("changes is null or action in ('resubmit', 'reapply')", name="changes"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    vendor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vendors.user_id", ondelete="CASCADE"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(12))
+    code: Mapped[str | None] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(String(300))
+    changes: Mapped[dict | None] = mapped_column(JSONB)
+    by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

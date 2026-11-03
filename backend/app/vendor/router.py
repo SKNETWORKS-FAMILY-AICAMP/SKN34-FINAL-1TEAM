@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.shared.ratelimit import client_ip
 from app.vendor import service
 from app.vendor.deps import approved_vendor
 from app.vendor.schemas import (
+    ApplicationOut,
     PortfolioIn,
     PortfolioOut,
     PriceFileIn,
@@ -24,32 +25,53 @@ from app.vendor.schemas import (
     PricesOut,
     ProfileIn,
     ProfileOut,
-    RejectIn,
+    ReapplyIn,
+    ResubmitIn,
+    ReviewIn,
+    ReviewSummaryOut,
+    VendorAdminDetailOut,
     VendorAdminOut,
     VendorSignupIn,
 )
 
 router = APIRouter(tags=["업체"])
 admin_only = require_role("admin")
+vendor_only = require_role("vendor")
 
 
 @router.post(
     "/auth/vendor-signup",
     status_code=201,
     response_model=MeOut,
-    summary="업체 회원가입 · 기본 정보 + 사업자등록증, 승인대기로 시작",
+    summary="업체 가입 신청 · 신청서 + 사업자등록증, 심사 중으로 시작",
 )
 async def vendor_signup(
     request: Request,
     response: Response,
-    name: Annotated[str, Form(description="담당자 이름")],
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
+    biz_name: Annotated[str, Form(description="상호")],
+    owner_name: Annotated[str, Form(description="대표자 이름")],
+    biz_no: Annotated[str, Form(description="사업자등록번호 10자리")],
+    phone: Annotated[str, Form(description="휴대폰")],
+    trades: Annotated[list[str], Form(description="하는 공정 (dobae · mokgong, 여러 번)")],
+    areas: Annotated[list[str], Form(description="활동 지역 'seoul/노원구' (여러 번)")],
     license_file: Annotated[UploadFile, File(description="사업자등록증 (jpg · png · pdf)")],
+    name: Annotated[str | None, Form(description="담당자 이름 (비우면 대표자)")] = None,
     s: AsyncSession = Depends(get_session),
 ) -> MeOut:
     try:
-        body = VendorSignupIn(name=name, email=email, password=password)
+        body = VendorSignupIn(
+            name=name,
+            email=email,
+            password=password,
+            biz_name=biz_name,
+            owner_name=owner_name,
+            biz_no=biz_no,
+            phone=phone,
+            trades=trades,
+            areas=areas,
+        )
     except ValidationError as exc:
         errors = exc.errors(include_url=False, include_input=False)
         raise RequestValidationError([{**e, "loc": ("body", *e["loc"])} for e in errors]) from exc
@@ -58,45 +80,87 @@ async def vendor_signup(
     return await auth_service.me(s, user)
 
 
-@router.get("/admin/vendors", response_model=list[VendorAdminOut], summary="업체관리 · 상태별 목록")
+@router.get(
+    "/admin/vendors",
+    response_model=list[VendorAdminOut],
+    summary="업체 심사 목록 · 기다림 · 보완 요청 · 처리함, 상호 · 사업자번호로 찾기",
+)
 async def list_vendors(
-    status: Literal["pending", "approved", "rejected"] | None = None,
+    status: Literal["pending", "needs_info", "done"] | None = None,
+    q: Annotated[str | None, Query(max_length=50)] = None,
     _: User = Depends(admin_only),
     s: AsyncSession = Depends(get_session),
 ) -> list[VendorAdminOut]:
-    return await service.list_for_admin(s, status)
+    return await service.list_for_admin(s, status, q, today_seoul())
 
 
-@router.get("/admin/vendors/{vendor_id}", response_model=VendorAdminOut, summary="업체 상세")
+@router.get("/admin/vendors/summary", response_model=ReviewSummaryOut, summary="업체 심사 칸별 수")
+async def vendor_summary(
+    _: User = Depends(admin_only), s: AsyncSession = Depends(get_session)
+) -> ReviewSummaryOut:
+    return await service.review_summary(s)
+
+
+@router.get(
+    "/admin/vendors/{vendor_id}",
+    response_model=VendorAdminDetailOut,
+    summary="업체 심사 자세히 · 처리 기록",
+)
 async def get_vendor(
     vendor_id: uuid.UUID, _: User = Depends(admin_only), s: AsyncSession = Depends(get_session)
-) -> VendorAdminOut:
-    return await service.get_for_admin(s, vendor_id)
+) -> VendorAdminDetailOut:
+    return await service.get_for_admin(s, vendor_id, today_seoul())
 
 
 @router.post(
-    "/admin/vendors/{vendor_id}/approve",
-    response_model=VendorAdminOut,
-    summary="업체 가입 승인",
+    "/admin/vendors/{vendor_id}/review",
+    response_model=VendorAdminDetailOut,
+    summary="업체 심사 결정 저장 · 승인 · 보완 요청 · 거절 (심사 중일 때만, 먼저 정했으면 409)",
 )
-async def approve(
-    vendor_id: uuid.UUID, admin: User = Depends(admin_only), s: AsyncSession = Depends(get_session)
-) -> VendorAdminOut:
-    return await service.approve(s, admin, vendor_id)
-
-
-@router.post(
-    "/admin/vendors/{vendor_id}/reject",
-    response_model=VendorAdminOut,
-    summary="업체 가입 반려",
-)
-async def reject(
+async def review_vendor(
     vendor_id: uuid.UUID,
-    data: RejectIn,
+    data: ReviewIn,
     admin: User = Depends(admin_only),
     s: AsyncSession = Depends(get_session),
-) -> VendorAdminOut:
-    return await service.reject(s, admin, vendor_id, data.reason)
+) -> VendorAdminDetailOut:
+    return await service.review(s, admin, vendor_id, data, today_seoul())
+
+
+@router.get(
+    "/vendor/application",
+    response_model=ApplicationOut,
+    summary="내 가입 심사 (승인 전에도) · 낸 내용 · 최근 결정 · 열린 칸",
+)
+async def my_application(
+    vendor: User = Depends(vendor_only), s: AsyncSession = Depends(get_session)
+) -> ApplicationOut:
+    return await service.application(s, vendor)
+
+
+@router.post(
+    "/vendor/application/resubmit",
+    response_model=ApplicationOut,
+    summary="보완해서 다시 보내기 (보완 요청 → 심사 중, 열린 칸만)",
+)
+async def resubmit(
+    data: ResubmitIn,
+    vendor: User = Depends(vendor_only),
+    s: AsyncSession = Depends(get_session),
+) -> ApplicationOut:
+    return await service.resubmit(s, vendor, data)
+
+
+@router.post(
+    "/vendor/application/reapply",
+    response_model=ApplicationOut,
+    summary="거절 뒤 다시 신청 (같은 계정 · 같은 사업자등록번호)",
+)
+async def reapply(
+    data: ReapplyIn,
+    vendor: User = Depends(vendor_only),
+    s: AsyncSession = Depends(get_session),
+) -> ApplicationOut:
+    return await service.reapply(s, vendor, data)
 
 
 @router.get("/vendor/profile", response_model=ProfileOut, summary="업체 정보 (승인된 업체 본인)")
