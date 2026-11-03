@@ -552,6 +552,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vendor/jobs/{deal_id}/done": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 공사 끝냈어요 · 남은 일 다 했어요 (마지막 공사일부터, 연락처는 오늘부터 1년) */
+        post: operations["finish_vendor_jobs__deal_id__done_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/deals/{deal_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 공사 끝남 확인: 끝났어요 · 남은 일이 있어요 (업체가 끝냈다고 올린 뒤에만) */
+        post: operations["check_work_projects__project_id__deals__deal_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/vendor-signup": {
         parameters: {
             query?: never;
@@ -1226,6 +1260,22 @@ export interface components {
             /** Over By */
             over_by: number | null;
         };
+        /**
+         * CheckIn
+         * @description 고객이 공사 끝남 확인: 끝났어요(done) 또는 남은 일이 있어요(fixing, 남은 일 필수)
+         */
+        CheckIn: {
+            /**
+             * Result
+             * @enum {string}
+             */
+            result: "done" | "fixing";
+            /**
+             * Note
+             * @description 남은 일 (fixing일 때 필수)
+             */
+            note?: string | null;
+        };
         /** CompareDealOut */
         CompareDealOut: {
             /**
@@ -1521,8 +1571,21 @@ export interface components {
             start_date: string | null;
             /** End Date */
             end_date: string | null;
-            /** Work Done On */
+            /**
+             * Work Done On
+             * @description 업체가 마지막으로 '공사 끝냈어요'를 올린 날
+             */
             work_done_on: string | null;
+            /**
+             * Contact Until
+             * @description 서로 연락처가 보이는 마지막 날 (끝냈다고 올린 날 + 1년)
+             */
+            contact_until: string | null;
+            /**
+             * Fixing Note
+             * @description 남은 일 (고객이 적은 글, 남은 일 상태일 때)
+             */
+            fixing_note: string | null;
         };
         /** DecisionOut */
         DecisionOut: {
@@ -1952,6 +2015,18 @@ export interface components {
              * @default 0
              */
             extras_pending: number;
+            /** Work Done On */
+            work_done_on?: string | null;
+            /**
+             * Contact Until
+             * @description 고객 연락처가 보이는 마지막 날
+             */
+            contact_until?: string | null;
+            /**
+             * Fixing Note
+             * @description 고객이 알린 남은 일
+             */
+            fixing_note?: string | null;
         };
         /** InboxSummaryOut */
         InboxSummaryOut: {
@@ -2041,6 +2116,22 @@ export interface components {
              */
             request_options: components["schemas"]["StartOptionOut"][];
             extras: components["schemas"]["TradeExtrasOut"];
+            /**
+             * Accepted Crew
+             * @description 수락한 날짜의 하루 작업 인원
+             */
+            accepted_crew: number | null;
+            /** Work Done On */
+            work_done_on: string | null;
+            /** Contact Until */
+            contact_until: string | null;
+            /** Fixing Note */
+            fixing_note: string | null;
+            /**
+             * Can Finish
+             * @description '공사 끝냈어요'를 누를 수 있는지 (마지막 공사일부터, 공사 중 · 남은 일일 때)
+             */
+            can_finish: boolean;
         };
         /** LicenseOut */
         LicenseOut: {
@@ -2380,6 +2471,12 @@ export interface components {
              * @default []
              */
             extras: components["schemas"]["TradeExtrasOut"][];
+            /**
+             * Deals
+             * @description 확정 공정표: 공정마다 공사 상태 · 끝낸 날 · 연락처 기한 · 남은 일
+             * @default []
+             */
+            deals: components["schemas"]["DealOut"][];
         };
         /**
          * PlanRedo
@@ -5161,6 +5258,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_vendor_jobs__deal_id__done_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_work_projects__project_id__deals__deal_id__check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DealOut"];
                 };
             };
             /** @description Validation Error */
