@@ -1,6 +1,6 @@
 // 공사 날짜 (시안 WSchedule): 공정 탭 · 확정 업체가 낸 날짜를 보고 수락하거나 다른 날짜를 요청한다.
 // 읽기는 GET /projects/{id}/schedule 하나(공정마다 확정 · 낸 날짜 · 요청 · 겹침 · 요청 후보), 연락처는 GET /projects/{id}/visits?trade=.
-// 날짜 · 일하는 날 · 기한 · 겹침은 API 값 그대로다. 수락하면 예상 공정표 링크를 두고, 수락한 뒤 날짜 바꾸기는 확정 공정표로 보낸다.
+// 날짜 · 일하는 날 · 기한 · 겹침은 API 값 그대로다. 수락한 뒤에는 날짜 바꾸기(요청 · 업체가 올린 새 날짜 수락)를 여기서 하고 확정 공정표로 잇는다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Check } from "@/components/vendors/icons";
@@ -11,8 +11,8 @@ import { DatesBox } from "@/components/schedule/DatesBox";
 import { DatesFacts } from "@/components/schedule/DatesFacts";
 import { Overlay } from "@/components/schedule/Overlay";
 import { ScheduleTabs } from "@/components/schedule/ScheduleTabs";
-import { ChangedLine, RequestLines, WaitLines } from "@/components/schedule/StateLines";
-import { isAccepted, span, stateOf, type TradeDates } from "@/components/schedule/text";
+import { ChangedLine, MoveLine, RequestLines, WaitLines } from "@/components/schedule/StateLines";
+import { isAccepted, span, type TradeDates } from "@/components/schedule/text";
 import { iGa, isTrade, telDigits, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { getSchedule } from "@/lib/api/schedule";
@@ -29,17 +29,16 @@ function pick(trades: VTrade[], rows: TradeDates[], asked: string | undefined): 
   return has(["proposed", "requested"]) ?? has(["waiting", "scheduled"]) ?? trades[0];
 }
 
-/** 수락한 뒤 날짜 바꾸기가 열려 있는지 */
-const changing = (t: TradeDates) => t.dates_state === "change_requested" || t.dates_state === "change_proposed";
-
 function heading(t: TradeDates | undefined, tName: string) {
   if (!t) return { h: `${tName} 업체를 아직 확정하지 않았어요`, sub: "실측 견적서를 비교해 업체를 확정하면 업체가 공사 날짜를 내요." };
   const v = t.deal.vendor_name;
   const x = t.proposal;
   if (isAccepted(t)) {
-    return t.deal.status === "scheduled"
-      ? { h: `${tName} 공사 날짜를 수락했어요`, sub: null }
-      : { h: `${tName} 공사 · ${DEAL_LABEL[t.deal.status] ?? "수락함"}`, sub: null };
+    if (t.deal.status !== "scheduled") return { h: `${tName} 공사 · ${DEAL_LABEL[t.deal.status] ?? "수락함"}`, sub: null };
+    // 수락한 뒤 날짜 바꾸기: 업체가 새 날짜를 올림(요청에 답함 · 스스로 바꾸자고 함) · 고객이 요청함
+    if (x) return { h: x.request_id ? `${iGa(v)} 새 ${tName} 날짜를 올렸어요` : `${iGa(v)} ${tName} 날짜를 바꾸자고 했어요`, sub: "내 공정표에 얹어 보고 수락하면 바뀌어요." };
+    if (t.request) return { h: `${tName} 공사 날짜 바꾸기를 요청했어요`, sub: `${v} 답을 기다려요. 그동안 수락한 날짜는 그대로예요.` };
+    return { h: `${tName} 공사 날짜를 수락했어요`, sub: null };
   }
   if (t.dates_state === "requested") return { h: `${tName} 공사 날짜를 다른 날로 요청했어요`, sub: `${v} 답을 기다려요. 그동안 지금 날짜는 그대로 남아 있어요.` };
   if (!x) return { h: `${tName} 공사 날짜를 기다려요`, sub: "날짜가 오면 내 공정표에 얹어 보고 수락해요. 수락해야 확정돼요." };
@@ -94,16 +93,19 @@ export default async function SchedulePage({ params, searchParams }: { params: P
         ) : (
           <>
             {isAccepted(t) ? (
-              <div className={s.lines}>
-                {deal.start_date && deal.end_date ? <p className={`mj-st mj-st-ok mj-num ${s.st}`}><Check size={16} />공사 날짜 {span(deal.start_date, deal.end_date)}</p> : null}
-                <p className="mj-small">{deal.vendor_name} 확정 · 수락한 뒤에는 업체를 다시 고를 수 없어요.</p>
-                {changing(t) ? (
+              <>
+                <div className={s.lines}>
+                  {deal.start_date && deal.end_date ? <p className={`mj-st mj-st-ok mj-num ${s.st}`}><Check size={16} />{x || t.request ? "지금 공사 날짜" : "공사 날짜"} {span(deal.start_date, deal.end_date)}</p> : null}
+                  <p className="mj-small">{deal.vendor_name} 확정 · 수락한 뒤에는 업체를 다시 고를 수 없어요.</p>
+                </div>
+                {t.request ? <RequestLines r={t.request} vendorName={deal.vendor_name} left={t.requests_left} after /> : null}
+                {x && deal.start_date && deal.end_date ? (
                   <>
-                    <p className={`mj-st mj-st-${stateOf(t).tone} ${s.stWrap}`}>{stateOf(t).text} · 날짜 바꾸기는 확정 공정표에서 확인해요</p>
-                    <Link className="mj-lnk" href={`/projects/${id}/plan`}>확정 공정표 보기</Link>
+                    <MoveLine x={x} vendorName={deal.vendor_name} start={deal.start_date} end={deal.end_date} />
+                    <DatesFacts x={x} vendorName={deal.vendor_name} weekendWork={sch.weekend_work} holidays={sch.holidays} dateLabel="새 날짜" />
                   </>
                 ) : null}
-              </div>
+              </>
             ) : x ? (
               <>
                 {t.request ? <RequestLines r={t.request} vendorName={deal.vendor_name} left={t.requests_left} /> : null}
@@ -127,6 +129,8 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               accepted={isAccepted(t)}
               proposal={x}
               requested={!!t.request}
+              request={t.request}
+              multi={trades.length > 1}
               requestsLeft={t.requests_left}
               conflict={!!t.fit?.conflicts.length}
               options={t.start_options}
@@ -135,7 +139,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               tel={ct?.phone ? telDigits(ct.phone) || null : null}
               seenVersion={sch.final_version}
               reselect={reselect}
-              planHref={`/projects/${id}/plan?kind=expected`}
+              finalHref={`/projects/${id}/plan`}
             />
           </>
         )}

@@ -1,5 +1,6 @@
 "use client";
 // 공사 날짜 칸 아래 버튼 자리 (시안 WSchedule): 수락하기(확인 창) · 다른 날짜 요청하기(후보 1~3개 + 이유) · 업체 다시 고르기(수락 전).
+// 수락한 뒤에는 날짜 바꾸기(ChangeBox)를 같은 자리에 둔다.
 // 날짜 · 끝나는 날 · 남은 요청 수는 API 값 그대로 보이고 보낸다. 수락은 화면이 본 날짜(proposal id)로만 한다.
 // 그사이 업체가 다시 냈으면(409 dates_changed) 화면을 새로 읽어 새 날짜를 보인다. 확정 하나에 이 칸 하나라(key) 새로 읽어도 안내가 남는다.
 import { useEffect, useRef, useState } from "react";
@@ -13,7 +14,8 @@ import { iGa } from "@/components/vendors/text";
 import { ApiError, call, errorText } from "@/lib/backend/client";
 import { eulReul } from "@/lib/format";
 import { tradeLabel } from "@/lib/labels";
-import { offText, span, type Proposal, type Schedule, type StartOption } from "./text";
+import { ChangeBox } from "./ChangeBox";
+import { offText, span, type DateReq, type Proposal, type Schedule, type StartOption } from "./text";
 import d from "@/components/vendors/dialog.module.css";
 import s from "./schedule.module.css";
 
@@ -31,6 +33,10 @@ type Props = {
   proposal: Proposal | null;
   /** 열린 다른 날짜 요청이 있음 */
   requested: boolean;
+  /** 열린 요청 (수락한 뒤 날짜 바꾸기에 쓴다) */
+  request: DateReq | null;
+  /** 이 집 공정이 둘 이상 */
+  multi: boolean;
   requestsLeft: number;
   /** 다른 공정과 겹쳐 수락할 수 없음 (API fit.conflicts) */
   conflict: boolean;
@@ -44,7 +50,8 @@ type Props = {
   seenVersion: number;
   /** 업체 다시 고르기 확인 창 (수락 전만) */
   reselect: { title: string; body: string; note?: string } | null;
-  planHref: string;
+  /** 확정 공정표 */
+  finalHref: string;
 };
 
 type Err = { text: string; code?: string; from?: string; retry?: "accept" | "request" };
@@ -142,12 +149,31 @@ export function DatesBox(p: Props) {
     setPicked((a) => [...a, v]);
   }
 
-  // 수락한 뒤
+  // 수락한 뒤: 날짜 바꾸기 (새로 읽기 전에는 확정 공정표 링크만)
   if (p.accepted || done) {
     return (
       <div className={s.box}>
-        {done ? <p ref={doneRef} tabIndex={-1} role="status" className={`mj-st mj-st-ok ${s.stLine} ${s.stBig} ${s.focusT}`}><Check size={16} />수락했어요. {p.vendorName}에 알렸어요.</p> : null}
-        <div className={s.btns}><Link className="mj-btn mj-btn-sec" href={p.planHref}>예상 공정표 보기</Link></div>
+        {done ? <p ref={doneRef} tabIndex={-1} role="status" className={`mj-st mj-st-ok ${s.stLine} ${s.stBig} ${s.focusT}`}><Check size={16} />수락했어요. 확정 공정표에 넣었어요.</p> : null}
+        {p.accepted ? (
+          <ChangeBox
+            projectId={p.projectId}
+            dealId={p.dealId}
+            trade={p.trade}
+            vendorName={p.vendorName}
+            proposal={x}
+            request={p.request}
+            requestsLeft={p.requestsLeft}
+            conflict={p.conflict}
+            options={p.options}
+            weekendWork={p.weekendWork}
+            multi={p.multi}
+            tel={p.tel}
+            seenVersion={p.seenVersion}
+            planHref={p.finalHref}
+          />
+        ) : (
+          <div className={s.btns}><Link className="mj-btn mj-btn-sec" href={p.finalHref}>확정 공정표 보기</Link></div>
+        )}
       </div>
     );
   }

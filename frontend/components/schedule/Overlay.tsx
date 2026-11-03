@@ -13,14 +13,19 @@ type Props = { trades: string[]; rows: TradeDates[]; current: string };
 
 function datesOf(r: TradeDates | undefined) {
   if (!r) return null;
-  if (isAccepted(r) && r.deal.start_date && r.deal.end_date) return span(r.deal.start_date, r.deal.end_date);
+  if (isAccepted(r) && r.deal.start_date && r.deal.end_date) {
+    const now = span(r.deal.start_date, r.deal.end_date);
+    // 수락한 뒤 업체가 새 날짜를 올렸으면 지금 → 새 날짜
+    return r.proposal ? `${now} → 새 날짜 ${span(r.proposal.start, r.proposal.end)}` : now;
+  }
   return r.proposal ? span(r.proposal.start, r.proposal.end) : null;
 }
 
 /** 겹침 안내: 겹치면 수락할 수 없고, 아니면 수락한 다른 공정 날짜를 함께 알린다 */
 function FitNote({ t, rows, others }: { t: TradeDates; rows: TradeDates[]; others: string[] }) {
   const fit = t.fit;
-  if (!fit || !t.proposal || isAccepted(t)) return null;
+  // 수락 전 낸 날짜, 또는 수락한 뒤 업체가 올린 새 날짜
+  if (!fit || !t.proposal || (isAccepted(t) && t.deal.status !== "scheduled")) return null;
   const tName = tradeLabel(t.deal.trade);
   if (fit.conflicts.length) {
     const can = fit.start_from && fit.end_by
@@ -32,7 +37,7 @@ function FitNote({ t, rows, others }: { t: TradeDates; rows: TradeDates[]; other
         <span className={s.noteBad}><Warn /></span>
         <p>
           <b>겹치는 날이 있어 수락할 수 없어요.</b>{" "}
-          {iGa(t.deal.vendor_name)} 낸 날짜가 {fit.conflicts.map((c) => `${tradeLabel(c.trade)} 날짜`).join(" · ")}와 겹쳐요.{" "}
+          {iGa(t.deal.vendor_name)} {isAccepted(t) ? "올린 새 날짜" : "낸 날짜"}가 {fit.conflicts.map((c) => `${tradeLabel(c.trade)} 날짜`).join(" · ")}와 겹쳐요.{" "}
           {fit.conflicts.map((c) => `${eunNeun(tradeLabel(c.trade))} ${span(c.start, c.end)}에 해요.`).join(" ")} {can}
         </p>
       </div>

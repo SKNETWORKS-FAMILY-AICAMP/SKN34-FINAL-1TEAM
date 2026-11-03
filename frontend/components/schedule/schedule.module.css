@@ -62,3 +62,4 @@
 
 /* 다른 날짜 요청 상태 */
 .reqLines { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.stSub { font-weight: 400; color: var(--ink-sub); }

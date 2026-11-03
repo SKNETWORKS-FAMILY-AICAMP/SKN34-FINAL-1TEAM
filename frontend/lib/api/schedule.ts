@@ -4,9 +4,9 @@ import { FX } from "@/lib/mock/data";
 import { isUuid } from "./project";
 
 export type ApiPlan = Schemas["PlanOut"];
-/** 예상 공정표 (믿집 계산). 없거나 남의 것이면 null */
-export async function getPlan(projectId: string) {
-  return isUuid(projectId) ? serverGet<ApiPlan>(`/projects/${projectId}/plan`) : null;
+/** 공정표(믿집 계산). 남의 것이면 null. kind를 비우면 수락한 날짜가 있을 때 확정 공정표, 없으면 예상 공정표 */
+export async function getPlan(projectId: string, kind?: "expected" | "final") {
+  return isUuid(projectId) ? serverGet<ApiPlan>(`/projects/${projectId}/plan${kind ? `?kind=${kind}` : ""}`) : null;
 }
 
 export type ApiDeal = Schemas["DealOut"];

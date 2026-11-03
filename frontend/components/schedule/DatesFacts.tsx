@@ -6,16 +6,17 @@ import { iGa } from "@/components/vendors/text";
 import { holidaysIn, methodText, offText, span, type Holiday, type Proposal } from "./text";
 import s from "./schedule.module.css";
 
-type Props = { x: Proposal; vendorName: string; weekendWork: boolean; holidays: Holiday[] };
+/** dateLabel: 날짜 칸 이름 (수락한 뒤 바꾸자는 날짜면 '새 날짜') */
+type Props = { x: Proposal; vendorName: string; weekendWork: boolean; holidays: Holiday[]; dateLabel?: string };
 
-export function DatesFacts({ x, vendorName, weekendWork, holidays }: Props) {
+export function DatesFacts({ x, vendorName, weekendWork, holidays, dateLabel = "낸 날짜" }: Props) {
   const hs = holidaysIn(holidays, x.start, x.end);
   return (
     <div className={s.facts}>
       <p className={`mj-st mj-st-now mj-num ${s.stLine}`}>{x.method === "call" ? <WayIcon method="phone" /> : null}{methodText(x)}</p>
       <dl className={`mj-num ${s.dl}`}>
         <div>
-          <dt className="mj-small">낸 날짜</dt>
+          <dt className="mj-small">{dateLabel}</dt>
           <dd className={s.big}>
             {span(x.start, x.end)}
             {hs.length ? <span className={s.ddSub}>{hs.map((h) => `${day(h.day)} ${h.name}`).join(", ")} 쉬어요</span> : null}
