@@ -62,7 +62,7 @@ lib/backend/schema.d.ts  API 타입. pnpm gen:api로 만들고 손으로 고치�
 lib/api/<영역>.ts         서버 쪽 읽기의 입구. 영역마다 한 파일: project · vendor · quote · visit · schedule · admin · notify · chat
 lib/mock/                예시 데이터. API가 생기면 lib/api/<영역>.ts 안에서만 바꾼다
 lib/session.ts           로그인한 사람(GET /me)
-lib/format.ts · labels.ts · trade-status.ts · types.ts   표시 형식 · 화면 말 · 공정 상태 · 타입
+lib/format.ts · labels.ts · types.ts   표시 형식 · 화면 말 · 타입
 ```
 
 **백엔드 구조** (`backend/app/`)

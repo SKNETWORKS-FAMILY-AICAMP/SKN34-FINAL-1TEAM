@@ -1,9 +1,5 @@
 // 서버 쪽 읽기: 실측. 이 집 업체 목록 · 업체 자세히 · 실측 요청(고객), 작업함 · 요청 자세히(업체)는 실제 API.
-// getVisits는 예전 예시 화면(측정 · 비교)이 쓰는 예시 데이터라 그 화면을 정리할 때 지운다.
 import { serverGet, type Schemas } from "@/lib/backend/server";
-import { VISITS } from "@/lib/mock/data";
-
-export async function getVisits(projectId: string) { return VISITS[projectId] ?? []; }
 
 export type VisitTrade = "dobae" | "mokgong";
 const UUID = /^[0-9a-f-]{36}$/i;
