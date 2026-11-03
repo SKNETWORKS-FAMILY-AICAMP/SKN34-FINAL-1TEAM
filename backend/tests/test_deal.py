@@ -15,7 +15,7 @@ from app.schedule.schemas import ConfirmIn
 from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from tests.conftest import query
-from tests.helpers import make_admin, signup, use, vendor_signup
+from tests.helpers import make_admin, no_surprises, signup, use, vendor_signup
 from tests.test_quote_compare import quote
 from tests.test_visit_inbox import login, visit_of
 from tests.test_visit_request import SHARE, home, listed, send
@@ -196,7 +196,7 @@ def test_two_confirms_at_once_only_one_wins(api):
     async def both():
         return await asyncio.gather(go(va), go(vb), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert query("select count(*) n from deals")[0]["n"] == 1

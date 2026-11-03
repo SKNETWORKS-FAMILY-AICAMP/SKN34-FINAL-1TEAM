@@ -77,3 +77,13 @@ def upload(api, kind: str = "photo", content: bytes = JPEG, name: str = "living.
     return api.post(
         "/files", data={"kind": kind}, files={"file": (name, content, "application/octet-stream")}
     )
+
+
+def no_surprises(results: list) -> list:
+    """동시 시험 결과: AppError가 아닌 예외(교착 · 처리 못 한 오류)는 숨기지 않고 그대로 던진다."""
+    from app.shared.errors import AppError
+
+    for r in results:
+        if isinstance(r, BaseException) and not isinstance(r, AppError):
+            raise r
+    return results

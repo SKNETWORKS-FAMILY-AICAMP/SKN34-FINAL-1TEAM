@@ -16,7 +16,7 @@ from app.visit import service
 from app.visit.models import Visit
 from app.visit.schemas import VisitCreateIn
 from tests.conftest import query
-from tests.helpers import make_admin, signup, vendor_signup
+from tests.helpers import make_admin, no_surprises, signup, vendor_signup
 from tests.test_project import SOON, SOON_END
 from tests.test_project import body as project_body
 from tests.test_vendor_profile import URL as PROFILE
@@ -188,7 +188,7 @@ def test_two_requests_at_once_only_one_fits(api):
     async def both():
         return await asyncio.gather(ask(v[:2]), ask(v[2:]), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409 and errors[0].code == "slots_full"
     assert query("select count(*) n from visits")[0]["n"] == 2
@@ -197,7 +197,7 @@ def test_two_requests_at_once_only_one_fits(api):
         return await asyncio.gather(ask([v[3]]), ask([v[3]]), return_exceptions=True)
 
     query("delete from visits")
-    results = asyncio.run(same())
+    results = no_surprises(asyncio.run(same()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].code == "already"
     assert query("select count(*) n from visits")[0]["n"] == 1

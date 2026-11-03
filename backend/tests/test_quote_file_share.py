@@ -13,7 +13,7 @@ from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from app.visit import service
 from tests.conftest import BACKEND, query
-from tests.helpers import use
+from tests.helpers import no_surprises, use
 from tests.test_project import body as project_body
 from tests.test_quote_compare import quote, three
 from tests.test_vendor_quote import FULL, doc, url
@@ -115,7 +115,7 @@ def test_two_visits_cannot_take_one_file_at_once(api):
     async def both():
         return await asyncio.gather(go(va), go(other), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and (errors[0].status, errors[0].code) == (409, "file_used")
     assert len(links(str(f))) == 1

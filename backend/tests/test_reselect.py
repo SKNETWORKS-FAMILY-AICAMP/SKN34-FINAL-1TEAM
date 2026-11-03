@@ -10,7 +10,7 @@ from app.db import SessionLocal
 from app.schedule import service
 from app.shared.errors import AppError
 from tests.conftest import TEST_DSN, query
-from tests.helpers import make_admin, signup, use
+from tests.helpers import make_admin, no_surprises, signup, use
 from tests.test_deal import confirm, setup
 from tests.test_quote_compare import quote
 from tests.test_visit_inbox import login
@@ -168,7 +168,7 @@ def test_two_reselects_at_once_only_one_wins(api):
     async def both():
         return await asyncio.gather(go(), go(), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert query("select count(*) n from deal_events where to_status = 'reselected'")[0]["n"] == 1
@@ -197,7 +197,7 @@ def test_date_acceptance_at_the_same_time_wins(api):
         await conn.close()
         return (await asyncio.gather(task, return_exceptions=True))[0]
 
-    got = asyncio.run(run())
+    (got,) = no_surprises([asyncio.run(run())])
     assert isinstance(got, AppError) and got.status == 409 and got.message == AFTER_DATES
     assert query("select status from deals")[0]["status"] == "scheduled"
     assert query("select status from visits where id = $1", uuid.UUID(va))[0][0] == "chosen"

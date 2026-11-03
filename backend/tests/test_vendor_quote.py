@@ -14,7 +14,7 @@ from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from app.visit import service
 from tests.conftest import query
-from tests.helpers import JPEG, PDF, upload, use, vendor_signup
+from tests.helpers import JPEG, PDF, no_surprises, upload, use, vendor_signup
 from tests.test_files import xlsx_bytes
 from tests.test_project import body as project_body
 from tests.test_visit_inbox import login, visit_of
@@ -247,7 +247,7 @@ def test_state_rules_and_two_sends_at_once(api):
     async def both():
         return await asyncio.gather(go(), go(), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert query("select count(*) n from vendor_quotes where sent_at is not null")[0]["n"] == 1

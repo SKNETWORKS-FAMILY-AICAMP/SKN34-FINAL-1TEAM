@@ -15,7 +15,7 @@ from app.shared.errors import AppError
 from app.vendor import service
 from app.vendor.schemas import ReviewIn
 from tests.conftest import query
-from tests.helpers import JPEG, make_admin, signup, upload, use, vendor_signup
+from tests.helpers import JPEG, make_admin, no_surprises, signup, upload, use, vendor_signup
 
 APP = "/vendor/application"
 ROW = (
@@ -262,7 +262,7 @@ def test_two_admins_deciding_at_once_only_one_wins(api):
             return_exceptions=True,
         )
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     decisions = query("select action from vendor_reviews where action <> 'apply'")

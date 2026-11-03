@@ -11,7 +11,7 @@ from app.db import SessionLocal
 from app.shared.errors import AppError
 from app.vendor import service
 from tests.conftest import query
-from tests.helpers import PDF, signup, upload, vendor_signup
+from tests.helpers import PDF, no_surprises, signup, upload, vendor_signup
 from tests.test_vendor_profile import URL as PROFILE
 from tests.test_vendor_profile import approved_vendor, body, vendor_id
 
@@ -119,7 +119,7 @@ def test_two_confirms_at_the_same_time_only_one_wins(api):
     async def both():
         return await asyncio.gather(confirm(), confirm(), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert query("select count(*) n from vendor_price_sets where status = 'confirmed'")[0]["n"] == 1

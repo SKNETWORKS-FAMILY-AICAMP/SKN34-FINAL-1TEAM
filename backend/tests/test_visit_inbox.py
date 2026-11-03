@@ -9,7 +9,7 @@ from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from app.visit import service
 from tests.conftest import query
-from tests.helpers import signup, use, vendor_signup
+from tests.helpers import no_surprises, signup, use, vendor_signup
 from tests.test_project import body as project_body
 from tests.test_visit_request import SHARE, home, listed, send
 from tests.test_visit_vendors import NOWON_32
@@ -169,7 +169,7 @@ def test_cancel_and_decline_at_once_only_one_wins(api):
     async def both():
         return await asyncio.gather(as_customer(), as_vendor(), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert len(query("select id from visit_events where from_status = 'requested'")) == 1

@@ -11,7 +11,7 @@ from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from app.visit import service
 from tests.conftest import BACKEND, query
-from tests.helpers import signup, use
+from tests.helpers import no_surprises, signup, use
 from tests.test_vendor_quote import FULL, doc, url
 from tests.test_visit_inbox import login, visit_of
 from tests.test_visit_request import home, listed, send
@@ -123,7 +123,7 @@ def test_two_resends_at_once_and_chosen(api):
     async def both():
         return await asyncio.gather(go(), go(), return_exceptions=True)
 
-    results = asyncio.run(both())
+    results = no_surprises(asyncio.run(both()))
     errors = [r for r in results if isinstance(r, AppError)]
     assert len(errors) == 1 and errors[0].status == 409
     assert query("select quote_ver from visits where id = $1", uuid.UUID(va))[0][0] == 2
