@@ -99,7 +99,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 파일 올리기 (공간 사진 · 도면 · 포트폴리오) */
+        /** 파일 올리기 (공간 사진 · 도면 · 시공 사진 · 견적서 · 단가표 · 공사 사진) */
         post: operations["upload_files_post"];
         delete?: never;
         options?: never;
@@ -118,6 +118,74 @@ export interface paths {
         get: operations["download_files__file_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 내 알림 (최근 50개) */
+        get: operations["list_notifications_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/unread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 안 읽은 알림 수 (머리 종 배지) */
+        get: operations["unread_notifications_unread_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{nid}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 알림 읽음 */
+        post: operations["read_one_notifications__nid__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 알림 모두 읽음 */
+        post: operations["read_all_notifications_read_all_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -170,6 +238,42 @@ export interface paths {
         get: operations["get_project_projects__project_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 집 정보 고치기 (실측 요청 전까지, 만든 사람만) */
+        patch: operations["update_project_projects__project_id__patch"];
+        trace?: never;
+    };
+    "/projects/{project_id}/standard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 표준견적서 (믿집 계산, 만든 사람 · 관리자) */
+        get: operations["standard_projects__project_id__standard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 공정표 (예상 공정표, 만든 사람 · 관리자) */
+        get: operations["plan_projects__project_id__plan_get"];
+        put?: never;
+        /** 예상 공정표 다시 계산 (시작일 · 주말 공사) */
+        post: operations["redo_plan_projects__project_id__plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -261,6 +365,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vendor/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 업체 정보 (승인된 업체 본인) */
+        get: operations["profile_vendor_profile_get"];
+        /** 업체 정보 저장 · 통째로 (상호 · 대표자 · 사업자번호는 못 바꿈, updated_at이 다르면 409) */
+        put: operations["save_profile_vendor_profile_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/portfolio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 시공 사진 더하기 (먼저 POST /files kind=portfolio) */
+        post: operations["add_portfolio_vendor_portfolio_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/portfolio/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 시공 사진 빼기 */
+        delete: operations["remove_portfolio_vendor_portfolio__item_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -312,6 +468,15 @@ export interface components {
             /** Sgg */
             sgg: string;
         };
+        /** AreaOut */
+        AreaOut: {
+            /** Sido */
+            sido: string;
+            /** Sgg */
+            sgg: string;
+            /** Label */
+            label: string;
+        };
         /** Body_upload_files_post */
         Body_upload_files_post: {
             /** Kind */
@@ -336,6 +501,18 @@ export interface components {
              */
             license_file: string;
         };
+        /** BudgetOut */
+        BudgetOut: {
+            /** Band */
+            band: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "within" | "over" | "open";
+            /** Over By */
+            over_by: number | null;
+        };
         /** DobaeIn */
         DobaeIn: {
             /** Spaces */
@@ -352,6 +529,16 @@ export interface components {
             spaces: string[];
             /** Grade */
             grade: ("economy" | "basic") | null;
+        };
+        /** FaqIn */
+        FaqIn: {
+            /**
+             * Key
+             * @enum {string}
+             */
+            key: "process" | "pricing" | "extra_cost" | "duration" | "as_refund";
+            /** Answer */
+            answer: string;
         };
         /** FileOut */
         FileOut: {
@@ -374,6 +561,13 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** LinkIn */
+        LinkIn: {
+            /** Label */
+            label?: string | null;
+            /** Url */
+            url: string;
+        };
         /** LoginIn */
         LoginIn: {
             /** Email */
@@ -392,6 +586,8 @@ export interface components {
             email: string;
             /** Name */
             name: string;
+            /** Phone */
+            phone?: string | null;
             /** Role */
             role: string;
             /** Vendor Status */
@@ -401,11 +597,13 @@ export interface components {
         };
         /**
          * MePatch
-         * @description 내 정보 수정. 이메일은 로그인 아이디라 여기서 바꾸지 않는다.
+         * @description 내 정보 수정. 보낸 칸만 바꾼다. 이메일은 로그인 아이디라 여기서 바꾸지 않는다.
          */
         MePatch: {
             /** Name */
-            name: string;
+            name?: string | null;
+            /** Phone */
+            phone?: string | null;
         };
         /** MokgongIn */
         MokgongIn: {
@@ -420,6 +618,36 @@ export interface components {
             spaces: string[];
             /** Items */
             items: ("molding" | "base" | "door" | "flatten")[];
+        };
+        /** NotificationOut */
+        NotificationOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Project Id */
+            project_id: string | null;
+            /** Body */
+            body: string;
+            /** Link */
+            link: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Read */
+            read: boolean;
+        };
+        /** NotificationPage */
+        NotificationPage: {
+            /** Items */
+            items: components["schemas"]["NotificationOut"][];
+            /** Unread */
+            unread: number;
         };
         /** PhotoIn */
         PhotoIn: {
@@ -443,6 +671,285 @@ export interface components {
              * Format: uuid
              */
             space_id: string;
+        };
+        /** PlanBlockOut */
+        PlanBlockOut: {
+            /** Trade */
+            trade: string | null;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Days */
+            days: number;
+            /** Crew */
+            crew: number | null;
+            /** Man Day */
+            man_day: string | null;
+        };
+        /** PlanDayOut */
+        PlanDayOut: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Trade */
+            trade: string | null;
+            /** Kind */
+            kind: string;
+            /** Names */
+            names: string[];
+            /** Holiday */
+            holiday: string | null;
+        };
+        /** PlanOut */
+        PlanOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Kind */
+            kind: string;
+            /** Version */
+            version: number;
+            /** Project Rev */
+            project_rev: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Work Days */
+            work_days: number;
+            /** Weekend Work */
+            weekend_work: boolean;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+            /** Blocks */
+            blocks: components["schemas"]["PlanBlockOut"][];
+            /** Days */
+            days: components["schemas"]["PlanDayOut"][];
+        };
+        /**
+         * PlanRedo
+         * @description 날짜 바꿔 보기: 시작일 · 주말에도 공사
+         */
+        PlanRedo: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * Weekend Work
+             * @default false
+             */
+            weekend_work: boolean;
+        };
+        /** PortfolioEdit */
+        PortfolioEdit: {
+            /** Title */
+            title: string;
+            /** Space */
+            space?: string | null;
+            /** Pyeong */
+            pyeong?: number | null;
+            /** Taken On */
+            taken_on?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /**
+         * PortfolioIn
+         * @description 시공 사진 더하기. 사진은 먼저 POST /files (kind=portfolio)로 올린다.
+         */
+        PortfolioIn: {
+            /** Title */
+            title: string;
+            /** Space */
+            space?: string | null;
+            /** Pyeong */
+            pyeong?: number | null;
+            /** Taken On */
+            taken_on?: string | null;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+        };
+        /** PortfolioOut */
+        PortfolioOut: {
+            /** Title */
+            title: string;
+            /** Space */
+            space?: string | null;
+            /** Pyeong */
+            pyeong?: number | null;
+            /** Taken On */
+            taken_on?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+        };
+        /**
+         * ProfileIn
+         * @description 업체 정보 통째로 저장. 상호 · 대표자 · 사업자번호 · 개업일은 심사 대상이라 여기서 바꾸지 않는다.
+         */
+        ProfileIn: {
+            /**
+             * Updated At
+             * @description GET에서 받은 값 그대로. 그 사이 다른 곳에서 저장했으면 409
+             */
+            updated_at: string | null;
+            /** Phone */
+            phone: string;
+            /** Address */
+            address?: string | null;
+            /** Site Url */
+            site_url?: string | null;
+            /** Trades */
+            trades: ("dobae" | "mokgong")[];
+            /** Areas */
+            areas: components["schemas"]["AreaIn"][];
+            /**
+             * Contact Method
+             * @enum {string}
+             */
+            contact_method: "phone" | "sms" | "kakao" | "web";
+            /**
+             * Contact Url
+             * @description 카카오톡 채널 · 홈페이지 상담일 때 필수
+             */
+            contact_url?: string | null;
+            /** Call Start */
+            call_start?: string | null;
+            /** Call End */
+            call_end?: string | null;
+            /**
+             * Visit Fee
+             * @description 원, 부가세 포함. 0 = 무료
+             */
+            visit_fee: number;
+            /**
+             * Visit Fee Refund
+             * @default false
+             */
+            visit_fee_refund: boolean;
+            /**
+             * Tax Kind
+             * @default general
+             * @enum {string}
+             */
+            tax_kind: "general" | "exempt";
+            /** Interior License */
+            interior_license?: string | null;
+            /** Insurance */
+            insurance?: string | null;
+            /** Faqs */
+            faqs?: components["schemas"]["FaqIn"][];
+            /** Links */
+            links?: components["schemas"]["LinkIn"][];
+            /**
+             * Portfolio
+             * @description 보내면 사진 설명 · 순서를 바꾼다. 지금 있는 사진을 모두 담는다
+             */
+            portfolio?: components["schemas"]["PortfolioEdit"][] | null;
+        };
+        /**
+         * ProfileOut
+         * @description 업체 본인이 보는 업체 정보 (고치는 화면)
+         */
+        ProfileOut: {
+            /**
+             * Vendor Id
+             * Format: uuid
+             */
+            vendor_id: string;
+            /** Biz Name */
+            biz_name: string | null;
+            /** Trades */
+            trades: string[];
+            /** Areas */
+            areas: components["schemas"]["AreaOut"][];
+            /**
+             * Verified At
+             * @description 믿집이 사업자를 확인(승인)한 때
+             */
+            verified_at: string | null;
+            /** Contact Method */
+            contact_method: string | null;
+            /** Call Start */
+            call_start: string | null;
+            /** Call End */
+            call_end: string | null;
+            /** Visit Fee */
+            visit_fee: number | null;
+            /** Visit Fee Refund */
+            visit_fee_refund: boolean;
+            /** Tax Kind */
+            tax_kind: string;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Biz No */
+            biz_no: string | null;
+            /** Opened On */
+            opened_on: string | null;
+            /**
+             * Address Area
+             * @description 사업장 주소의 앞 두 마디 (서울 도봉구)
+             */
+            address_area: string | null;
+            /** Interior License */
+            interior_license: string | null;
+            /** Insurance */
+            insurance: string | null;
+            /** Faqs */
+            faqs: components["schemas"]["FaqIn"][];
+            /** Links */
+            links: components["schemas"]["LinkIn"][];
+            /** Portfolio */
+            portfolio: components["schemas"]["PortfolioOut"][];
+            /** Updated At */
+            updated_at: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Address */
+            address: string | null;
+            /** Site Url */
+            site_url: string | null;
+            /** Contact Url */
+            contact_url: string | null;
         };
         /**
          * ProjectCreate
@@ -493,6 +1000,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Code */
+            code: string;
             /** Region */
             region: string;
             size: components["schemas"]["SizeIn-Output"];
@@ -511,6 +1020,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Code */
+            code: string;
+            /** Rev */
+            rev: number;
+            /** Locked */
+            locked: boolean;
             /** Sido */
             sido: string;
             /** Sgg */
@@ -554,6 +1069,8 @@ export interface components {
         SignupIn: {
             /** Name */
             name: string;
+            /** Phone */
+            phone: string;
             /** Email */
             email: string;
             /** Password */
@@ -602,6 +1119,84 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+        };
+        /** StandardLineOut */
+        StandardLineOut: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Qty */
+            qty: string | null;
+            /** Unit */
+            unit: string;
+            /** Unit Price */
+            unit_price: number | null;
+            /** Amount */
+            amount: number | null;
+            /** State */
+            state: string;
+            /** Source */
+            source: string;
+        };
+        /** StandardOut */
+        StandardOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Code */
+            code: string;
+            /** Project Rev */
+            project_rev: number;
+            /** Formula Ver */
+            formula_ver: string;
+            /** Price Ver */
+            price_ver: string;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+            /** Area M2 */
+            area_m2: string;
+            /** Area Basis */
+            area_basis: string;
+            /** Pyeong */
+            pyeong: string;
+            /** Trades */
+            trades: components["schemas"]["StandardTradeOut"][];
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /** Total */
+            total: number;
+            budget: components["schemas"]["BudgetOut"] | null;
+        };
+        /** StandardTradeOut */
+        StandardTradeOut: {
+            /** Trade */
+            trade: string;
+            /** Version */
+            version: number;
+            /** Grade */
+            grade: string | null;
+            /** Lines */
+            lines: components["schemas"]["StandardLineOut"][];
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /** Total */
+            total: number;
+            /** Man Day */
+            man_day: string;
+            /** Crew */
+            crew: number;
+            /** Notes */
+            notes: string[];
         };
         /** TradesIn */
         TradesIn: {
@@ -933,6 +1528,106 @@ export interface operations {
             };
         };
     };
+    list_notifications_notifications_get: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unread_notifications_unread_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    read_one_notifications__nid__read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_all_notifications_read_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     regions_regions_get: {
         parameters: {
             query?: never;
@@ -1026,6 +1721,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    standard_projects__project_id__standard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plan_projects__project_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    redo_plan_projects__project_id__plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanRedo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanOut"];
                 };
             };
             /** @description Validation Error */
@@ -1188,6 +2015,121 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["VendorAdminOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    profile_vendor_profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+        };
+    };
+    save_profile_vendor_profile_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_portfolio_vendor_portfolio_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortfolioIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_portfolio_vendor_portfolio__item_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
