@@ -216,7 +216,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 내 인테리어 프로젝트 */
+        /** 내 공사 목록 · 단계 요약 · 지금 할 일 · 다음 날짜 (바뀐 날 최근 순) */
         get: operations["my_projects_projects_get"];
         put?: never;
         /** 프로젝트 만들기 */
@@ -243,6 +243,23 @@ export interface paths {
         head?: never;
         /** 집 정보 고치기 (실측 요청 전까지, 만든 사람만) */
         patch: operations["update_project_projects__project_id__patch"];
+        trace?: never;
+    };
+    "/projects/{project_id}/checks/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 공사 전에 할 일 체크 켜기 · 끄기 (만든 고객만) */
+        put: operations["set_check_projects__project_id__checks__key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/projects/{project_id}/standard": {
@@ -580,6 +597,40 @@ export interface paths {
         put?: never;
         /** 공사 끝남 확인: 끝났어요 · 남은 일이 있어요 (업체가 끝냈다고 올린 뒤에만) */
         post: operations["check_work_projects__project_id__deals__deal_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 한 공사 화면: 지금 할 일 · 공정별 단계 · 낼 금액 · 공사 기간 · 업체 연락처 · 체크 */
+        get: operations["overview_projects__project_id__overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/docs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 서류 모음: 표준견적서 · 공정표 버전 · 받은 실측 견적서 · 확정 견적서 · 추가 금액 */
+        get: operations["docs_projects__project_id__docs_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1628,6 +1679,34 @@ export interface components {
             grade: ("economy" | "basic") | null;
         };
         /**
+         * DocsOut
+         * @description 서류 모음 (WDocs)
+         */
+        DocsOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Code */
+            code: string;
+            /** Region */
+            region: string;
+            /** Standard */
+            standard: components["schemas"]["StandardDocOut"][];
+            /**
+             * Standard Total
+             * @description 최신 표준견적서 공정 합계 (부가세 포함)
+             */
+            standard_total: number;
+            /** Plans */
+            plans: components["schemas"]["PlanDocOut"][];
+            /** Quotes */
+            quotes: components["schemas"]["QuoteDocOut"][];
+            /** Extras */
+            extras: components["schemas"]["TradeExtrasOut"][];
+        };
+        /**
          * EstimateDetailOut
          * @description 가견적 '어떻게 계산했나요': 업체가 확인한 단가 × 이 집 표준견적서 수량 (믿집 계산)
          */
@@ -2227,6 +2306,68 @@ export interface components {
             total: number;
         };
         /**
+         * MoneySumOut
+         * @description 낼 금액: 확정한 공정은 확정 견적서, 아니면 표준견적서 (계산 엔진이 더함, 추가 금액은 빼고)
+         */
+        MoneySumOut: {
+            /** Total */
+            total: number;
+            /** By Trade */
+            by_trade: components["schemas"]["TradeMoneyOut"][];
+            /** All Confirmed */
+            all_confirmed: boolean;
+            /** @description 넣은 예산과 견줌 (예산을 안 넣었으면 비어 있다) */
+            budget: components["schemas"]["BudgetOut"] | null;
+        };
+        /**
+         * MyProjectOut
+         * @description 내 공사 목록 한 줄 (WMy)
+         */
+        MyProjectOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Code */
+            code: string;
+            /** Region */
+            region: string;
+            size: components["schemas"]["SizeIn-Output"];
+            /** Trades */
+            trades: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "estimate" | "progress" | "work" | "done";
+            /**
+             * Current
+             * @description 가장 늦은 공정의 지금 단계 (6단계 중)
+             */
+            current: number;
+            todo: components["schemas"]["TodoOut"] | null;
+            next: components["schemas"]["NextOut"] | null;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 바뀐 날 (목록은 최근 순)
+             */
+            updated_at: string;
+            /**
+             * Grades
+             * @description 공정마다 도배 유형
+             */
+            grades: {
+                [key: string]: string | null;
+            };
+        };
+        /**
          * NeedOut
          * @description 하루 인원으로 센 필요한 기간: 품 ÷ 인원을 반나절로 올리고 준비 · 마감을 더해 하루로 올림
          */
@@ -2239,6 +2380,27 @@ export interface components {
             days: number;
             /** Steps */
             steps: components["schemas"]["StepNeedOut"][];
+        };
+        /** NextOut */
+        NextOut: {
+            /**
+             * Kind
+             * @description 업체가 날짜를 낼 기한 · 다른 날짜 요청 답 기한 · 공사 시작 · 공사 끝
+             * @enum {string}
+             */
+            kind: "dates_due" | "request_due" | "start" | "end";
+            /** Trade */
+            trade: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * At
+             * @description 기한이면 그 시각
+             */
+            at: string | null;
         };
         /** NotificationOut */
         NotificationOut: {
@@ -2299,6 +2461,65 @@ export interface components {
              * Format: date
              */
             end: string;
+        };
+        /**
+         * OverviewOut
+         * @description 한 공사 화면 (WProjectB)
+         */
+        OverviewOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Code */
+            code: string;
+            /** Region */
+            region: string;
+            /** Sgg */
+            sgg: string;
+            /** Pyeong */
+            pyeong: string | null;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "estimate" | "progress" | "work" | "done";
+            /** @description 맨 위 지금 할 일 (공정 중 가장 먼저 할 것) */
+            todo: components["schemas"]["TodoOut"] | null;
+            /** @description 가장 가까운 다음 날짜 */
+            next: components["schemas"]["NextOut"] | null;
+            /**
+             * Trades
+             * @description 목공 → 도배 순
+             */
+            trades: components["schemas"]["TradeProgressOut"][];
+            money: components["schemas"]["MoneySumOut"];
+            period: components["schemas"]["PeriodOut"];
+            /** Contacts */
+            contacts: components["schemas"]["VendorContactOut"][];
+            /** Checks */
+            checks: components["schemas"]["ProjectCheckOut"][];
+        };
+        /** PeriodOut */
+        PeriodOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "expected" | "final";
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Work Days */
+            work_days: number;
         };
         /** PhotoIn */
         PhotoIn: {
@@ -2422,6 +2643,35 @@ export interface components {
              * @enum {string}
              */
             state: "confirmed" | "pending" | "expected";
+        };
+        /** PlanDocOut */
+        PlanDocOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "expected" | "final";
+            /** Version */
+            version: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Latest */
+            latest: boolean;
+            /** Link */
+            link: string;
         };
         /** PlanOut */
         PlanOut: {
@@ -2813,6 +3063,25 @@ export interface components {
             /** Contact Url */
             contact_url: string | null;
         };
+        /** ProjectCheckIn */
+        ProjectCheckIn: {
+            /** Done */
+            done: boolean;
+        };
+        /**
+         * ProjectCheckOut
+         * @description 공사 전에 할 일 한 줄
+         */
+        ProjectCheckOut: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Done */
+            done: boolean;
+            /** Done At */
+            done_at: string | null;
+        };
         /**
          * ProjectCreate
          * @description 견적 받기 질문 흐름의 답. 사진 · 도면은 먼저 POST /files로 올리고 id만 보낸다.
@@ -2854,26 +3123,6 @@ export interface components {
              * @default []
              */
             plans: string[];
-        };
-        /** ProjectListItem */
-        ProjectListItem: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Code */
-            code: string;
-            /** Region */
-            region: string;
-            size: components["schemas"]["SizeIn-Output"];
-            /** Trades */
-            trades: string[];
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
         };
         /** ProjectOut */
         ProjectOut: {
@@ -3097,6 +3346,29 @@ export interface components {
              */
             sent_at: string;
         };
+        /** QuoteDocOut */
+        QuoteDocOut: {
+            /**
+             * Visit Id
+             * Format: uuid
+             */
+            visit_id: string;
+            /** Trade */
+            trade: string;
+            /** Vendor Name */
+            vendor_name: string;
+            /** Status */
+            status: string;
+            /** Close Reason */
+            close_reason: string | null;
+            /**
+             * Closed
+             * @description 닫힘 · 기록 (다시 확정할 수 없다)
+             */
+            closed: boolean;
+            /** Versions */
+            versions: components["schemas"]["QuoteVersionDocOut"][];
+        };
         /**
          * QuoteDraftIn
          * @description 실측 견적서 임시 저장 (통째로). 파일은 먼저 POST /files (kind=quote_doc)로 올린다.
@@ -3163,6 +3435,37 @@ export interface components {
             valid_until: string | null;
             /** File Count */
             file_count: number;
+        };
+        /** QuoteVersionDocOut */
+        QuoteVersionDocOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Code */
+            code: string;
+            /** Version */
+            version: number;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
+            /** Total */
+            total: number | null;
+            /**
+             * Confirmed
+             * @description 고객이 확정한 버전
+             */
+            confirmed: boolean;
+            /** Files */
+            files: components["schemas"]["QuoteFileOut"][];
+            /**
+             * File Links
+             * @description files와 같은 순서의 파일 주소
+             */
+            file_links: string[];
         };
         /**
          * ReapplyIn
@@ -3399,6 +3702,24 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** StandardDocOut */
+        StandardDocOut: {
+            /** Trade */
+            trade: string;
+            /** Version */
+            version: number;
+            /** Total */
+            total: number;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+            /** Latest */
+            latest: boolean;
+            /** Link */
+            link: string;
+        };
         /** StandardLineOut */
         StandardLineOut: {
             /** Key */
@@ -3498,6 +3819,53 @@ export interface components {
             /** Half Days */
             half_days: number;
         };
+        /** StepOut */
+        StepOut: {
+            /**
+             * Key
+             * @enum {string}
+             */
+            key: "house" | "standard" | "pick" | "visit" | "deal" | "dates";
+            /** Label */
+            label: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "done" | "now" | "todo";
+            /**
+             * On
+             * @description 끝난 날 · 지금 단계가 시작된 날 (서울)
+             */
+            on: string | null;
+            /**
+             * Count
+             * @description 업체 고르기: 요청한 곳 · 실측: 받은 견적서 수
+             */
+            count: number | null;
+        };
+        /**
+         * TodoOut
+         * @description 지금 할 일 한 줄과 버튼 (판 문구)
+         */
+        TodoOut: {
+            /** Code */
+            code: string;
+            /** Trade */
+            trade: string | null;
+            /** Text */
+            text: string;
+            /**
+             * Action
+             * @description 버튼 글자
+             */
+            action: string;
+            /**
+             * Link
+             * @description 버튼이 가는 화면
+             */
+            link: string;
+        };
         /**
          * TradeDatesOut
          * @description 한 공정의 공사 날짜 (고객 쪽)
@@ -3552,6 +3920,66 @@ export interface components {
             pending: components["schemas"]["MoneyOut"];
             /** @description 업체와 이야기 중인 것 */
             talk: components["schemas"]["MoneyOut"];
+        };
+        /** TradeMoneyOut */
+        TradeMoneyOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Total
+             * @description 부가세 포함
+             */
+            total: number;
+            /**
+             * Source
+             * @description 확정 견적서 · 표준견적서
+             * @enum {string}
+             */
+            source: "deal" | "standard";
+        };
+        /** TradeProgressOut */
+        TradeProgressOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Vendor Name
+             * @description 확정한 업체
+             */
+            vendor_name: string | null;
+            /** Deal Id */
+            deal_id: string | null;
+            /** Deal Status */
+            deal_status: string | null;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "estimate" | "progress" | "work" | "done";
+            /**
+             * Current
+             * @description 지금 단계 번호 (6단계 중)
+             */
+            current: number;
+            /** Steps */
+            steps: components["schemas"]["StepOut"][];
+            todo: components["schemas"]["TodoOut"];
+            /** Overdue */
+            overdue: boolean;
+            /**
+             * Start Date
+             * @description 수락한 공사 날짜
+             */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
+            /**
+             * Proposed Start
+             * @description 수락 기다리는 날짜
+             */
+            proposed_start: string | null;
+            /** Proposed End */
+            proposed_end: string | null;
+            next: components["schemas"]["NextOut"] | null;
         };
         /** TradesIn */
         TradesIn: {
@@ -3733,6 +4161,19 @@ export interface components {
              */
             license_file_id: string;
             license: components["schemas"]["LicenseOut"] | null;
+        };
+        /** VendorContactOut */
+        VendorContactOut: {
+            /** Trade */
+            trade: string;
+            /** Vendor Name */
+            vendor_name: string;
+            contact: components["schemas"]["ContactOut"];
+            /**
+             * Contact Until
+             * @description 연락처가 보이는 마지막 날 (공사 끝낸 뒤)
+             */
+            contact_until: string | null;
         };
         /**
          * VendorDetailOut
@@ -4537,7 +4978,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProjectListItem"][];
+                    "application/json": components["schemas"]["MyProjectOut"][];
                 };
             };
         };
@@ -4628,6 +5069,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_check_projects__project_id__checks__key__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                key: "office_report";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectCheckIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCheckOut"][];
                 };
             };
             /** @description Validation Error */
@@ -5325,6 +5802,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DealOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    overview_projects__project_id__overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    docs_projects__project_id__docs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocsOut"];
                 };
             };
             /** @description Validation Error */

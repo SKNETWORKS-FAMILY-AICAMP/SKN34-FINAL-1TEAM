@@ -8,7 +8,7 @@ import type { TradeLine } from "@/lib/trade-status";
 import { md } from "@/lib/format";
 
 export type ApiProject = Schemas["ProjectOut"];
-export type ApiProjectItem = Schemas["ProjectListItem"];
+export type ApiProjectItem = Schemas["MyProjectOut"];
 
 /** 예시 프로젝트 id. 이 id만 예시 데이터로 보여 준다. */
 export const isDemoProject = (id: string) => PROJECTS.some((p) => p.id === id);
