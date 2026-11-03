@@ -92,3 +92,26 @@ table.days tr > th:first-child { padding-left: 0; }
 .ctMain { flex: 1 1 180px; min-width: 0; }
 .phone { font-size: var(--fs-lg); }
 .ctActs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 공사 중 추가 금액 */
+.extras { display: flex; flex-direction: column; gap: 20px; }
+.exHead { display: flex; flex-direction: column; gap: 6px; }
+.exGroup { display: flex; flex-direction: column; gap: 16px; }
+.exWhen { font-size: var(--fs-sm); font-weight: 400; color: var(--ink-sub); }
+.exDl { display: grid; grid-template-columns: minmax(0, 72px) minmax(0, 1fr); gap: 8px 12px; margin: 0; }
+.exDl dt { font-size: var(--fs-sm); color: var(--ink-sub); }
+.exDl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.exText { overflow-wrap: anywhere; white-space: pre-line; }
+.exDone { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.exDone > li { display: flex; flex-direction: column; gap: 4px; padding-block: 12px; border-bottom: 1px solid var(--line); }
+.exTop { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; }
+.exTitle { min-width: 0; overflow-wrap: anywhere; }
+.exPhotos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.exPhotos a { display: block; border-radius: var(--radius); }
+.pic { display: block; width: 96px; height: 96px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.exSum { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 0 24px; border-top: 2px solid var(--ink); }
+.exSum > div { display: flex; flex-direction: column; gap: 2px; padding-block: 12px; border-bottom: 1px solid var(--line); min-width: 0; }
+.exSum dt { font-size: var(--fs-sm); color: var(--ink-sub); }
+.exSum dd { margin: 0; display: flex; flex-direction: column; }
+.exBig { font-size: var(--fs-lg); font-weight: 700; }
+.exLead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }

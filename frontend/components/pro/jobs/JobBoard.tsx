@@ -5,8 +5,8 @@
 // 고객이 수락한 뒤(시안 '확정한 공사 날짜 바꾸기')는 kind=change로 새 날짜를 올린다. 고객이 수락하기 전까지 수락한 날짜 그대로다.
 //   스스로 바꾸기(scheduled · change_proposed): '공사 날짜 바꾸기'를 눌러 펼치고 이유 필수.
 //   고객 바꾸기 요청(change_requested): 고객이 고른 시작일(request_options, 끝나는 날은 API 값)에서 하나만 고른다.
-// 다시 골랐으면(closed) · 공사를 끝냈다고 올렸으면(status ≠ scheduled) 쓰기를 막는다. 추가 금액 · 공사 끝냄은 23 · 24번에서 붙인다.
-import { useEffect, useMemo, useRef, useState } from "react";
+// 다시 골랐으면(closed) · 공사를 끝냈다고 올렸으면(status ≠ scheduled) 쓰기를 막는다. 추가 금액(JobExtras)은 children으로 받아 아래 링크 위에 둔다.
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FieldError } from "@/components/auth/parts";
@@ -98,10 +98,10 @@ function Due({ job }: { job: Job }) {
   );
 }
 
-/** edit: 작업함 '공사 날짜 바꾸기'로 왔으면 바꾸기 칸을 펼쳐 둔다 (수락한 날짜 그대로일 때만) */
-type Props = { initial: Job; today: string; edit?: boolean };
+/** edit: 작업함 '공사 날짜 바꾸기'로 왔으면 바꾸기 칸을 펼쳐 둔다 (수락한 날짜 그대로일 때만). children: 추가 금액 칸 */
+type Props = { initial: Job; today: string; edit?: boolean; children?: ReactNode };
 
-export function JobBoard({ initial, today, edit = false }: Props) {
+export function JobBoard({ initial, today, edit = false, children }: Props) {
   const router = useRouter();
   const [job, setJob] = useState(initial);
   const [f, setF] = useState<Fields>(() => fieldsOf(initial));
@@ -505,6 +505,8 @@ export function JobBoard({ initial, today, edit = false }: Props) {
           </div>
         </form>
       ) : null}
+
+      {children}
 
       <p className={s.links}>
         <Link className="mj-lnk" href={`/vendor/requests/${v.id}`}>요청 자세히 보기</Link>

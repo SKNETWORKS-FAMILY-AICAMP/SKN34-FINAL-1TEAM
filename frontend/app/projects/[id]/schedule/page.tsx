@@ -1,10 +1,12 @@
 // 공사 날짜 (시안 WSchedule): 공정 탭 · 확정 업체가 낸 날짜를 보고 수락하거나 다른 날짜를 요청한다.
 // 읽기는 GET /projects/{id}/schedule 하나(공정마다 확정 · 낸 날짜 · 요청 · 겹침 · 요청 후보), 연락처는 GET /projects/{id}/visits?trade=.
 // 날짜 · 일하는 날 · 기한 · 겹침은 API 값 그대로다. 수락한 뒤에는 날짜 바꾸기(요청 · 업체가 올린 새 날짜 수락)를 여기서 하고 확정 공정표로 잇는다.
+// 공사 중 추가 금액(공정마다 extras)은 맨 아래 PlanExtras로 보이고 답한다(확정 공정표와 같은 칸).
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Check } from "@/components/vendors/icons";
 import { dealReselectText, canReselect, DEAL_LABEL } from "@/components/confirm/text";
+import { PlanExtras } from "@/components/plan/PlanExtras";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { ContactStrip } from "@/components/schedule/ContactStrip";
 import { DatesBox } from "@/components/schedule/DatesBox";
@@ -141,6 +143,8 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               reselect={reselect}
               finalHref={`/projects/${id}/plan`}
             />
+
+            <PlanExtras projectId={id} groups={[t.extras]} deals={{ [deal.id]: { total: deal.quote.total, tel: ct?.phone ? telDigits(ct.phone) || null : null } }} multi={false} />
           </>
         )}
       </div>

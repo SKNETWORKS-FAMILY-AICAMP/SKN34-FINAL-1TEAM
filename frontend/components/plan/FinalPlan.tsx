@@ -1,6 +1,6 @@
 // 확정 공정표 화면 (시안 WPlanDone). 공사 날짜를 하나라도 수락하면 /projects/[id]/plan이 이 모습이 된다.
 // 칸 상태(수락함 · 수락 전 · 예상 자리) · 업체 · 날짜 · 일하는 날 · 새 날짜 미리 보기는 모두 API(계산 엔진) 값이다.
-// 시안의 '공사 전에 할 일'(저장할 API가 없음) · 추가 금액(23번) · 공사 끝냈어요(24번) · 상담 묻기는 넣지 않는다.
+// 공사 중 추가 금액은 공정마다 PlanExtras(확인 기다림이면 머리에 한 줄). 시안의 '공사 전에 할 일'(저장할 API가 없음) · 공사 끝냈어요(24번) · 상담 묻기는 넣지 않는다.
 import Link from "next/link";
 import { Clock } from "@/components/confirm/DealStatus";
 import { day, when } from "@/components/confirm/text";
@@ -15,6 +15,7 @@ import { ChangeArea, type ChangeItem } from "./ChangeArea";
 import { ChangePreview } from "./ChangePreview";
 import { FinalDays } from "./FinalDays";
 import { PlanContacts, type PlanContact } from "./PlanContacts";
+import { PlanExtras, type ExtraDeal } from "./PlanExtras";
 import { StateBars, StateLegend } from "./StateBars";
 import { blockRows, stateLine, workEnd, type Plan } from "./text";
 import s from "./plan.module.css";
@@ -57,6 +58,12 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
   const pending = plan.blocks.filter((b) => b.kind === "work" && b.state === "pending" && b.trade);
   // 날짜 바꾸기 요청: 수락한 공정 중 아직 요청할 수 있는 것 (하나면 그 공정 탭으로)
   const movable = rows.filter((r) => r.deal.status === "scheduled" && r.dates_state === "scheduled" && r.requests_left > 0);
+  // 추가 금액: 확정마다 확정 금액 · 전화 번호, 확인 기다리는 수(API 줄 수)
+  const extraDeals: Record<string, ExtraDeal> = Object.fromEntries(rows.map((r) => [r.deal.id, { total: r.deal.quote.total, tel: tel(r.deal.trade) }]));
+  const extraWait = plan.extras.reduce((n, g) => n + g.items.filter((x) => x.ack === "pending").length, 0);
+  // API 목록 순서가 고정되지 않아 막대와 같은 공정 순서로 늘어놓는다
+  const workOrder = plan.blocks.filter((b) => b.kind === "work").map((b) => b.trade);
+  const extraGroups = [...plan.extras].sort((a, b) => workOrder.indexOf(a.trade) - workOrder.indexOf(b.trade));
 
   return (
     <main id="main">
@@ -69,6 +76,9 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
           </div>
           <p className="mj-sub">{stateLine(plan.blocks)}</p>
           <p className={`mj-num ${s.line}`}>일하는 날 <b>{plan.work_days}일</b> · <b>{md(plan.start)} ~ {md(end)}</b> · {plan.weekend_work ? "주말에도 공사" : "주말 휴일"}</p>
+          {extraWait ? (
+            <p className={s.exLead}><span className="mj-st mj-st-now mj-num">업체가 알린 추가 금액 {extraWait}건 · 확인 기다림</span><a className="mj-lnk" href="#extras">추가 금액 보기</a></p>
+          ) : null}
         </div>
         <Link className="mj-lnk" href={`/projects/${id}/plan?kind=expected`}>예상 공정표 보기</Link>
       </div>
@@ -94,6 +104,7 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
       </section>
 
       <div className={`mj-wrap ${s.foot}`}>
+        <PlanExtras projectId={id} groups={extraGroups} deals={extraDeals} multi={rows.length > 1} />
         <PlanContacts rows={contacts} />
       </div>
     </main>

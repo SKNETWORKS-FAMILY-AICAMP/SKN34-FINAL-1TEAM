@@ -3,6 +3,7 @@
 // 공사 탭은 확정된 공사(GET /vendor/visits?tab=jobs): 확정한 날 · 공사 날짜 · 다음 할 일(기한 · 기한 지남은 API 값).
 // 할 일에서 본 요청은 '견적서 올리기', 기다림은 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
 // 공사 탭 줄은 공사 날짜 상태(dates_state)에 따라 '공사 날짜 내기' · '날짜 다시 내기' · '요청에 답하기' · '새 날짜 올리기' · '공사 날짜 바꾸기' · '공사 날짜 보기'로 /vendor/jobs/{deal_id}에 간다.
+// 고객 확인을 기다리는 추가 금액이 있으면 다음 할 일 아래 '추가 금액 확인 기다림 N건'(extras_pending)을 더한다.
 import Link from "next/link";
 import type { InboxPage, InboxSummary } from "@/lib/api/visit";
 import type { VendorPrices, VendorProfile } from "@/lib/api/vendor";
@@ -139,7 +140,7 @@ function JobRow({ v }: { v: Row }) {
       <td className={s.cx}>{v.region}</td>
       <td className="r mj-num">{pyeongText(v.pyeong)}</td>
       <td><span className={s.mlab}>공사 날짜 </span><JobDates v={v} /></td>
-      <td><NextJob v={v} /></td>
+      <td><NextJob v={v} />{v.extras_pending > 0 ? <><br /><span className="mj-st mj-st-wait mj-num"><Dash />추가 금액 확인 기다림 {v.extras_pending}건</span></> : null}</td>
       <td className="r">
         <div className={s.acts}>
           {v.deal_id ? (

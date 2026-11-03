@@ -108,3 +108,27 @@
 .sumText { overflow-wrap: anywhere; white-space: pre-line; }
 .dlgBtns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 @media (max-width: 400px) { .dlg { padding: 24px 16px 16px; } }
+
+/* 추가 금액 알리기 */
+.exHead { display: flex; flex-direction: column; gap: 4px; }
+.exCols { display: flex; flex-wrap: wrap; gap: 24px 40px; align-items: flex-start; }
+.exCol { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.exUnit { display: flex; align-items: center; gap: 8px; max-width: 240px; }
+.exUnit input { text-align: right; }
+.cust { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding-block: 10px; border-block: 1px solid var(--line); }
+.exPhotos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.exPhotos li { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.exPhotos a { display: block; border-radius: var(--radius); }
+.pic { display: block; width: 88px; height: 88px; object-fit: cover; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.upBad { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.upBad b { overflow-wrap: anywhere; }
+.exList { display: flex; flex-direction: column; gap: 12px; padding-top: 8px; }
+.exItems { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.exItems > li { display: flex; flex-direction: column; gap: 6px; padding-block: 14px; border-bottom: 1px solid var(--line); }
+.exTop { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; }
+.exTitle { min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-lg); }
+.exText { overflow-wrap: anywhere; white-space: pre-line; }
+.exSum { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 0 24px; border-top: 2px solid var(--ink); }
+.exSum > div { display: flex; flex-direction: column; gap: 2px; padding-block: 12px; border-bottom: 1px solid var(--line); min-width: 0; }
+.exSum dt { font-size: var(--fs-sm); color: var(--ink-sub); }
+.exSum dd { margin: 0; display: flex; flex-direction: column; }

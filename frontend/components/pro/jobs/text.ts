@@ -67,6 +67,38 @@ export function methodText(method: string, callOn: string | null | undefined): s
   return "믿집에서 냄";
 }
 
+// ---- 공사 중 추가 금액 (시안 WVCalendar '추가 금액 알리기') ----
+
+export type Extras = Schemas["TradeExtrasOut"];
+export type Extra = Schemas["ExtraOut"];
+export type ExtraVat = Schemas["ExtraIn"]["vat_mode"];
+
+/** 추가 금액을 알릴 수 있는 확정 상태: 공사 날짜를 수락한 뒤 · 남은 일을 하는 동안 (schedule.service EXTRA_OPEN과 같다) */
+export const canAddExtra = (status: string | null | undefined) => status === "scheduled" || status === "fixing";
+
+/** 한 일 · 이유 길이, 사진 수 한도 (schedule.schemas ExtraIn · models EXTRA_PHOTOS_MAX와 같다) */
+export const EXTRA_TITLE_MAX = 40;
+export const EXTRA_PHOTOS_MAX = 5;
+
+/** 공사 사진 (files.service RULES work_photo: JPG · PNG · WebP · HEIC, 10MB. HEIC는 서버가 JPG로 바꾼다) */
+export const EXTRA_PHOTO = { accept: ".jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic", ext: /\.(jpe?g|png|webp|heic|heif)$/i, mb: 10 };
+
+/** 과세 업체가 고르는 부가세 방식 (기본 부가세 빼고). 면세 업체는 면세만 */
+export const EXTRA_VATS: ExtraVat[] = ["excluded", "included", "exempt"];
+
+/** 적은 금액 칸 안내 (계산하지 않고 방식만 말한다) */
+export const EXTRA_VAT_HINT: Record<ExtraVat, string> = {
+  excluded: "부가세 빼고 적어요. 믿집이 10%를 더해 고객에게 보여 줘요.",
+  included: "부가세를 넣은 금액이에요. 고객에게 이 금액 그대로 보여요.",
+  exempt: "면세라 적은 금액 그대로 고객에게 보여요.",
+};
+
+/** 업체가 보는 고객 답 */
+export const VENDOR_ACK: Record<Extra["ack"], string> = { pending: "확인 기다림", ok: "확인함", talk: "이야기하고 싶어 함" };
+
+/** 고객에게 보이는 금액 꼬리: 면세면 "면세", 아니면 "부가세 포함" */
+export const extraTail = (vatMode: string) => (vatMode === "exempt" ? "면세" : "부가세 포함");
+
 /** 받침에 맞춰 은/는: "도배는", "목공은" */
 export function eunNeun(word: string): string {
   const c = word.charCodeAt(word.length - 1);
