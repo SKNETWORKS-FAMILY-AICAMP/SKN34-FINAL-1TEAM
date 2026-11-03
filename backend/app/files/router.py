@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
     "/files",
     status_code=201,
     response_model=FileOut,
-    summary="파일 올리기 (공간 사진 · 도면 · 포트폴리오)",
+    summary="파일 올리기 (공간 사진 · 도면 · 시공 사진 · 견적서 · 단가표 · 공사 사진)",
 )
 async def upload(
     kind: Annotated[str, Form()],

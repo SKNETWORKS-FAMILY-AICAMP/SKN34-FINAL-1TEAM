@@ -1,11 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
-from app.vendor.models import Vendor, VendorArea, VendorTrade
+from app.vendor.models import (
+    Vendor,
+    VendorArea,
+    VendorFaq,
+    VendorLink,
+    VendorPortfolio,
+    VendorTrade,
+)
 
 
 async def review_of(s: AsyncSession, user_id: uuid.UUID) -> tuple[str, str | None] | None:
@@ -74,3 +81,97 @@ async def set_status(
         .values(status=to, reject_reason=reason, reviewed_by=by, reviewed_at=at)
     )
     return res.rowcount == 1
+
+
+async def save_if_unchanged(
+    s: AsyncSession, vendor_id: uuid.UUID, seen: datetime | None, values: dict
+) -> bool:
+    """화면이 읽은 뒤로 아무도 저장하지 않았을 때만 바꾼다 (행을 잠가 동시 저장은 한쪽만 된다)."""
+    res = await s.execute(
+        update(Vendor)
+        .where(Vendor.user_id == vendor_id, Vendor.updated_at.is_not_distinct_from(seen))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    return res.rowcount == 1
+
+
+async def replace_parts(
+    s: AsyncSession,
+    vendor_id: uuid.UUID,
+    trades: list[str],
+    areas: list[tuple[str, str]],
+    faqs: list[tuple[str, str]],
+    links: list[tuple[str | None, str]],
+) -> None:
+    for model in (VendorTrade, VendorArea, VendorFaq, VendorLink):
+        await s.execute(delete(model).where(model.vendor_id == vendor_id))
+    s.add_all([VendorTrade(vendor_id=vendor_id, trade=t) for t in trades])
+    s.add_all([VendorArea(vendor_id=vendor_id, sido=a, sgg=b) for a, b in areas])
+    s.add_all([VendorFaq(vendor_id=vendor_id, key=k, answer=v) for k, v in faqs])
+    s.add_all(
+        [
+            VendorLink(vendor_id=vendor_id, sort=i, label=lb, url=u)
+            for i, (lb, u) in enumerate(links)
+        ]
+    )
+
+
+async def faqs_links(
+    s: AsyncSession, vendor_id: uuid.UUID
+) -> tuple[dict[str, str], list[VendorLink]]:
+    q = select(VendorFaq.key, VendorFaq.answer).where(VendorFaq.vendor_id == vendor_id)
+    faqs = {k: a for k, a in (await s.execute(q)).all()}
+    q = select(VendorLink).where(VendorLink.vendor_id == vendor_id).order_by(VendorLink.sort)
+    return faqs, list((await s.execute(q)).scalars().all())
+
+
+async def portfolio_of(s: AsyncSession, vendor_id: uuid.UUID) -> list[VendorPortfolio]:
+    q = (
+        select(VendorPortfolio)
+        .where(VendorPortfolio.vendor_id == vendor_id)
+        .order_by(VendorPortfolio.sort, VendorPortfolio.id)
+    )
+    return list((await s.execute(q)).scalars().all())
+
+
+async def lock_vendor(s: AsyncSession, vendor_id: uuid.UUID) -> None:
+    """같은 업체의 사진 더하기가 줄 서게 업체 행을 잠근다 (장수 한도를 동시에 넘지 않게)."""
+    await s.execute(select(Vendor.user_id).where(Vendor.user_id == vendor_id).with_for_update())
+
+
+async def portfolio_count_and_next(s: AsyncSession, vendor_id: uuid.UUID) -> tuple[int, int]:
+    n, top = (
+        await s.execute(
+            select(func.count(), func.max(VendorPortfolio.sort)).where(
+                VendorPortfolio.vendor_id == vendor_id
+            )
+        )
+    ).one()
+    return n, (top + 1 if top is not None else 0)
+
+
+async def vendors_by_id(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, Vendor]:
+    rows = (await s.execute(select(Vendor).where(Vendor.user_id.in_(ids)))).scalars()
+    return {v.user_id: v for v in rows}
+
+
+async def approved_ids(
+    s: AsyncSession, trade: str | None, sido: str | None, sgg: str | None
+) -> list[uuid.UUID]:
+    """승인됐고 연락 방식을 정한 업체. 공정 · 지역(시 · 도 + 시 · 군 · 구)으로 좁힌다."""
+    q = select(Vendor.user_id).where(
+        Vendor.status == "approved", Vendor.contact_method.is_not(None)
+    )
+    if trade:
+        q = q.where(
+            select(VendorTrade.vendor_id)
+            .where(VendorTrade.vendor_id == Vendor.user_id, VendorTrade.trade == trade)
+            .exists()
+        )
+    if sido:
+        cond = [VendorArea.vendor_id == Vendor.user_id, VendorArea.sido == sido]
+        if sgg:
+            cond.append(VendorArea.sgg == sgg)
+        q = q.where(select(VendorArea.vendor_id).where(*cond).exists())
+    return list((await s.execute(q.order_by(Vendor.reviewed_at, Vendor.user_id))).scalars().all())

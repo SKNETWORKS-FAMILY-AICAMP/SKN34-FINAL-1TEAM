@@ -11,9 +11,19 @@ from app.auth.deps import require_role, set_session_cookie
 from app.auth.models import User
 from app.auth.schemas import MeOut
 from app.db import get_session
+from app.shared.clock import today_seoul
 from app.shared.ratelimit import client_ip
 from app.vendor import service
-from app.vendor.schemas import RejectIn, VendorAdminOut, VendorSignupIn
+from app.vendor.deps import approved_vendor
+from app.vendor.schemas import (
+    PortfolioIn,
+    PortfolioOut,
+    ProfileIn,
+    ProfileOut,
+    RejectIn,
+    VendorAdminOut,
+    VendorSignupIn,
+)
 
 router = APIRouter(tags=["업체"])
 admin_only = require_role("admin")
@@ -83,3 +93,47 @@ async def reject(
     s: AsyncSession = Depends(get_session),
 ) -> VendorAdminOut:
     return await service.reject(s, admin, vendor_id, data.reason)
+
+
+@router.get("/vendor/profile", response_model=ProfileOut, summary="업체 정보 (승인된 업체 본인)")
+async def profile(
+    vendor: User = Depends(approved_vendor), s: AsyncSession = Depends(get_session)
+) -> ProfileOut:
+    return await service.get_profile(s, vendor)
+
+
+@router.put(
+    "/vendor/profile",
+    response_model=ProfileOut,
+    summary="업체 정보 저장 · 통째로 (상호 · 대표자 · 사업자번호는 못 바꿈, updated_at이 다르면 409)",
+)
+async def save_profile(
+    data: ProfileIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> ProfileOut:
+    return await service.save_profile(s, vendor, data, today_seoul())
+
+
+@router.post(
+    "/vendor/portfolio",
+    status_code=201,
+    response_model=PortfolioOut,
+    summary="시공 사진 더하기 (먼저 POST /files kind=portfolio)",
+)
+async def add_portfolio(
+    data: PortfolioIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PortfolioOut:
+    return await service.add_portfolio(s, vendor, data, today_seoul())
+
+
+@router.delete("/vendor/portfolio/{item_id}", status_code=204, summary="시공 사진 빼기")
+async def remove_portfolio(
+    item_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    await service.remove_portfolio(s, vendor, item_id)
+    return Response(status_code=204)
