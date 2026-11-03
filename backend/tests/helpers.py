@@ -8,6 +8,7 @@ from PIL import Image
 from app.config import settings
 
 PASSWORD = "test-pass-1234"
+PHONE = "01012345678"
 
 
 def image_bytes(fmt: str = "JPEG", size: tuple[int, int] = (40, 20), **save) -> bytes:
@@ -23,7 +24,8 @@ PDF = b"%PDF-1.4\n" + b"0" * 64
 
 def signup(api, email: str = "customer@mitjip.test", name: str = "고객") -> str:
     api.cookies.clear()
-    r = api.post("/auth/signup", json={"name": name, "email": email, "password": PASSWORD})
+    body = {"name": name, "email": email, "password": PASSWORD, "phone": PHONE}
+    r = api.post("/auth/signup", json=body)
     assert r.status_code == 201, r.text
     return api.cookies.get(settings.session_cookie)
 
