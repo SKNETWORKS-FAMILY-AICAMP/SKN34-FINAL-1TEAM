@@ -406,7 +406,7 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
           {sent && !lock ? (
             <div className={s.reHead}>
               <p className="mj-notice">
-                <span><b>{d ? `버전 ${d.version} 고치는 중이에요` : "다음 버전 고치는 중이에요"}</b> · 다시 올리기 전까지 고객에게는 앞에 보낸 버전 {sent.version}만 보여요. 견적서 파일은 새로 올려요.</span>
+                <span><b>{d ? `버전 ${d.version} 고치는 중이에요` : "다음 버전 고치는 중이에요"}</b> · 다시 올리기 전까지 고객에게는 앞에 보낸 버전 {sent.version}만 보여요. 앞에 보낸 파일이 채워져 있어요. 바뀐 파일만 빼고 새로 올려요.</span>
               </p>
               <button type="button" className="mj-btn mj-btn-sec mj-btn-sm" onClick={stopEdit}>그만 고치기</button>
             </div>

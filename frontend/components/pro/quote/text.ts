@@ -44,11 +44,11 @@ export const CLOSED = new Set(["cancelled", "declined", "closed"]);
 /** 고객이 확정한 뒤 (backend visit.service CLOSED_FOR_QUOTE["chosen"]과 같은 문장) */
 export const CHOSEN_TEXT = "고객이 확정해서 다시 올릴 수 없어요.";
 
-/** 다시 올리기: 보낸 버전의 칸으로 다음 버전 임시 저장본을 만든다. 한 파일은 한 견적서에만 붙어서 파일은 새로 올린다. */
+/** 다시 올리기: 보낸 버전의 칸과 파일로 다음 버전 임시 저장본을 만든다(같은 요청의 버전끼리는 파일을 같이 쓴다). */
 export function resendBody(q: Version, modes: VatMode[]): Body {
   const mode = q.vat_mode as VatMode | null;
   return {
-    file_ids: [],
+    file_ids: [...q.files].sort((a, b) => a.sort - b.sort).map((f) => f.file_id),
     measured_on: q.measured_on,
     entered_amount: q.entered_amount,
     vat_mode: mode && modes.includes(mode) ? mode : null,
