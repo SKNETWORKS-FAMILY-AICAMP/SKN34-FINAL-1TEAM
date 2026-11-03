@@ -169,6 +169,13 @@ async def update(
     return await _out(s, p)
 
 
+async def lock(s: AsyncSession, project_id: uuid.UUID) -> None:
+    """프로젝트 행을 잠근다. 같은 집의 상태 변경은 프로젝트 → 요청 · 확정 행 → 제안 · 요청 행 순서로
+    잠가 줄 선다(알림 insert의 project_id FK도 이 행을 잡으므로 먼저 잡는다). commit은 부르는 쪽이."""
+    if await repo.get_for_update(s, project_id) is None:
+        raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
+
+
 async def lock_for_visit(
     s: AsyncSession, project_id: uuid.UUID, unit: tuple[str, str, str] | None = None
 ) -> Project:
@@ -226,6 +233,14 @@ async def _out(s: AsyncSession, p: Project) -> ProjectOut:
 async def get_for(s: AsyncSession, user: User, project_id: uuid.UUID) -> ProjectOut:
     p = await repo.get(s, project_id)
     if p is None or (p.owner_id != user.id and user.role != "admin"):
+        raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
+    return await _out(s, p)
+
+
+async def get_out(s: AsyncSession, project_id: uuid.UUID) -> ProjectOut:
+    """권한 확인 없이 읽는다. 업체 확정처럼 부르는 쪽이 이미 권한을 확인했을 때만 쓴다."""
+    p = await repo.get(s, project_id)
+    if p is None:
         raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
     return await _out(s, p)
 

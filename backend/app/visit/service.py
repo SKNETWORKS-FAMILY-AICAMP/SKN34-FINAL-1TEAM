@@ -28,6 +28,7 @@ from app.quote.schemas import QuoteBriefOut, QuoteDraftIn
 from app.shared.clock import SEOUL, now_utc
 from app.shared.errors import AppError
 from app.shared.ids import uuid7
+from app.shared.korean import i_ga
 from app.vendor import service as vendor_service
 from app.vendor.schemas import ContactOut, EstimateOut
 from app.visit import repository as repo
@@ -423,14 +424,6 @@ async def visits_for(
 # ---- 상태 바꾸기: 고객 취소 · 업체 못 받아요 (허용 전이 → 조건부 UPDATE → 같은 트랜잭션에 이력 · 알림) ----
 
 
-def _i_ga(name: str) -> str:
-    """받침이 있으면 '이', 없으면 '가' (마루와벽이 · 결도배가)"""
-    last = name[-1:] or " "
-    if "가" <= last <= "힣":
-        return name + ("이" if (ord(last) - 0xAC00) % 28 else "가")
-    return name + "이"
-
-
 async def _move(
     s: AsyncSession,
     v: Visit,
@@ -488,6 +481,7 @@ async def decline(
 ) -> VendorVisitDetailOut:
     """업체가 이 요청을 못 받아요 (견적서를 보내기 전까지). 고객에게 고른 이유가 보인다."""
     v = await _mine(s, vendor, visit_id)
+    await project_service.lock(s, v.project_id)  # 확정 · 다시 고르기와 같은 잠금 순서
     await _move(
         s,
         v,
@@ -502,7 +496,7 @@ async def decline(
         s,
         user_id=owner,
         kind="visit_declined",
-        body=f"{_i_ga(v.vendor_name)} 이번 요청을 받지 못해요 · 다른 업체를 담아 주세요",
+        body=f"{i_ga(v.vendor_name)} 이번 요청을 받지 못해요 · 다른 업체를 담아 주세요",
         link=f"/projects/{v.project_id}/visits",
         dedup_key=f"visit:{v.id}:declined",
         project_id=v.project_id,
@@ -698,6 +692,7 @@ async def send_quote(
 ) -> QuoteBoardOut:
     """견적서 보내기. 처음이면 requested → quoted, 견적서 옴이면 다시 올리기(quoted → quoted).
     다시 올리기는 visits.quote_ver가 지금 본 버전일 때만 새 버전으로 바꾼다(확정 뒤에는 409)."""
+    await project_service.lock(s, (await _mine(s, vendor, visit_id)).project_id)  # 프로젝트 → 요청
     v = await _locked_mine(s, vendor, visit_id)
     if v.status not in ("requested", "quoted"):
         raise AppError(409, "invalid_state", CLOSED_FOR_QUOTE[v.status])
@@ -724,7 +719,7 @@ async def send_quote(
         s,
         user_id=(await project_service.briefs(s, [v.project_id]))[v.project_id].owner_id,
         kind="quote_resent" if again else "quote_sent",
-        body=f"{_i_ga(v.vendor_name)} 실측 견적서를 {verb} · {TRADE_LABEL[v.trade]}",
+        body=f"{i_ga(v.vendor_name)} 실측 견적서를 {verb} · {TRADE_LABEL[v.trade]}",
         link=f"/projects/{v.project_id}/quotes?trade={v.trade}",
         dedup_key=f"quote:{q.id}",
         project_id=v.project_id,

@@ -15,8 +15,10 @@ from app.calc.schedule import (
     count_workdays,
     days_since,
     due_at,
+    free_range,
     lay_out,
     order_conflicts,
+    start_choices,
     trade_days,
     workdays,
     years_since,
@@ -103,6 +105,43 @@ def test_order_conflicts_when_later_trade_starts_too_early():
     assert order_conflicts(ok, ("mokgong", "dobae")) == []
     bad = [ok[0], Dated("dobae", date(2026, 11, 18), date(2026, 11, 20))]
     assert order_conflicts(bad, ("mokgong", "dobae")) == [("mokgong", "dobae")]
+
+
+def test_free_range_is_between_the_trades_before_and_after():
+    order = ("mokgong", "dobae")
+    mok = Dated("mokgong", date(2026, 11, 16), date(2026, 11, 18))
+    me = Dated("dobae", date(2026, 11, 18), date(2026, 11, 20))
+    assert free_range("dobae", [me, mok], order) == (date(2026, 11, 19), None)
+    # 목공이 금요일에 끝나면 도배는 주말을 건너 월요일부터
+    fri = Dated("mokgong", date(2026, 11, 18), date(2026, 11, 20))
+    assert free_range("dobae", [fri], order) == (date(2026, 11, 23), None)
+    # 뒤 공정(도배)이 월요일에 시작하면 목공은 그 전 금요일까지
+    dob = Dated("dobae", date(2026, 11, 23), date(2026, 11, 25))
+    assert free_range("mokgong", [dob], order) == (None, date(2026, 11, 20))
+    # 공휴일 앞뒤: 12.25(금) 성탄절이면 12.24(목)까지
+    xmas = Dated("dobae", date(2026, 12, 28), date(2026, 12, 29))
+    off = days_off(date(2026, 12, 1), date(2026, 12, 31))
+    assert free_range("mokgong", [xmas], order, off) == (None, date(2026, 12, 24))
+    assert free_range("dobae", [], order) == (None, None)
+
+
+def test_start_choices_skip_days_off_and_keep_the_length():
+    off = days_off(date(2026, 11, 1), date(2026, 12, 31))
+    got = start_choices(date(2026, 11, 19), 3, 3, {date(2026, 11, 19)}, off)
+    # 11.19(목)은 빼고 11.20(금) · 11.23(월) · 11.24(화), 3일씩 일하면 끝나는 날
+    assert got == [
+        (date(2026, 11, 20), date(2026, 11, 24)),
+        (date(2026, 11, 23), date(2026, 11, 25)),
+        (date(2026, 11, 24), date(2026, 11, 26)),
+    ]
+    assert start_choices(date(2026, 12, 24), 1, 1, (), off) == [
+        (date(2026, 12, 24), date(2026, 12, 24))
+    ]
+    assert start_choices(date(2026, 12, 25), 2, 1, (), off) == [
+        (date(2026, 12, 28), date(2026, 12, 29))
+    ]  # 성탄절 · 주말을 건너뛴다
+    with pytest.raises(ValueError):
+        start_choices(date(2026, 11, 19), 0, 1)
 
 
 def test_due_at_is_calendar_days_at_18_seoul():

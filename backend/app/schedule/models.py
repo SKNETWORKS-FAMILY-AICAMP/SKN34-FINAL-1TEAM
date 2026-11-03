@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.calc.schedule import JOB_MAX_DAYS
 from app.db import Base
 from app.shared.ids import uuid7
 
@@ -176,3 +177,91 @@ class DealEvent(Base):
     by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     note: Mapped[str | None] = mapped_column(String(300))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# 공사 날짜: 업체가 낸 날짜(제안)와 고객의 다른 날짜 요청. 공정표 확정은 고객이 수락했을 때만
+PROPOSAL_STATUSES = ("pending", "accepted", "superseded", "withdrawn")
+REQUEST_STATUSES = ("open", "answered", "withdrawn")
+CREW_MAX = 20  # 하루 작업 인원 한도
+WISH_MAX = 3  # 다른 날짜 요청: 시작해도 되는 날 1~3개
+
+
+class DateRequest(Base):
+    """고객의 다른 날짜 요청: 시작해도 되는 날 1~3개 · 이유. 업체가 새 날짜를 내면 answered."""
+
+    __tablename__ = "date_requests"
+    __table_args__ = (
+        Index(
+            "uq_date_requests_open",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+        CheckConstraint("status in ('open', 'answered', 'withdrawn')", name="status"),
+        CheckConstraint(f"cardinality(wish_dates) between 1 and {WISH_MAX}", name="wish_dates"),
+        CheckConstraint("reason is null or length(btrim(reason)) > 0", name="reason"),
+        CheckConstraint("(status = 'open') = (closed_at is null)", name="closed"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"), index=True
+    )
+    reason: Mapped[str | None] = mapped_column(String(300))
+    wish_dates: Mapped[list[date]] = mapped_column(ARRAY(Date))  # 서로 다른 날(service)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # 업체가 다시 낼 기한
+    status: Mapped[str] = mapped_column(String(10), default="open", server_default="open")
+    by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DateProposal(Base):
+    """업체가 낸 공사 날짜. 수락 전까지 다시 낼 수 있고(앞 것은 superseded), 공정마다 대기는 하나."""
+
+    __tablename__ = "date_proposals"
+    __table_args__ = (
+        Index(
+            "uq_date_proposals_pending",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        CheckConstraint(
+            "status in ('pending', 'accepted', 'superseded', 'withdrawn')", name="status"
+        ),
+        CheckConstraint("method in ('app', 'call')", name="method"),
+        CheckConstraint("kind in ('initial', 'change')", name="kind"),
+        CheckConstraint(
+            f"end_date >= start_date and end_date - start_date <= {JOB_MAX_DAYS}", name="dates"
+        ),
+        CheckConstraint(f"crew between 1 and {CREW_MAX}", name="crew"),
+        # 통화로 정했으면 통화한 날이 있다
+        CheckConstraint("(method = 'call') = (call_on is not null)", name="call_on"),
+        CheckConstraint("reason is null or length(btrim(reason)) > 0", name="reason"),
+        # 확정한 날짜를 바꿀 때(change)는 이유가 있다
+        CheckConstraint("kind = 'initial' or reason is not null", name="change_reason"),
+        CheckConstraint("plan_version is null or plan_version >= 1", name="plan_version"),
+        CheckConstraint("(status = 'pending') = (decided_at is null)", name="decided"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"), index=True
+    )
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    crew: Mapped[int] = mapped_column(SmallInteger)
+    method: Mapped[str] = mapped_column(String(10))
+    call_on: Mapped[date | None] = mapped_column(Date)
+    # 답한 다른 날짜 요청
+    request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("date_requests.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(10), default="initial", server_default="initial")
+    reason: Mapped[str | None] = mapped_column(String(300))
+    plan_version: Mapped[int | None] = mapped_column(SmallInteger)  # 낼 때 본 예상 공정표 버전
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

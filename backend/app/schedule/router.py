@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -9,14 +10,20 @@ from app.auth.deps import current_user, require_role
 from app.auth.models import User
 from app.db import get_session
 from app.schedule import service
+from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
+    DateRequestIn,
+    DatesIn,
     DealOut,
     InboxPageOut,
+    JobOut,
     PlanOut,
     PlanRedo,
+    PreviewOut,
+    ScheduleOut,
 )
 from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
@@ -131,3 +138,91 @@ async def vendor_inbox_summary(
     vendor: User = Depends(approved_vendor), s: AsyncSession = Depends(get_session)
 ) -> InboxSummaryOut:
     return await service.vendor_summary(s, vendor)
+
+
+# ---- 공사 날짜 ----
+
+
+@router.get(
+    "/projects/{project_id}/schedule",
+    response_model=ScheduleOut,
+    summary="공사 날짜: 공정마다 낸 날짜 · 다른 날짜 요청 · 겹침 · 요청 후보",
+)
+async def schedule(
+    project_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ScheduleOut:
+    return await service.schedule_for(s, user, project_id, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/deals/{deal_id}/dates/{proposal_id}/accept",
+    response_model=ScheduleOut,
+    summary="낸 공사 날짜 수락 (겹치면 409, 그사이 다시 냈으면 409 dates_changed)",
+)
+async def accept_dates(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ScheduleOut:
+    return await service.accept_dates(s, user, project_id, deal_id, proposal_id, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/deals/{deal_id}/date-requests",
+    status_code=201,
+    response_model=ScheduleOut,
+    summary="다른 공사 날짜 요청 (2번까지, 업체는 다음 날 18:00까지 다시 낸다)",
+)
+async def request_dates(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    data: DateRequestIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ScheduleOut:
+    return await service.request_dates(s, user, project_id, deal_id, data, today_seoul())
+
+
+@router.get(
+    "/vendor/jobs/{deal_id}", response_model=JobOut, summary="공사 날짜 내기 화면 (내 공사만)"
+)
+async def job(
+    deal_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> JobOut:
+    return await service.job_for(s, vendor, deal_id, today_seoul())
+
+
+@router.get(
+    "/vendor/jobs/{deal_id}/dates/preview",
+    response_model=PreviewOut,
+    summary="낼 날짜 미리 계산: 일하는 날 · 그 인원의 필요한 기간 · 겹침 (저장하지 않음)",
+)
+async def preview_dates(
+    deal_id: uuid.UUID,
+    start: date,
+    end: date,
+    crew: Annotated[int, Query(ge=1, le=CREW_MAX)],
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PreviewOut:
+    return await service.preview_dates(s, vendor, deal_id, start, end, crew, today_seoul())
+
+
+@router.post(
+    "/vendor/jobs/{deal_id}/dates",
+    response_model=JobOut,
+    summary="공사 날짜 내기 · 다시 내기 (고객이 수락하기 전까지)",
+)
+async def propose_dates(
+    deal_id: uuid.UUID,
+    data: DatesIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> JobOut:
+    return await service.propose_dates(s, vendor, deal_id, data, today_seoul())

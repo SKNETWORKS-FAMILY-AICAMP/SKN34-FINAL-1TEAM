@@ -5,7 +5,8 @@
 """
 
 import uuid
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -69,8 +70,12 @@ def _area(p: ProjectOut) -> tuple[Decimal, str]:
     return house_area(p.size.band, p.size.m2, p.size.basis, HOUSE_2026H2)
 
 
-def calc_trades(p: ProjectOut) -> list[TradeCalc]:
-    """이 집 정보로 고른 공정을 계산한다(목공 → 도배 순서). 공정표도 이 결과를 쓴다."""
+def calc_trades(p: ProjectOut, crews: Mapping[str, int] | None = None) -> list[TradeCalc]:
+    """이 집 정보로 고른 공정을 계산한다(목공 → 도배 순서). 공정표도 이 결과를 쓴다.
+    crews를 주면 그 공정의 하루 인원을 바꿔 기간을 센다(업체가 적은 인원)."""
+    crews = crews or {}
+    mp = replace(MOKGONG_2026H2, crew=crews["mokgong"]) if "mokgong" in crews else MOKGONG_2026H2
+    dp = replace(DOBAE_2026H2, crew=crews["dobae"]) if "dobae" in crews else DOBAE_2026H2
     area, basis = _area(p)
     out: list[TradeCalc] = []
     if p.trades.mokgong:
@@ -81,7 +86,7 @@ def calc_trades(p: ProjectOut) -> list[TradeCalc]:
             mokgong.MokgongInput(
                 area, basis, items, p.occupied, doors=max(rooms, 1) if "door" in items else 0
             ),
-            MOKGONG_2026H2,
+            mp,
         )
         notes = list(m.assumptions)
         if "door" in items:
@@ -95,7 +100,7 @@ def calc_trades(p: ProjectOut) -> list[TradeCalc]:
                 m.vat,
                 m.total,
                 m.man_days,
-                MOKGONG_2026H2.crew,
+                mp.crew,
                 m.steps,
                 notes,
             )
@@ -103,7 +108,7 @@ def calc_trades(p: ProjectOut) -> list[TradeCalc]:
     if p.trades.dobae:
         d = dobae.quote(
             dobae.DobaeInput(area, basis, p.trades.dobae.grade, True, p.occupied, p.balcony_ext),
-            DOBAE_2026H2,
+            dp,
         )
         out.append(
             TradeCalc(
@@ -114,7 +119,7 @@ def calc_trades(p: ProjectOut) -> list[TradeCalc]:
                 d.vat,
                 d.total,
                 d.man_days,
-                DOBAE_2026H2.crew,
+                dp.crew,
                 d.steps,
                 list(d.assumptions),
             )

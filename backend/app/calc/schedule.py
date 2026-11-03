@@ -187,6 +187,56 @@ def order_conflicts(dated: Sequence[Dated], order: Sequence[str]) -> list[tuple[
     return out
 
 
+def _prev_workday(d: date, days_off: Collection[date], weekend: Collection[int]) -> date:
+    for _ in range(MAX_SPAN_DAYS):
+        if not is_off(d, days_off, weekend):
+            return d
+        d -= timedelta(days=1)
+    raise ValueError("쉬는 날이 너무 많아 일할 날을 찾지 못했어요")
+
+
+def free_range(
+    trade: str,
+    dated: Sequence[Dated],
+    order: Sequence[str],
+    days_off: Collection[date] = (),
+    weekend: Collection[int] = WEEKEND,
+) -> tuple[date | None, date | None]:
+    """trade가 다른 공정과 겹치지 않는 자리: (앞 공정이 끝난 다음 일하는 날, 뒤 공정 시작 전 마지막
+    일하는 날). 앞 · 뒤 공정이 없으면 그쪽은 None."""
+    rank = {t: i for i, t in enumerate(order)}
+    me = rank[trade]
+    others = [d for d in dated if d.trade != trade and d.trade in rank]
+    before = [d.date_to for d in others if rank[d.trade] < me]
+    after = [d.date_from for d in others if rank[d.trade] > me]
+    start_from = (
+        workdays(max(before) + timedelta(days=1), 1, days_off, weekend)[0] if before else None
+    )
+    end_by = _prev_workday(min(after) - timedelta(days=1), days_off, weekend) if after else None
+    return start_from, end_by
+
+
+def start_choices(
+    first: date,
+    days: int,
+    n: int,
+    skip: Collection[date] = (),
+    days_off: Collection[date] = (),
+    weekend: Collection[int] = WEEKEND,
+) -> list[tuple[date, date]]:
+    """first부터 일하는 날 n개를 시작일 후보로 (skip은 빼고), 각각 일하는 날 days개면 끝나는 날."""
+    if days < 1 or n < 0:
+        raise ValueError("일하는 날 수와 후보 수를 다시 확인해 주세요")
+    out: list[tuple[date, date]] = []
+    d = first
+    while len(out) < n:
+        (start,) = workdays(d, 1, days_off, weekend)
+        if start not in skip:
+            out.append((start, workdays(start, days, days_off, weekend)[-1]))
+        d = start + timedelta(days=1)
+    return out
+
+
 def due_at(base: datetime, days: int, hour: int = DUE_HOUR) -> datetime:
     """기준 시각의 서울 날짜 + days일 hour시(서울)."""
     if base.tzinfo is None or days < 0:

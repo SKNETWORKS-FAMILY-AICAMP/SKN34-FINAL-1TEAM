@@ -13,28 +13,67 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.calc.common import FORMULA_VERSION
-from app.calc.schedule import TradePlan, due_at, lay_out, workdays
+from app.calc.schedule import (
+    JOB_MAX_DAYS,
+    WEEKEND,
+    Dated,
+    TradePlan,
+    count_workdays,
+    days_since,
+    due_at,
+    free_range,
+    is_off,
+    lay_out,
+    order_conflicts,
+    start_choices,
+    trade_days,
+    workdays,
+)
 from app.notify import service as notify_service
 from app.project import service as project_service
 from app.project.schemas import ProjectOut
 from app.quote import service as quote_service
 from app.refprice.holidays import HOLIDAYS, days_off
-from app.schedule.models import OPEN_DEALS, Deal, DealEvent, Plan, PlanDay, PlanStep
+from app.schedule.models import (
+    OPEN_DEALS,
+    DateProposal,
+    DateRequest,
+    Deal,
+    DealEvent,
+    Plan,
+    PlanDay,
+    PlanStep,
+)
 from app.schedule.schemas import (
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
+    DateRequestIn,
+    DateRequestOut,
+    DatesIn,
     DealOut,
+    FitOut,
+    HolidayOut,
     InboxPageOut,
     InboxRowOut,
+    JobOut,
+    NeedOut,
+    OtherTradeOut,
     PlanBlockOut,
     PlanDayOut,
     PlanOut,
     PlanRedo,
+    PreviewOut,
+    ProposalOut,
+    ScheduleOut,
+    StartOptionOut,
+    StepNeedOut,
+    TradeDatesOut,
 )
 from app.shared.clock import now_utc
 from app.shared.errors import AppError
 from app.shared.ids import uuid7
+from app.shared.korean import i_ga
 from app.vendor import service as vendor_service
 from app.visit import service as visit_service
 from app.visit.schemas import InboxSummaryOut, ReselectOut
@@ -231,6 +270,8 @@ async def _deal_out(
         )
     ]
     contacts = await vendor_service.contacts(s, shown)
+    ids = [d.id for d in deals]
+    pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
     return [
         DealOut(
             id=d.id,
@@ -243,7 +284,7 @@ async def _deal_out(
             quote=quotes[d.quote_id],
             confirmed_at=d.created_at,
             dates_due_at=d.dates_due_at,
-            overdue=d.status == "confirmed" and now > d.dates_due_at,
+            overdue=_overdue(d, pend.get(d.id), reqs.get(d.id), now),
             start_date=d.start_date,
             end_date=d.end_date,
             work_done_on=d.work_done_on,
@@ -338,6 +379,7 @@ async def reselect(
     s.add(
         DealEvent(deal_id=deal.id, from_status="confirmed", to_status="reselected", by_id=user.id)
     )
+    await _close_dates(s, deal.id, now_utc())  # 업체가 낸 공사 날짜도 없어진다
     out = await visit_service.close_for_reselect(s, p.id, deal.trade, user)
     if deal.vendor_id is not None:
         await notify_service.add(
@@ -394,24 +436,33 @@ async def vendor_inbox(
     )
     deals = list((await s.execute(q)).scalars().all())
     rows = await visit_service.rows_for(s, [d.visit_id for d in deals], today)
+    ids = [d.id for d in deals]
+    pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
     now = now_utc()
-    return InboxPageOut(
-        items=[
+    items = []
+    for d in deals:
+        if d.visit_id not in rows:
+            continue
+        x, r = pend.get(d.id), reqs.get(d.id)
+        items.append(
             InboxRowOut(
                 **rows[d.visit_id].model_dump(),
                 deal_id=d.id,
                 deal_status=d.status,
                 confirmed_at=d.created_at,
                 dates_due_at=d.dates_due_at,
-                overdue=d.status == "confirmed" and now > d.dates_due_at,
+                overdue=_overdue(d, x, r, now),
                 start_date=d.start_date,
                 end_date=d.end_date,
+                dates_state=_state(d, x, r),
+                proposed_start=x.start_date if x else None,
+                proposed_end=x.end_date if x else None,
+                proposed_days=days_since(x.created_at, today) if x else None,
+                wish_dates=list(r.wish_dates) if r else [],
+                request_due_at=r.due_at if r else None,
             )
-            for d in deals
-            if d.visit_id in rows
-        ],
-        next_before=None,
-    )
+        )
+    return InboxPageOut(items=items, next_before=None)
 
 
 async def vendor_summary(s: AsyncSession, vendor: User) -> InboxSummaryOut:
@@ -422,3 +473,538 @@ async def vendor_summary(s: AsyncSession, vendor: User) -> InboxSummaryOut:
         .where(Deal.vendor_id == vendor.id, Deal.status.in_(OPEN_DEALS))
     )
     return base.model_copy(update={"jobs": int(n or 0)})
+
+
+# ---- 공사 날짜: 업체가 내고 고객이 수락하거나 다른 날짜를 요청한다. 날짜 · 기간 · 기한은 calc가 만든다 ----
+
+ORDER = ("mokgong", "dobae")  # 앞 공정이 끝난 다음 날부터 뒤 공정을 한다
+AFTER_DATES_ACCEPTED = ("scheduled", "checking", "fixing", "done")
+REQUEST_DUE_DAYS = 1  # 다른 날짜 요청: 업체는 요청 다음 날 18:00까지 다시 낸다
+REQUESTS_MAX = 2  # deals.date_request_count CHECK와 같다
+OPTIONS = 5  # 다른 날짜 요청 후보 수
+HOLIDAY_DAYS = 180  # 화면 달력에 보여 줄 공휴일 범위
+AHEAD_DAYS = 365  # 날짜는 1년 안으로
+NO_DEAL = "공사를 찾을 수 없어요."
+STALE = "그사이 상태가 바뀌었어요. 새로 불러올게요."
+
+
+async def _pending(s: AsyncSession, deal_ids: list[uuid.UUID]) -> dict[uuid.UUID, DateProposal]:
+    if not deal_ids:
+        return {}
+    q = select(DateProposal).where(
+        DateProposal.deal_id.in_(deal_ids), DateProposal.status == "pending"
+    )
+    rows = (await s.execute(q.execution_options(populate_existing=True))).scalars()
+    return {x.deal_id: x for x in rows}
+
+
+async def _open_requests(
+    s: AsyncSession, deal_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, DateRequest]:
+    if not deal_ids:
+        return {}
+    q = select(DateRequest).where(DateRequest.deal_id.in_(deal_ids), DateRequest.status == "open")
+    rows = (await s.execute(q.execution_options(populate_existing=True))).scalars()
+    return {r.deal_id: r for r in rows}
+
+
+async def _changed(s: AsyncSession, deal_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """앞서 낸 날짜를 바꿔 다시 낸 공사"""
+    if not deal_ids:
+        return set()
+    q = select(DateProposal.deal_id).where(
+        DateProposal.deal_id.in_(deal_ids), DateProposal.status == "superseded"
+    )
+    return set((await s.execute(q)).scalars())
+
+
+def _state(d: Deal, pending: DateProposal | None, req: DateRequest | None) -> str:
+    if d.status == "reselected":
+        return "closed"
+    if d.status != "confirmed":
+        return "scheduled"
+    if req is not None:
+        return "requested"
+    return "proposed" if pending is not None else "waiting"
+
+
+def _overdue(d: Deal, pending: DateProposal | None, req: DateRequest | None, now: datetime) -> bool:
+    """기한 지남(상태가 아님): 날짜를 아직 안 냈는데 확정 기한이 지났거나, 열린 요청의 기한이 지났다."""
+    if d.status != "confirmed":
+        return False
+    if req is not None:
+        return now > req.due_at
+    return pending is None and now > d.dates_due_at
+
+
+def _weekend(plan: Plan | None) -> tuple[int, ...]:
+    return () if plan is not None and plan.weekend_work else WEEKEND
+
+
+def _holidays(today: date) -> list[HolidayOut]:
+    end = today + timedelta(days=HOLIDAY_DAYS)
+    return [HolidayOut(day=d, name=n) for d, n in sorted(HOLIDAYS.items()) if today <= d <= end]
+
+
+def _proposal_out(x: DateProposal, changed: bool, weekend: tuple[int, ...]) -> ProposalOut:
+    return ProposalOut(
+        id=x.id,
+        start=x.start_date,
+        end=x.end_date,
+        workdays=count_workdays(x.start_date, x.end_date, _off(x.start_date), weekend),
+        crew=x.crew,
+        method=x.method,
+        call_on=x.call_on,
+        kind=x.kind,
+        reason=x.reason,
+        status=x.status,
+        request_id=x.request_id,
+        changed=changed,
+        created_at=x.created_at,
+        decided_at=x.decided_at,
+    )
+
+
+def _request_out(r: DateRequest, now: datetime) -> DateRequestOut:
+    return DateRequestOut(
+        id=r.id,
+        wish_dates=list(r.wish_dates),
+        reason=r.reason,
+        due_at=r.due_at,
+        overdue=r.status == "open" and now > r.due_at,
+        status=r.status,
+        created_at=r.created_at,
+    )
+
+
+def _other(d: Deal) -> OtherTradeOut:
+    return OtherTradeOut(
+        trade=d.trade, vendor_name=d.vendor_name, start=d.start_date, end=d.end_date
+    )
+
+
+async def _others(s: AsyncSession, project_id: uuid.UUID, trade: str) -> list[Deal]:
+    """이 집 다른 공정에서 고객이 수락한 공사 날짜"""
+    q = select(Deal).where(
+        Deal.project_id == project_id,
+        Deal.trade != trade,
+        Deal.status.in_(AFTER_DATES_ACCEPTED),
+        Deal.start_date.is_not(None),
+    )
+    return list((await s.execute(q)).scalars().all())
+
+
+def _fit(
+    trade: str, start: date, end: date, others: list[Deal], weekend: tuple[int, ...], today: date
+) -> FitOut:
+    dated = [Dated(trade, start, end)] + [Dated(o.trade, o.start_date, o.end_date) for o in others]
+    hit = {a if b == trade else b for a, b in order_conflicts(dated, ORDER) if trade in (a, b)}
+    off = _off(min([today, start] + [o.start_date for o in others]))
+    start_from, end_by = free_range(trade, dated, ORDER, off, weekend)
+    return FitOut(
+        conflicts=[_other(o) for o in others if o.trade in hit],
+        start_from=start_from,
+        end_by=end_by,
+    )
+
+
+def _check_range(start: date, end: date, today: date, weekend: tuple[int, ...]) -> int:
+    """업체가 낼 날짜: 내일부터 1년 안, 끝 ≥ 시작, 120일 안, 시작 · 끝은 일하는 날. 일하는 날 수."""
+    if start <= today or start > today + timedelta(days=AHEAD_DAYS):
+        raise AppError(422, "start", "시작일은 내일부터 1년 안으로 골라 주세요.")
+    if end < start:
+        raise AppError(422, "end", "끝나는 날은 시작일과 같거나 뒤로 골라 주세요.")
+    if (end - start).days > JOB_MAX_DAYS:
+        raise AppError(422, "end", f"공사 날짜는 {JOB_MAX_DAYS}일 안으로 골라 주세요.")
+    off = _off(start)
+    if is_off(start, off, weekend) or is_off(end, off, weekend):
+        raise AppError(
+            422, "off_day", "시작일과 끝나는 날은 일하는 날로 골라 주세요. 주말 · 공휴일은 쉬어요."
+        )
+    return count_workdays(start, end, off, weekend)
+
+
+def _need(p: ProjectOut, trade: str, crew: int | None) -> NeedOut:
+    """그 인원으로 센 필요한 기간 (없으면 믿집 가정 인원)"""
+    got = [
+        c for c in quote_service.calc_trades(p, {trade: crew} if crew else None) if c.trade == trade
+    ]
+    if not got:
+        raise AppError(409, "trade", "이 집에서 고른 공정이 아니에요.")
+    c = got[0]
+    return NeedOut(
+        man_day=c.man_day,
+        crew=c.crew,
+        days=trade_days(c.steps),
+        steps=[StepNeedOut(name=st.name, half_days=st.half_days) for st in c.steps],
+    )
+
+
+async def _lock_deal(s: AsyncSession, deal_id: uuid.UUID) -> Deal | None:
+    q = select(Deal).where(Deal.id == deal_id).with_for_update()
+    return (await s.execute(q.execution_options(populate_existing=True))).scalar_one_or_none()
+
+
+async def _close_dates(s: AsyncSession, deal_id: uuid.UUID, now: datetime) -> None:
+    """다시 고르기: 수락 기다리는 날짜 · 열린 요청을 withdrawn으로 (부르는 쪽 트랜잭션 안에서)"""
+    await s.execute(
+        update(DateProposal)
+        .where(DateProposal.deal_id == deal_id, DateProposal.status == "pending")
+        .values(status="withdrawn", decided_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await s.execute(
+        update(DateRequest)
+        .where(DateRequest.deal_id == deal_id, DateRequest.status == "open")
+        .values(status="withdrawn", closed_at=now)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def _set(s: AsyncSession, model, row_id: uuid.UUID, frm: str, values: dict) -> None:
+    """지금 상태가 frm일 때만 바꾼다. 1행이 아니면 409."""
+    res = await s.execute(
+        update(model)
+        .where(model.id == row_id, model.status == frm)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        raise AppError(409, "stale", STALE)
+
+
+async def schedule_for(
+    s: AsyncSession, user: User, project_id: uuid.UUID, today: date
+) -> ScheduleOut:
+    """GET /projects/{id}/schedule: 공정마다 업체 확정 · 낸 날짜 · 다른 날짜 요청 · 겹침 · 요청 후보"""
+    p = await project_service.get_for(s, user, project_id)
+    plan = await ensure_expected(s, p, today)
+    weekend = _weekend(plan)
+    q = select(Deal).where(Deal.project_id == p.id, Deal.status != "reselected")
+    deals = sorted(
+        (await s.execute(q.execution_options(populate_existing=True))).scalars().all(),
+        key=lambda d: ORDER.index(d.trade),
+    )
+    now = now_utc()
+    outs = await _deal_out(s, deals, today, now)
+    ids = [d.id for d in deals]
+    pend, reqs, changed = (
+        await _pending(s, ids),
+        await _open_requests(s, ids),
+        await _changed(s, ids),
+    )
+    accepted = [d for d in deals if d.status in AFTER_DATES_ACCEPTED and d.start_date]
+    trades = []
+    for d, out in zip(deals, outs, strict=True):
+        x, r = pend.get(d.id), reqs.get(d.id)
+        others = [o for o in accepted if o.trade != d.trade]
+        fit = _fit(d.trade, x.start_date, x.end_date, others, weekend, today) if x else None
+        options = []
+        if x is not None and fit is not None:
+            tomorrow = today + timedelta(days=1)
+            first = max(tomorrow, fit.start_from or tomorrow)
+            n = count_workdays(x.start_date, x.end_date, _off(x.start_date), weekend)
+            options = [
+                StartOptionOut(start=a, end=b)
+                for a, b in start_choices(
+                    first, max(n, 1), OPTIONS, {x.start_date}, _off(first), weekend
+                )
+            ]
+        trades.append(
+            TradeDatesOut(
+                deal=out,
+                dates_state=_state(d, x, r),
+                proposal=_proposal_out(x, d.id in changed, weekend) if x else None,
+                request=_request_out(r, now) if r else None,
+                requests_left=REQUESTS_MAX - d.date_request_count,
+                fit=fit,
+                start_options=options,
+            )
+        )
+    return ScheduleOut(
+        project_id=p.id,
+        weekend_work=plan.weekend_work,
+        holidays=_holidays(today),
+        trades=trades,
+    )
+
+
+async def accept_dates(
+    s: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    today: date,
+) -> ScheduleOut:
+    """고객이 낸 날짜 수락 (한 트랜잭션): 프로젝트 · 확정 잠금 → 겹침 확인 → 날짜 pending → accepted →
+    확정 confirmed → scheduled + 공사 날짜 → 열린 요청 닫기 → 이력 · 알림. 확정 공정표는 22번."""
+    p = await project_service.get_for(s, user, project_id)
+    plan = await _latest(s, p.id, "expected")
+    await project_service.lock_for_visit(s, p.id)  # 다른 공정 수락과 겹침 확인이 줄 선다
+    d = await _lock_deal(s, deal_id)
+    if d is None or d.project_id != p.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    x = await s.get(DateProposal, proposal_id, populate_existing=True)
+    if x is None or x.deal_id != d.id:
+        raise AppError(404, "not_found", "공사 날짜를 찾을 수 없어요.")
+    if d.status == "reselected":
+        raise AppError(409, "invalid_state", "다시 고른 업체의 날짜라 수락할 수 없어요.")
+    if d.status != "confirmed":
+        raise AppError(409, "invalid_state", "이미 공사 날짜를 수락했어요.")
+    if x.status == "superseded":
+        raise AppError(409, "dates_changed", "날짜가 바뀌었어요. 새 날짜를 확인해 주세요.")
+    if x.status != "pending":
+        raise AppError(409, "invalid_state", "수락할 수 없는 날짜예요.")
+    if x.start_date < today:
+        raise AppError(409, "start_passed", "시작일이 지났어요. 다른 날짜를 요청해 주세요.")
+    fit = _fit(
+        d.trade, x.start_date, x.end_date, await _others(s, p.id, d.trade), _weekend(plan), today
+    )
+    if fit.conflicts:
+        raise AppError(409, "overlap", "겹치는 날이 있어 수락할 수 없어요.")
+    now = now_utc()
+    try:
+        await _set(s, DateProposal, x.id, "pending", {"status": "accepted", "decided_at": now})
+        await _set(
+            s,
+            Deal,
+            d.id,
+            "confirmed",
+            {"status": "scheduled", "start_date": x.start_date, "end_date": x.end_date},
+        )
+        s.add(
+            DealEvent(deal_id=d.id, from_status="confirmed", to_status="scheduled", by_id=user.id)
+        )
+        await s.execute(
+            update(DateRequest)
+            .where(DateRequest.deal_id == d.id, DateRequest.status == "open")
+            .values(status="withdrawn", closed_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if d.vendor_id is not None:
+            await notify_service.add(
+                s,
+                user_id=d.vendor_id,
+                kind="dates_accepted",
+                body="고객이 공사 날짜를 수락했어요",
+                link=f"/vendor/jobs/{d.id}",
+                dedup_key=f"date_proposal:{x.id}:accepted",
+            )
+        await s.commit()
+    except IntegrityError as exc:
+        await s.rollback()
+        raise AppError(409, "stale", STALE) from exc
+    return await schedule_for(s, user, project_id, today)
+
+
+async def request_dates(
+    s: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    data: DateRequestIn,
+    today: date,
+) -> ScheduleOut:
+    """다른 날짜 요청 (2번까지): 낸 날짜는 그대로 두고 업체가 다음 날 18:00까지 새 날짜를 낸다."""
+    p = await project_service.get_for(s, user, project_id)
+    weekend = _weekend(await ensure_expected(s, p, today))
+    off = _off(today)
+    for w in data.wish_dates:
+        if w <= today or w > today + timedelta(days=AHEAD_DAYS):
+            raise AppError(422, "wish_dates", "시작해도 되는 날은 내일부터 1년 안으로 골라 주세요.")
+        if is_off(w, off, weekend):
+            raise AppError(422, "wish_dates", "시작해도 되는 날은 일하는 날로 골라 주세요.")
+    await project_service.lock_for_visit(s, p.id)
+    d = await _lock_deal(s, deal_id)
+    if d is None or d.project_id != p.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    if d.status != "confirmed":
+        raise AppError(409, "invalid_state", "공사 날짜를 수락하기 전에만 요청할 수 있어요.")
+    if (await _pending(s, [d.id])).get(d.id) is None:
+        raise AppError(409, "no_dates", "업체가 공사 날짜를 낸 뒤에 요청할 수 있어요.")
+    if (await _open_requests(s, [d.id])).get(d.id) is not None:
+        raise AppError(
+            409, "already_requested", "이미 다른 날짜를 요청했어요. 업체 답을 기다려 주세요."
+        )
+    used = "다른 날짜 요청은 2번까지 할 수 있어요."
+    if d.date_request_count >= REQUESTS_MAX:
+        raise AppError(409, "requests_used", used)
+    now = now_utc()
+    try:
+        res = await s.execute(
+            update(Deal)
+            .where(
+                Deal.id == d.id,
+                Deal.status == "confirmed",
+                Deal.date_request_count < REQUESTS_MAX,
+            )
+            .values(date_request_count=Deal.date_request_count + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if res.rowcount != 1:
+            raise AppError(409, "requests_used", used)
+        req = DateRequest(
+            id=uuid7(),
+            deal_id=d.id,
+            reason=data.reason,
+            wish_dates=sorted(data.wish_dates),
+            due_at=due_at(now, REQUEST_DUE_DAYS),
+            by_id=user.id,
+        )
+        s.add(req)
+        await s.flush()
+        if d.vendor_id is not None:
+            await notify_service.add(
+                s,
+                user_id=d.vendor_id,
+                kind="dates_requested",
+                body="고객이 다른 공사 날짜를 요청했어요",
+                link=f"/vendor/jobs/{d.id}",
+                dedup_key=f"date_request:{req.id}",
+            )
+        await s.commit()
+    except IntegrityError as exc:  # 열린 요청은 하나 (부분 UQ)
+        await s.rollback()
+        raise AppError(409, "already_requested", "이미 다른 날짜를 요청했어요.") from exc
+    return await schedule_for(s, user, project_id, today)
+
+
+async def _vendor_deal(s: AsyncSession, vendor: User, deal_id: uuid.UUID) -> Deal:
+    d = await s.get(Deal, deal_id, populate_existing=True)
+    if d is None or d.vendor_id != vendor.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    return d
+
+
+async def job_for(s: AsyncSession, vendor: User, deal_id: uuid.UUID, today: date) -> JobOut:
+    """GET /vendor/jobs/{id}: 공사 날짜 내기 화면 (내 확정만)"""
+    d = await _vendor_deal(s, vendor, deal_id)
+    p = await project_service.get_out(s, d.project_id)
+    plan = await ensure_expected(s, p, today)
+    weekend = _weekend(plan)
+    block = (
+        await s.scalars(
+            select(PlanStep).where(
+                PlanStep.plan_id == plan.id, PlanStep.trade == d.trade, PlanStep.kind == "work"
+            )
+        )
+    ).first()
+    visit = await visit_service.vendor_visit(s, vendor, d.visit_id, today)
+    now = now_utc()
+    (out,) = await _deal_out(s, [d], today, now)
+    x = (await _pending(s, [d.id])).get(d.id)
+    r = (await _open_requests(s, [d.id])).get(d.id)
+    return JobOut(
+        deal_id=d.id,
+        trade=d.trade,
+        status=d.status,
+        confirmed_at=d.created_at,
+        dates_due_at=d.dates_due_at,
+        overdue=out.overdue,
+        start_date=d.start_date,
+        end_date=d.end_date,
+        visit=visit,
+        quote=out.quote,
+        plan_version=plan.version,
+        plan_start=block.start_date if block else None,
+        plan_end=block.end_date if block else None,
+        need=_need(p, d.trade, None),
+        others=[_other(o) for o in await _others(s, d.project_id, d.trade)],
+        weekend_work=plan.weekend_work,
+        holidays=_holidays(today),
+        dates_state=_state(d, x, r),
+        proposal=_proposal_out(x, d.id in await _changed(s, [d.id]), weekend) if x else None,
+        request=_request_out(r, now) if r else None,
+        requests_left=REQUESTS_MAX - d.date_request_count,
+    )
+
+
+async def preview_dates(
+    s: AsyncSession,
+    vendor: User,
+    deal_id: uuid.UUID,
+    start: date,
+    end: date,
+    crew: int,
+    today: date,
+) -> PreviewOut:
+    """낼 날짜 미리 계산 (저장하지 않음): 일하는 날 · 그 인원의 필요한 기간 · 다른 공정과 겹침"""
+    d = await _vendor_deal(s, vendor, deal_id)
+    p = await project_service.get_out(s, d.project_id)
+    weekend = _weekend(await ensure_expected(s, p, today))
+    n = _check_range(start, end, today, weekend)
+    need = _need(p, d.trade, crew)
+    others = await _others(s, d.project_id, d.trade)
+    return PreviewOut(
+        workdays=n,
+        need=need,
+        short=n < need.days,
+        fit=_fit(d.trade, start, end, others, weekend, today),
+    )
+
+
+async def propose_dates(
+    s: AsyncSession, vendor: User, deal_id: uuid.UUID, data: DatesIn, today: date
+) -> JobOut:
+    """업체가 공사 날짜 내기 (한 트랜잭션): 확정 잠금 → 앞서 낸 날짜 superseded → 새 날짜 pending →
+    열린 요청 answered → 고객 알림. 겹쳐도 낼 수 있고(고객이 수락할 수 없다), 수락 뒤에는 22번."""
+    d = await _vendor_deal(s, vendor, deal_id)
+    p = await project_service.get_out(s, d.project_id)
+    plan = await ensure_expected(s, p, today)
+    _check_range(data.start, data.end, today, _weekend(plan))
+    if data.method == "call":
+        if data.call_on is None:
+            raise AppError(422, "call_on", "통화한 날을 골라 주세요.")
+        if data.call_on > today:
+            raise AppError(422, "call_on", "통화한 날은 오늘까지만 고를 수 있어요.")
+    await project_service.lock(s, d.project_id)  # 잠금 순서: 프로젝트 → 확정 → 제안 · 요청
+    d = await _lock_deal(s, d.id)
+    if d is None or d.vendor_id != vendor.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    if d.status == "reselected":
+        raise AppError(409, "invalid_state", "고객이 업체를 다시 고르기로 했어요.")
+    if d.status != "confirmed":
+        raise AppError(409, "invalid_state", "고객이 이미 공사 날짜를 수락했어요.")
+    x = (await _pending(s, [d.id])).get(d.id)
+    r = (await _open_requests(s, [d.id])).get(d.id)
+    if data.request_id is not None and (r is None or r.id != data.request_id):
+        raise AppError(409, "request_changed", "고객 요청이 바뀌었어요. 새로 불러올게요.")
+    owner = (await project_service.briefs(s, [d.project_id]))[d.project_id].owner_id
+    now = now_utc()
+    try:
+        if x is not None:
+            await _set(
+                s, DateProposal, x.id, "pending", {"status": "superseded", "decided_at": now}
+            )
+        new = DateProposal(
+            id=uuid7(),
+            deal_id=d.id,
+            start_date=data.start,
+            end_date=data.end,
+            crew=data.crew,
+            method=data.method,
+            call_on=data.call_on if data.method == "call" else None,
+            request_id=r.id if r else None,
+            plan_version=plan.version,
+            by_id=vendor.id,
+        )
+        s.add(new)
+        await s.flush()
+        if r is not None:
+            await _set(s, DateRequest, r.id, "open", {"status": "answered", "closed_at": now})
+        again = "다시 " if x is not None else ""
+        await notify_service.add(
+            s,
+            user_id=owner,
+            kind="dates_proposed",
+            body=f"{i_ga(d.vendor_name)} 공사 날짜를 {again}냈어요 · {LABEL[d.trade]}",
+            link=f"/projects/{d.project_id}/schedule?trade={d.trade}",
+            dedup_key=f"date_proposal:{new.id}",
+            project_id=d.project_id,
+        )
+        await s.commit()
+    except IntegrityError as exc:  # 수락 기다리는 날짜는 하나 (부분 UQ)
+        await s.rollback()
+        raise AppError(409, "stale", STALE) from exc
+    return await job_for(s, vendor, deal_id, today)
