@@ -553,6 +553,177 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/vendors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 이 집 업체 고르기 · 가견적 낮은 순 (내 프로젝트만) */
+        get: operations["vendors_projects__project_id__vendors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/vendors/{vendor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 이 집 기준 업체 자세히 · 가견적 계산 (목록 밖 업체는 404) */
+        get: operations["vendor_detail_projects__project_id__vendors__vendor_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/vendors/{vendor_id}/photos/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 업체 시공 사진 보기 (이 집에서 고를 수 있는 업체만) */
+        get: operations["vendor_photo_projects__project_id__vendors__vendor_id__photos__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/visits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 이 집 실측 요청 · 업체 연락처 · 보낼 문구 · 남은 칸 */
+        get: operations["visits_projects__project_id__visits_get"];
+        put?: never;
+        /** 실측 요청 보내기 · 공정마다 3곳까지, 연락처는 고른 업체에만 */
+        post: operations["request_visits_projects__project_id__visits_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/visits/{visit_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 실측 요청 취소 (견적서가 오기 전까지) */
+        post: operations["cancel_visit_projects__project_id__visits__visit_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 업체 작업함 · 할 일 · 기다림 · 끝남 (끝남은 before 커서로 limit씩) */
+        get: operations["vendor_inbox_vendor_visits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 업체 작업함 탭별 수 */
+        get: operations["vendor_inbox_summary_vendor_visits_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/{visit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 받은 실측 요청 자세히 (고객 연락처는 보낸 요청이 열려 있을 때만) */
+        get: operations["vendor_visit_vendor_visits__visit_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/{visit_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 이 요청 못 받아요 (견적서를 보내기 전까지) */
+        post: operations["decline_visit_vendor_visits__visit_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/{visit_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 받은 요청 열어 봄 ('새 요청' 지움) */
+        post: operations["seen_visit_vendor_visits__visit_id__seen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -714,6 +885,43 @@ export interface components {
             /** Over By */
             over_by: number | null;
         };
+        /**
+         * ContactOut
+         * @description 업체 연락처. 실측을 요청한 고객에게만, 연락처 공개 규칙(visit.service)을 지날 때만 보인다.
+         */
+        ContactOut: {
+            /** Owner Name */
+            owner_name: string | null;
+            /** Phone */
+            phone: string | null;
+            /** Contact Method */
+            contact_method: string | null;
+            /** Contact Url */
+            contact_url: string | null;
+            /** Call Start */
+            call_start: string | null;
+            /** Call End */
+            call_end: string | null;
+            /** Visit Fee */
+            visit_fee: number | null;
+            /** Visit Fee Refund */
+            visit_fee_refund: boolean;
+        };
+        /**
+         * CustomerContactOut
+         * @description 고객이 보내기로 고른 연락처 (요청이 닫히면 바로 가려진다)
+         */
+        CustomerContactOut: {
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string | null;
+            /**
+             * Address
+             * @description 자세히에서만: 서울 노원구 상계주공 101동 1203호
+             */
+            address: string | null;
+        };
         /** DecisionOut */
         DecisionOut: {
             /** Action */
@@ -727,6 +935,15 @@ export interface components {
              * Format: date-time
              */
             at: string;
+        };
+        /** DeclineIn */
+        DeclineIn: {
+            /**
+             * Code
+             * @description 일정이 꽉 찼어요 · 지역 밖이에요 · 그 밖
+             * @enum {string}
+             */
+            code: "full" | "out_of_area" | "other";
         };
         /** DobaeIn */
         DobaeIn: {
@@ -744,6 +961,56 @@ export interface components {
             spaces: string[];
             /** Grade */
             grade: ("economy" | "basic") | null;
+        };
+        /**
+         * EstimateDetailOut
+         * @description 가견적 '어떻게 계산했나요': 업체가 확인한 단가 × 이 집 표준견적서 수량 (믿집 계산)
+         */
+        EstimateDetailOut: {
+            /** Lines */
+            lines: components["schemas"]["EstimateLineOut"][];
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /** Total */
+            total: number;
+            /**
+             * Missing
+             * @description 업체 단가가 없어 뺀 표준 행 키
+             */
+            missing: string[];
+            /**
+             * Left Out
+             * @description 업체 단가를 받지 않는 줄이라 뺀 키 (짐 있는 집 할증)
+             */
+            left_out: string[];
+            /**
+             * Set Id
+             * Format: uuid
+             * @description 쓴 단가 묶음 (실측 요청 때 고정한다)
+             */
+            set_id: string;
+            /**
+             * Confirmed On
+             * Format: date
+             * @description 업체가 단가를 확인한 날, 서울 날짜
+             */
+            confirmed_on: string;
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /**
+             * Exempt
+             * @description 면세 업체면 부가세 0
+             */
+            exempt: boolean;
+            /** Vs Standard */
+            vs_standard: string | null;
+            /** Vs Direction */
+            vs_direction: ("less" | "more" | "same") | null;
         };
         /** EstimateLineOut */
         EstimateLineOut: {
@@ -807,6 +1074,20 @@ export interface components {
              */
             left_out: string[];
         };
+        /** FailedOut */
+        FailedOut: {
+            /**
+             * Vendor Id
+             * Format: uuid
+             */
+            vendor_id: string;
+            /**
+             * Code
+             * @description unavailable: 지금 믿집에서 일할 수 없는 업체 · already: 이미 요청한 업체
+             * @enum {string}
+             */
+            code: "unavailable" | "already";
+        };
         /** FaqIn */
         FaqIn: {
             /**
@@ -837,6 +1118,22 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** InboxSummaryOut */
+        InboxSummaryOut: {
+            /** Todo */
+            todo: number;
+            /** Waiting */
+            waiting: number;
+            /** Done */
+            done: number;
+            /**
+             * Jobs
+             * @description 확정된 공사 (19번 뒤에 채운다)
+             */
+            jobs: number;
+            /** @description 최근 30일: 받은 요청 · 보낸 견적서 · 확정 */
+            recent: components["schemas"]["RecentOut"];
         };
         /** LicenseOut */
         LicenseOut: {
@@ -1487,6 +1784,63 @@ export interface components {
             created_at: string;
         };
         /**
+         * PublicProfileOut
+         * @description 고객이 보는 업체 자세히. '업체가 적음' 칸(실내건축 · 보험)이 비면 '확인 안 됨'으로 보인다.
+         */
+        PublicProfileOut: {
+            /**
+             * Vendor Id
+             * Format: uuid
+             */
+            vendor_id: string;
+            /** Biz Name */
+            biz_name: string | null;
+            /** Trades */
+            trades: string[];
+            /** Areas */
+            areas: components["schemas"]["AreaOut"][];
+            /**
+             * Verified At
+             * @description 믿집이 사업자를 확인(승인)한 때
+             */
+            verified_at: string | null;
+            /** Contact Method */
+            contact_method: string | null;
+            /** Call Start */
+            call_start: string | null;
+            /** Call End */
+            call_end: string | null;
+            /** Visit Fee */
+            visit_fee: number | null;
+            /** Visit Fee Refund */
+            visit_fee_refund: boolean;
+            /** Tax Kind */
+            tax_kind: string;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Biz No */
+            biz_no: string | null;
+            /** Opened On */
+            opened_on: string | null;
+            /**
+             * Address Area
+             * @description 사업장 주소의 앞 두 마디 (서울 도봉구)
+             */
+            address_area: string | null;
+            /** Interior License */
+            interior_license: string | null;
+            /** Insurance */
+            insurance: string | null;
+            /** Faqs */
+            faqs: components["schemas"]["FaqIn"][];
+            /** Links */
+            links: components["schemas"]["LinkIn"][];
+            /** Portfolio */
+            portfolio: components["schemas"]["PortfolioOut"][];
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /**
          * ReapplyIn
          * @description 거절된 업체가 같은 계정 · 같은 사업자등록번호로 다시 신청. 새 등록증은 먼저 POST /files (kind=license).
          */
@@ -1512,6 +1866,25 @@ export interface components {
             areas: components["schemas"]["AreaIn"][];
             /** License File Id */
             license_file_id?: string | null;
+        };
+        /** RecentOut */
+        RecentOut: {
+            /** Requested */
+            requested: number;
+            /** Quoted */
+            quoted: number;
+            /** Chosen */
+            chosen: number;
+        };
+        /** RequestTextOut */
+        RequestTextOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Text
+             * @description 연락할 때 보낼 문구 (문자 · 카카오톡에 붙여 넣는다)
+             */
+            text: string;
         };
         /**
          * ResubmitIn
@@ -1903,6 +2276,419 @@ export interface components {
              */
             license_file_id: string;
             license: components["schemas"]["LicenseOut"] | null;
+        };
+        /**
+         * VendorDetailOut
+         * @description 이 집 기준 업체 자세히
+         */
+        VendorDetailOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Trade */
+            trade: string;
+            /** Standard Total */
+            standard_total: number;
+            profile: components["schemas"]["PublicProfileOut"];
+            /** Verified On */
+            verified_on: string | null;
+            /**
+             * Years Open
+             * @description 업력: 개업일부터 오늘까지 꽉 찬 햇수
+             */
+            years_open: number | null;
+            /**
+             * In Area
+             * @description 이 집이 출장 지역 안인지
+             */
+            in_area: boolean;
+            /**
+             * Area Name
+             * @description 이 집 시 · 군 · 구 (노원구)
+             */
+            area_name: string;
+            /**
+             * Dong
+             * @description 이 집 읍 · 면 · 동 (프로젝트에 있을 때만)
+             */
+            dong: string | null;
+            /** @description 가견적 없음이면 비어 있다 */
+            estimate: components["schemas"]["EstimateDetailOut"] | null;
+            visit: components["schemas"]["VisitBrief"] | null;
+            /**
+             * Not Included
+             * @description 가견적에 빠진 줄 이름 (실측 후 줄 · 업체 단가 칸이 없는 줄)
+             */
+            not_included: string[];
+        };
+        /**
+         * VendorListOut
+         * @description 이 집 업체 고르기: 그 공정을 하고 이 집 지역(구)에서 일하는 승인된 업체
+         */
+        VendorListOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Trade */
+            trade: string;
+            /**
+             * Region
+             * @description 이 집 지역 (서울 노원구)
+             */
+            region: string;
+            /**
+             * Area Name
+             * @description 이 집 시 · 군 · 구 (노원구)
+             */
+            area_name: string;
+            /**
+             * Standard Total
+             * @description 그 공정 표준견적서 합계 (부가세 포함)
+             */
+            standard_total: number;
+            /**
+             * Slots Left
+             * @description 그 공정에 더 담을 수 있는 업체 수 (3곳까지)
+             */
+            slots_left: number;
+            /**
+             * Consent Ver
+             * @description 연락처 보내기 동의 문구 버전 (요청할 때 그대로 보낸다)
+             */
+            consent_ver: string;
+            /** Vendors */
+            vendors: components["schemas"]["VendorRowOut"][];
+        };
+        /**
+         * VendorRowOut
+         * @description 업체 고르기 한 줄. 연락처(휴대폰 · 채널 주소)는 실측 요청 뒤에만 보인다.
+         */
+        VendorRowOut: {
+            /**
+             * Vendor Id
+             * Format: uuid
+             */
+            vendor_id: string;
+            /** Biz Name */
+            biz_name: string | null;
+            /** Trades */
+            trades: string[];
+            /**
+             * Areas
+             * @description 활동 지역 (화면이 처음 2곳 + 외 N곳으로 줄인다)
+             */
+            areas: components["schemas"]["AreaOut"][];
+            /**
+             * Verified On
+             * @description 사업자 확인(승인)한 날, 서울 날짜
+             */
+            verified_on: string | null;
+            /**
+             * Visit Fee
+             * @description 실측 출장비(원, 부가세 포함). 0 = 무료
+             */
+            visit_fee: number | null;
+            /** Visit Fee Refund */
+            visit_fee_refund: boolean;
+            /** Contact Method */
+            contact_method: string | null;
+            /** Call Start */
+            call_start: string | null;
+            /** Call End */
+            call_end: string | null;
+            /**
+             * Estimate Total
+             * @description 가견적 합계(고객이 낼 금액). 없으면 '가견적 없음'
+             */
+            estimate_total: number | null;
+            /**
+             * Vs Standard
+             * @description 표준견적서 대비 % (음수면 적어요)
+             */
+            vs_standard: string | null;
+            /** Vs Direction */
+            vs_direction: ("less" | "more" | "same") | null;
+            /** @description 최근 실측 요청 (없으면 비어 있다) */
+            visit: components["schemas"]["VisitBrief"] | null;
+        };
+        /**
+         * VendorVisitDetailOut
+         * @description 업체가 보는 요청 자세히
+         */
+        VendorVisitDetailOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /**
+             * Code
+             * @description 요청 번호 (연락처가 없으면 고객이 이 번호를 말한다)
+             */
+            code: string;
+            /** Trade */
+            trade: string;
+            /**
+             * Grade
+             * @description 도배 유형 (economy · basic)
+             */
+            grade: string | null;
+            /** Region */
+            region: string;
+            /** Area Name */
+            area_name: string;
+            /**
+             * Pyeong
+             * @description 표준견적서에 저장한 평 (공급 기준)
+             */
+            pyeong: string | null;
+            /** Status */
+            status: string;
+            /**
+             * New
+             * @description 아직 열어 보지 않은 새 요청
+             */
+            new: boolean;
+            /** Share Contact */
+            share_contact: boolean;
+            /** Closed At */
+            closed_at: string | null;
+            /** Decline Code */
+            decline_code: string | null;
+            /** Close Reason */
+            close_reason: string | null;
+            /**
+             * Waiting Days
+             * @description 견적서를 보낸 뒤 기다린 날 (서울 날짜)
+             */
+            waiting_days: number | null;
+            customer: components["schemas"]["CustomerContactOut"] | null;
+            /** Area M2 */
+            area_m2: string | null;
+            /** Area Basis */
+            area_basis: string | null;
+            /** Occupied */
+            occupied: boolean;
+            /**
+             * Home Text
+             * @description 노원구 · 32평 · 빈 집
+             */
+            home_text: string;
+            /**
+             * When Text
+             * @description 희망 시기: 11.16(월) ~ 11.23(월)
+             */
+            when_text: string;
+            /** Message */
+            message: string | null;
+        };
+        /** VendorVisitPage */
+        VendorVisitPage: {
+            /** Items */
+            items: components["schemas"]["VendorVisitRow"][];
+            /**
+             * Next Before
+             * @description 끝남 탭 다음 쪽 커서 (없으면 끝)
+             */
+            next_before: string | null;
+        };
+        /**
+         * VendorVisitRow
+         * @description 업체 작업함 한 줄. 고객 연락처는 고객이 보낸 요청이 열려 있을 때만 들어 있다.
+         */
+        VendorVisitRow: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /**
+             * Code
+             * @description 요청 번호 (연락처가 없으면 고객이 이 번호를 말한다)
+             */
+            code: string;
+            /** Trade */
+            trade: string;
+            /**
+             * Grade
+             * @description 도배 유형 (economy · basic)
+             */
+            grade: string | null;
+            /** Region */
+            region: string;
+            /** Area Name */
+            area_name: string;
+            /**
+             * Pyeong
+             * @description 표준견적서에 저장한 평 (공급 기준)
+             */
+            pyeong: string | null;
+            /** Status */
+            status: string;
+            /**
+             * New
+             * @description 아직 열어 보지 않은 새 요청
+             */
+            new: boolean;
+            /** Share Contact */
+            share_contact: boolean;
+            /** Closed At */
+            closed_at: string | null;
+            /** Decline Code */
+            decline_code: string | null;
+            /** Close Reason */
+            close_reason: string | null;
+            /**
+             * Waiting Days
+             * @description 견적서를 보낸 뒤 기다린 날 (서울 날짜)
+             */
+            waiting_days: number | null;
+            customer: components["schemas"]["CustomerContactOut"] | null;
+        };
+        /**
+         * VisitBrief
+         * @description 그 업체에 이 집 · 이 공정으로 보낸 가장 최근 실측 요청
+         */
+        VisitBrief: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+            /** Decline Code */
+            decline_code: string | null;
+        };
+        /**
+         * VisitCreateIn
+         * @description 실측 요청 보내기: 한 공정에 업체 1~3곳. 연락처는 share_contact_ids에 고른 업체에만 간다.
+         */
+        VisitCreateIn: {
+            /**
+             * Trade
+             * @enum {string}
+             */
+            trade: "dobae" | "mokgong";
+            /** Vendor Ids */
+            vendor_ids: string[];
+            /**
+             * Message
+             * @description 업체에 남길 말
+             */
+            message?: string | null;
+            /**
+             * Share Contact Ids
+             * @description 내 연락처를 보낼 업체 (vendor_ids 안에서)
+             */
+            share_contact_ids?: string[];
+            /**
+             * Apt Name
+             * @description 아파트 이름 (연락처를 보내면 필수)
+             */
+            apt_name?: string | null;
+            /** Dong */
+            dong?: string | null;
+            /** Ho */
+            ho?: string | null;
+            /**
+             * Consent Ver
+             * @description 동의한 문구 버전 (연락처를 보내면 필수)
+             */
+            consent_ver?: string | null;
+        };
+        /** VisitCreateOut */
+        VisitCreateOut: {
+            /** Created */
+            created: components["schemas"]["VisitOut"][];
+            /** Failed */
+            failed: components["schemas"]["FailedOut"][];
+        };
+        /** VisitListOut */
+        VisitListOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Consent Ver */
+            consent_ver: string;
+            /**
+             * Slots Left
+             * @description 공정마다 더 담을 수 있는 업체 수
+             */
+            slots_left: {
+                [key: string]: number;
+            };
+            /** Request Texts */
+            request_texts: components["schemas"]["RequestTextOut"][];
+            /**
+             * Visits
+             * @description 최근 순, 닫힌 것 포함
+             */
+            visits: components["schemas"]["VisitOut"][];
+        };
+        /**
+         * VisitOut
+         * @description 고객이 보는 실측 요청 한 건. 업체 연락처는 공개 규칙을 지날 때만 들어 있다.
+         */
+        VisitOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Trade */
+            trade: string;
+            /** Vendor Id */
+            vendor_id: string | null;
+            /** Vendor Name */
+            vendor_name: string;
+            /** Status */
+            status: string;
+            /** Slot */
+            slot: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Share Contact
+             * @description 내 연락처를 보냈는지
+             */
+            share_contact: boolean;
+            /** Message */
+            message: string | null;
+            /** Decline Code */
+            decline_code: string | null;
+            /**
+             * Estimate Total
+             * @description 요청 때 가견적 사본 (없으면 비어 있다)
+             */
+            estimate_total: number | null;
+            /** Contact Visible */
+            contact_visible: boolean;
+            contact: components["schemas"]["ContactOut"] | null;
+            /**
+             * Closed At
+             * @description 취소 · 못 받음 · 닫힘이 된 때
+             */
+            closed_at: string | null;
         };
         /** WhenIn */
         WhenIn: {
@@ -2988,6 +3774,355 @@ export interface operations {
             header?: never;
             path: {
                 file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendors_projects__project_id__vendors_get: {
+        parameters: {
+            query: {
+                trade: "dobae" | "mokgong";
+                sort?: "estimate";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_detail_projects__project_id__vendors__vendor_id__get: {
+        parameters: {
+            query: {
+                trade: "dobae" | "mokgong";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+                vendor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_photo_projects__project_id__vendors__vendor_id__photos__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                vendor_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    visits_projects__project_id__visits_get: {
+        parameters: {
+            query?: {
+                trade?: ("dobae" | "mokgong") | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VisitListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_visits_projects__project_id__visits_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisitCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VisitCreateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_visit_projects__project_id__visits__visit_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VisitOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_inbox_vendor_visits_get: {
+        parameters: {
+            query?: {
+                tab?: "todo" | "waiting" | "done";
+                before?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorVisitPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_inbox_summary_vendor_visits_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxSummaryOut"];
+                };
+            };
+        };
+    };
+    vendor_visit_vendor_visits__visit_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorVisitDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_visit_vendor_visits__visit_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeclineIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VendorVisitDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seen_visit_vendor_visits__visit_id__seen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
             };
             cookie?: never;
         };
