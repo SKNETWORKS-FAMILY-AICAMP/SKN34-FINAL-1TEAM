@@ -2,7 +2,7 @@
 import type { Schemas } from "@/lib/backend/client";
 import { decText, md, stampSeoul, won } from "@/lib/format";
 
-export type Compare = Schemas["CompareOut"];
+export type Compare = Schemas["CompareDealOut"];
 export type Row = Schemas["CompareRowOut"];
 export type Quote = Schemas["VendorQuoteOut"];
 export type QFile = Schemas["QuoteFileOut"];

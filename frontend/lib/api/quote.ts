@@ -16,7 +16,7 @@ export async function getMyQuoteBoard(visitId: string) {
   return isUuid(visitId) ? serverGet<VendorQuoteBoard>(`/vendor/visits/${visitId}/quote`) : null;
 }
 
-export type QuoteCompare = Schemas["CompareOut"];
+export type QuoteCompare = Schemas["CompareDealOut"];
 /** 고객: 한 공정의 실측 견적서 비교(표준견적서 · 업체마다 최신 버전 · 이전 버전). 남의 공사 · 고르지 않은 공정이면 null */
 export async function getQuoteCompare(projectId: string, trade: "dobae" | "mokgong") {
   return isUuid(projectId) ? serverGet<QuoteCompare>(`/projects/${projectId}/quotes?trade=${trade}`) : null;

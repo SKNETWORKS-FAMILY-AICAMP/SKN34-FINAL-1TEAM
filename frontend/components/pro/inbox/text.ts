@@ -3,7 +3,7 @@ import type { Schemas } from "@/lib/backend/client";
 import { dateSeoul, decText, md } from "@/lib/format";
 import { gradeLabel, tradeLabel } from "@/lib/labels";
 
-export type Row = Schemas["VendorVisitRow"];
+export type Row = Schemas["InboxRowOut"];
 export type Detail = Schemas["VendorVisitDetailOut"];
 export type Tab = "todo" | "waiting" | "work" | "done";
 

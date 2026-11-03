@@ -28,8 +28,8 @@ export async function listProjectVisits(projectId: string, trade?: VisitTrade) {
 }
 
 // 업체
-export type InboxTab = "todo" | "waiting" | "done";
-export type InboxPage = Schemas["VendorVisitPage"];
+export type InboxTab = "todo" | "waiting" | "jobs" | "done";
+export type InboxPage = Schemas["InboxPageOut"];
 export type InboxSummary = Schemas["InboxSummaryOut"];
 export type VendorVisitDetail = Schemas["VendorVisitDetailOut"];
 /** 작업함 한 탭(끝남은 before 커서로 이어 받기) */

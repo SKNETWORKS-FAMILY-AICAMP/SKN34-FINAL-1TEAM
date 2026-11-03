@@ -7,7 +7,7 @@ import { Who, End } from "./Cells";
 import { PAGE, dayOf, pyeongText, type Row } from "./text";
 import s from "./inbox.module.css";
 
-type Page = Schemas["VendorVisitPage"];
+type Page = Schemas["InboxPageOut"];
 
 export function DoneTable({ items: first, next: firstNext, total }: { items: Row[]; next: string | null; total: number }) {
   const [items, setItems] = useState(first);
