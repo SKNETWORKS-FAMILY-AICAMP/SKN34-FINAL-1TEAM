@@ -1,4 +1,4 @@
-// 머리의 알림 종. 안 읽은 수는 부르는 쪽이 넘긴다(알림 API는 7번 기능에서 붙는다). 0이면 배지를 두지 않는다.
+// 머리의 알림 종. 안 읽은 수는 부르는 쪽(SiteHeader → lib/api/notify.ts)이 넘긴다. 0이면 배지를 두지 않는다.
 import Link from "next/link";
 import s from "./header.module.css";
 
