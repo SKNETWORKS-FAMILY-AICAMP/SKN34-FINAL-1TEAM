@@ -498,3 +498,16 @@ class PricesOut(BaseModel):
     files: list[PriceFileOut]
     draft: PriceSetOut | None
     confirmed: PriceSetOut | None
+
+
+class ContactOut(BaseModel):
+    """업체 연락처. 실측을 요청한 고객에게만, 연락처 공개 규칙(visit.service)을 지날 때만 보인다."""
+
+    owner_name: str | None
+    phone: str | None
+    contact_method: str | None
+    contact_url: str | None
+    call_start: time | None
+    call_end: time | None
+    visit_fee: int | None
+    visit_fee_refund: bool

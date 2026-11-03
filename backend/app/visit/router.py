@@ -10,9 +10,15 @@ from app.auth.models import User
 from app.db import get_session
 from app.shared.clock import today_seoul
 from app.visit import service
-from app.visit.schemas import VendorDetailOut, VendorListOut
+from app.visit.schemas import (
+    VendorDetailOut,
+    VendorListOut,
+    VisitCreateIn,
+    VisitCreateOut,
+    VisitListOut,
+)
 
-router = APIRouter(tags=["업체 고르기"])
+router = APIRouter(tags=["업체 고르기 · 실측 요청"])
 customer_only = require_role("customer")
 Trade = Literal["dobae", "mokgong"]
 
@@ -59,3 +65,32 @@ async def vendor_photo(
     s: AsyncSession = Depends(get_session),
 ) -> Response:
     return await service.vendor_photo(s, user, project_id, vendor_id, file_id)
+
+
+@router.post(
+    "/projects/{project_id}/visits",
+    status_code=201,
+    response_model=VisitCreateOut,
+    summary="실측 요청 보내기 · 공정마다 3곳까지, 연락처는 고른 업체에만",
+)
+async def request_visits(
+    project_id: uuid.UUID,
+    data: VisitCreateIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> VisitCreateOut:
+    return await service.request_visits(s, user, project_id, data, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/visits",
+    response_model=VisitListOut,
+    summary="이 집 실측 요청 · 업체 연락처 · 보낼 문구 · 남은 칸",
+)
+async def visits(
+    project_id: uuid.UUID,
+    trade: Trade | None = None,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> VisitListOut:
+    return await service.visits_for(s, user, project_id, trade, today_seoul())

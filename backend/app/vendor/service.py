@@ -45,6 +45,7 @@ from app.vendor.schemas import (
     ApplicationOut,
     AreaIn,
     AreaOut,
+    ContactOut,
     DecisionOut,
     EstimateLineOut,
     EstimateOut,
@@ -585,6 +586,24 @@ async def portfolio_file(s: AsyncSession, vendor_id: uuid.UUID, file_id: uuid.UU
     if await repo.portfolio_file_id(s, vendor_id, file_id) is None:
         return None
     return (await repo.files_by_id(s, [file_id])).get(file_id)
+
+
+async def contacts(s: AsyncSession, vendor_ids: list[uuid.UUID]) -> dict[uuid.UUID, ContactOut]:
+    """업체 연락처 (대표 이름 · 휴대폰 · 연락 방식). 보여도 되는지는 visit.service가 정한다."""
+    rows = await repo.vendors_by_id(s, vendor_ids) if vendor_ids else {}
+    return {
+        v.user_id: ContactOut(
+            owner_name=v.owner_name,
+            phone=v.phone,
+            contact_method=v.contact_method,
+            contact_url=v.contact_url,
+            call_start=v.call_start,
+            call_end=v.call_end,
+            visit_fee=v.visit_fee,
+            visit_fee_refund=v.visit_fee_refund,
+        )
+        for v in rows.values()
+    }
 
 
 async def list_public(

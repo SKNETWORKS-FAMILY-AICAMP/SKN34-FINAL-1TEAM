@@ -1,13 +1,23 @@
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
-from app.vendor.schemas import AreaOut, EstimateOut, PublicProfileOut
+from app.vendor.schemas import AreaOut, ContactOut, EstimateOut, PublicProfileOut
 
 Direction = Literal["less", "more", "same"]  # 표준견적서보다 적어요 · 많아요 · 같아요
+Trade = Literal["dobae", "mokgong"]
+Text = Annotated[str, StringConstraints(strip_whitespace=True)]
+
+
+class VisitBrief(BaseModel):
+    """그 업체에 이 집 · 이 공정으로 보낸 가장 최근 실측 요청"""
+
+    id: uuid.UUID
+    status: str
+    decline_code: str | None
 
 
 class VendorRowOut(BaseModel):
@@ -28,6 +38,7 @@ class VendorRowOut(BaseModel):
     )
     vs_standard: Decimal | None = Field(description="표준견적서 대비 % (음수면 적어요)")
     vs_direction: Direction | None
+    visit: VisitBrief | None = Field(description="최근 실측 요청 (없으면 비어 있다)")
 
 
 class VendorListOut(BaseModel):
@@ -38,6 +49,8 @@ class VendorListOut(BaseModel):
     region: str = Field(description="이 집 지역 (서울 노원구)")
     area_name: str = Field(description="이 집 시 · 군 · 구 (노원구)")
     standard_total: int = Field(description="그 공정 표준견적서 합계 (부가세 포함)")
+    slots_left: int = Field(description="그 공정에 더 담을 수 있는 업체 수 (3곳까지)")
+    consent_ver: str = Field(description="연락처 보내기 동의 문구 버전 (요청할 때 그대로 보낸다)")
     vendors: list[VendorRowOut]
 
 
@@ -65,6 +78,84 @@ class VendorDetailOut(BaseModel):
     area_name: str = Field(description="이 집 시 · 군 · 구 (노원구)")
     dong: str | None = Field(description="이 집 읍 · 면 · 동 (프로젝트에 있을 때만)")
     estimate: EstimateDetailOut | None = Field(description="가견적 없음이면 비어 있다")
+    visit: VisitBrief | None
     not_included: list[str] = Field(
         description="가견적에 빠진 줄 이름 (실측 후 줄 · 업체 단가 칸이 없는 줄)"
     )
+
+
+class VisitCreateIn(BaseModel):
+    """실측 요청 보내기: 한 공정에 업체 1~3곳. 연락처는 share_contact_ids에 고른 업체에만 간다."""
+
+    trade: Trade
+    vendor_ids: list[uuid.UUID] = Field(min_length=1, max_length=3)
+    message: Annotated[Text, Field(max_length=300)] | None = Field(
+        default=None, description="업체에 남길 말"
+    )
+    share_contact_ids: list[uuid.UUID] = Field(
+        default_factory=list, max_length=3, description="내 연락처를 보낼 업체 (vendor_ids 안에서)"
+    )
+    apt_name: Annotated[Text, Field(max_length=40)] | None = Field(
+        default=None, description="아파트 이름 (연락처를 보내면 필수)"
+    )
+    dong: Annotated[Text, Field(max_length=10)] | None = None
+    ho: Annotated[Text, Field(max_length=10)] | None = None
+    consent_ver: str | None = Field(
+        default=None, max_length=20, description="동의한 문구 버전 (연락처를 보내면 필수)"
+    )
+
+    @field_validator("message", "apt_name", "dong", "ho")
+    @classmethod
+    def _blank(cls, v: str | None) -> str | None:
+        return v or None
+
+    @model_validator(mode="after")
+    def _ids(self) -> "VisitCreateIn":
+        if len(set(self.vendor_ids)) != len(self.vendor_ids):
+            raise ValueError("같은 업체를 두 번 담았어요.")
+        if not set(self.share_contact_ids) <= set(self.vendor_ids):
+            raise ValueError("연락처는 요청하는 업체에만 보낼 수 있어요.")
+        return self
+
+
+class FailedOut(BaseModel):
+    vendor_id: uuid.UUID
+    code: Literal["unavailable", "already"] = Field(
+        description="unavailable: 지금 믿집에서 일할 수 없는 업체 · already: 이미 요청한 업체"
+    )
+
+
+class VisitOut(BaseModel):
+    """고객이 보는 실측 요청 한 건. 업체 연락처는 공개 규칙을 지날 때만 들어 있다."""
+
+    id: uuid.UUID
+    trade: str
+    vendor_id: uuid.UUID | None
+    vendor_name: str
+    status: str
+    slot: int
+    created_at: datetime
+    share_contact: bool = Field(description="내 연락처를 보냈는지")
+    message: str | None
+    decline_code: str | None
+    estimate_total: int | None = Field(description="요청 때 가견적 사본 (없으면 비어 있다)")
+    contact_visible: bool
+    contact: ContactOut | None
+
+
+class VisitCreateOut(BaseModel):
+    created: list[VisitOut]
+    failed: list[FailedOut]
+
+
+class RequestTextOut(BaseModel):
+    trade: str
+    text: str = Field(description="연락할 때 보낼 문구 (문자 · 카카오톡에 붙여 넣는다)")
+
+
+class VisitListOut(BaseModel):
+    project_id: uuid.UUID
+    consent_ver: str
+    slots_left: dict[str, int] = Field(description="공정마다 더 담을 수 있는 업체 수")
+    request_texts: list[RequestTextOut]
+    visits: list[VisitOut] = Field(description="최근 순, 닫힌 것 포함")

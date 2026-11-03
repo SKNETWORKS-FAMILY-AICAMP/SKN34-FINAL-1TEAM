@@ -168,14 +168,19 @@ async def update(
     return await _out(s, p)
 
 
-async def lock_for_visit(s: AsyncSession, project_id: uuid.UUID) -> Project:
+async def lock_for_visit(
+    s: AsyncSession, project_id: uuid.UUID, unit: tuple[str, str, str] | None = None
+) -> Project:
     """실측 요청을 넣기 전에 부른다: 프로젝트 행을 잠그고(같은 프로젝트의 요청이 줄 선다),
-    아직 안 잠겼으면 locked_at을 찍는다. commit은 부르는 쪽이 한다."""
+    아직 안 잠겼으면 locked_at을 찍는다. 연락처를 보내면 아파트 이름 · 동 · 호수(unit)도 적는다.
+    commit은 부르는 쪽이 한다."""
     p = await repo.get_for_update(s, project_id)
     if p is None:
         raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
     if p.locked_at is None:
         p.locked_at = now_utc()
+    if unit is not None:
+        p.apt_name, p.dong, p.ho = unit
     return p
 
 
