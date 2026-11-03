@@ -269,7 +269,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 공정표 (예상 공정표, 만든 사람 · 관리자) */
+        /** 공정표: 공사 날짜를 수락했으면 확정 공정표, 아니면 예상 공정표 (만든 사람 · 관리자) */
         get: operations["plan_projects__project_id__plan_get"];
         put?: never;
         /** 예상 공정표 다시 계산 (시작일 · 주말 공사) */
@@ -408,7 +408,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 낸 공사 날짜 수락 (겹치면 409, 그사이 다시 냈으면 409 dates_changed) */
+        /** 낸 공사 날짜 · 새 날짜 수락 → 확정 공정표 새 버전 (겹침 · 다시 냄 · 공정표 바뀜은 409) */
         post: operations["accept_dates_projects__project_id__deals__deal_id__dates__proposal_id__accept_post"];
         delete?: never;
         options?: never;
@@ -1024,6 +1024,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AcceptIn */
+        AcceptIn: {
+            /**
+             * Seen Version
+             * @description 화면이 본 확정 공정표 버전 (없으면 0). 그사이 바뀌었으면 409
+             */
+            seen_version: number;
+        };
         /**
          * ApplicationOut
          * @description 업체 홈의 가입 심사 칸 (승인 전에도 본인만)
@@ -1364,10 +1372,22 @@ export interface components {
              */
             method: "app" | "call";
             /**
+             * Kind
+             * @description 처음 내기 · 다시 내기(initial) 또는 수락한 날짜 바꾸기(change)
+             * @default initial
+             * @enum {string}
+             */
+            kind: "initial" | "change";
+            /**
              * Call On
              * @description 통화로 정했으면 통화한 날 (필수)
              */
             call_on?: string | null;
+            /**
+             * Reason
+             * @description 수락한 날짜를 바꿀 때 이유 (고객 요청에 답할 때는 없어도 된다)
+             */
+            reason?: string | null;
             /**
              * Request Id
              * @description 화면이 본 열린 요청 (그사이 바뀌었으면 409)
@@ -1737,7 +1757,7 @@ export interface components {
             /** End Date */
             end_date?: string | null;
             /** Dates State */
-            dates_state?: ("waiting" | "proposed" | "requested" | "scheduled" | "closed") | null;
+            dates_state?: ("waiting" | "proposed" | "requested" | "scheduled" | "change_requested" | "change_proposed" | "closed") | null;
             /**
              * Proposed Start
              * @description 수락 기다리는 날짜
@@ -1839,11 +1859,16 @@ export interface components {
              * Dates State
              * @enum {string}
              */
-            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "closed";
+            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "change_requested" | "change_proposed" | "closed";
             proposal: components["schemas"]["ProposalOut"] | null;
             request: components["schemas"]["DateRequestOut"] | null;
             /** Requests Left */
             requests_left: number;
+            /**
+             * Request Options
+             * @description 수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 같은 기간으로 끝나는 날
+             */
+            request_options: components["schemas"]["StartOptionOut"][];
         };
         /** LicenseOut */
         LicenseOut: {
@@ -2047,6 +2072,59 @@ export interface components {
             crew: number | null;
             /** Man Day */
             man_day: string | null;
+            /**
+             * State
+             * @default expected
+             * @enum {string}
+             */
+            state: "confirmed" | "pending" | "expected";
+            /** Deal Id */
+            deal_id?: string | null;
+            /** Vendor Name */
+            vendor_name?: string | null;
+        };
+        /**
+         * PlanChangeOut
+         * @description 수락한 날짜를 바꾸는 새 날짜: 지금 → 새 날짜, 바꾸면 건조 · 청소도 같이 밀린 공정표
+         */
+        PlanChangeOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Deal Id
+             * Format: uuid
+             */
+            deal_id: string;
+            /** Vendor Name */
+            vendor_name: string;
+            /**
+             * Current Start
+             * Format: date
+             */
+            current_start: string;
+            /**
+             * Current End
+             * Format: date
+             */
+            current_end: string;
+            proposal: components["schemas"]["ProposalOut"];
+            fit: components["schemas"]["FitOut"];
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Work Days */
+            work_days: number;
+            /** Blocks */
+            blocks: components["schemas"]["PlanBlockOut"][];
+            /** Days */
+            days: components["schemas"]["PlanDayOut"][];
         };
         /** PlanDayOut */
         PlanDayOut: {
@@ -2063,6 +2141,12 @@ export interface components {
             names: string[];
             /** Holiday */
             holiday: string | null;
+            /**
+             * State
+             * @default expected
+             * @enum {string}
+             */
+            state: "confirmed" | "pending" | "expected";
         };
         /** PlanOut */
         PlanOut: {
@@ -2100,6 +2184,12 @@ export interface components {
             blocks: components["schemas"]["PlanBlockOut"][];
             /** Days */
             days: components["schemas"]["PlanDayOut"][];
+            /**
+             * Changes
+             * @description 확정 공정표: 수락 기다리는 새 날짜마다 바꾸면 어떻게 되는지
+             * @default []
+             */
+            changes: components["schemas"]["PlanChangeOut"][];
         };
         /**
          * PlanRedo
@@ -2954,6 +3044,11 @@ export interface components {
              */
             holidays: components["schemas"]["HolidayOut"][];
             /**
+             * Final Version
+             * @description 확정 공정표 최신 버전 (없으면 0). 수락할 때 그대로 보낸다
+             */
+            final_version: number;
+            /**
              * Trades
              * @description 목공 → 도배 순, 확정한 공정만
              */
@@ -3126,7 +3221,7 @@ export interface components {
              * Dates State
              * @enum {string}
              */
-            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "closed";
+            dates_state: "waiting" | "proposed" | "requested" | "scheduled" | "change_requested" | "change_proposed" | "closed";
             /** @description 수락 기다리는 날짜 */
             proposal: components["schemas"]["ProposalOut"] | null;
             /** @description 열린 다른 날짜 요청 */
@@ -4265,7 +4360,9 @@ export interface operations {
     };
     plan_projects__project_id__plan_get: {
         parameters: {
-            query?: never;
+            query?: {
+                kind?: ("expected" | "final") | null;
+            };
             header?: never;
             path: {
                 project_id: string;
@@ -4558,7 +4655,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
