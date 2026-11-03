@@ -759,6 +759,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 실측 견적 비교 · 표준견적서와 업체가 보낸 견적서 (한 공정) */
+        get: operations["compare_quotes_projects__project_id__quotes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/quotes/{quote_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 받은 실측 견적서 파일 보기 (그 요청의 고객 · 보낸 버전만) */
+        get: operations["customer_quote_file_projects__project_id__quotes__quote_id__files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/{visit_id}/quote/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 내 실측 견적서 파일 보기 (임시 저장본 포함) */
+        get: operations["vendor_quote_file_vendor_visits__visit_id__quote_files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -919,6 +970,104 @@ export interface components {
             status: "within" | "over" | "open";
             /** Over By */
             over_by: number | null;
+        };
+        /**
+         * CompareOut
+         * @description 한 공정의 실측 견적 비교: 표준견적서와 업체가 보낸 견적서
+         */
+        CompareOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Trade */
+            trade: string;
+            /**
+             * Standard Total
+             * @description 표준견적서 합계 (부가세 포함)
+             */
+            standard_total: number;
+            /** Formula Ver */
+            formula_ver: string;
+            /** Price Ver */
+            price_ver: string;
+            /**
+             * Computed At
+             * Format: date-time
+             */
+            computed_at: string;
+            /**
+             * Sent Counts
+             * @description 공정마다 받은 실측 견적서 수
+             */
+            sent_counts: {
+                [key: string]: number;
+            };
+            /**
+             * Vendors
+             * @description 받은 것(받은 순) 먼저, 그다음 기다리는 곳
+             */
+            vendors: components["schemas"]["CompareRowOut"][];
+        };
+        /**
+         * CompareRowOut
+         * @description 견적서 비교 화면의 업체 한 곳
+         */
+        CompareRowOut: {
+            /**
+             * Visit Id
+             * Format: uuid
+             */
+            visit_id: string;
+            /** Vendor Id */
+            vendor_id: string | null;
+            /** Vendor Name */
+            vendor_name: string;
+            /**
+             * Status
+             * @description requested(견적서 기다림) · quoted · chosen
+             */
+            status: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /**
+             * Seen Ver
+             * @description 이 화면을 연 때의 본 버전. 확정할 때 그대로 보낸다
+             */
+            seen_ver: number | null;
+            /** @description 보낸 최신 버전 (기다림이면 비어 있다) */
+            latest: components["schemas"]["VendorQuoteOut"] | null;
+            /**
+             * History
+             * @description 그 전에 보낸 버전 (최신 먼저)
+             */
+            history: components["schemas"]["QuoteVersionBrief"][];
+            /**
+             * Changed
+             * @description 바로 앞 버전과 달라진 칸: total · days · valid_until · files(파일 수)
+             */
+            changed: string[];
+            /**
+             * Estimate Total
+             * @description 요청 때 가견적 사본
+             */
+            estimate_total: number | null;
+            /**
+             * Vs Standard
+             * @description 표준견적서 대비 % (믿집 계산)
+             */
+            vs_standard: string | null;
+            /** Vs Direction */
+            vs_direction: ("less" | "more" | "same") | null;
+            /**
+             * Expired
+             * @description 유효기간이 오늘(서울)보다 앞
+             */
+            expired: boolean;
         };
         /**
          * ContactOut
@@ -1980,6 +2129,27 @@ export interface components {
             size: number;
             /** Sort */
             sort: number;
+        };
+        /**
+         * QuoteVersionBrief
+         * @description 예전에 보낸 버전 요약 (다시 올리기 기록)
+         */
+        QuoteVersionBrief: {
+            /** Version */
+            version: number;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
+            /** Total */
+            total: number;
+            /** Days */
+            days: number | null;
+            /** Valid Until */
+            valid_until: string | null;
+            /** File Count */
+            file_count: number;
         };
         /**
          * ReapplyIn
@@ -4424,6 +4594,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuoteBoardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_quotes_projects__project_id__quotes_get: {
+        parameters: {
+            query: {
+                trade: "dobae" | "mokgong";
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompareOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    customer_quote_file_projects__project_id__quotes__quote_id__files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                quote_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_quote_file_vendor_visits__visit_id__quote_files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
