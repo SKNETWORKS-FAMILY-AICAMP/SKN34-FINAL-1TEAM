@@ -1,6 +1,6 @@
 "use client";
 // 끝남 표. 처음 한 쪽은 서버가 읽어 넘기고, '끝난 일 더 보기'는 next_before 커서로 이어 받아 아래에 붙인다.
-// 새로 붙은 첫 줄로 초점을 옮긴다.
+// 닫힌 요청과 고객이 확인해 끝난 공사(deal_id)가 끝난 때 최근 순으로 섞여 온다. 새로 붙은 첫 줄로 초점을 옮긴다.
 import { useRef, useState } from "react";
 import { call, errorText, type Schemas } from "@/lib/backend/client";
 import { Who, End } from "./Cells";
@@ -8,6 +8,9 @@ import { PAGE, dayOf, pyeongText, type Row } from "./text";
 import s from "./inbox.module.css";
 
 type Page = Schemas["InboxPageOut"];
+
+/** 줄 이름: 끝난 공사는 확정 id, 닫힌 요청은 요청 id */
+const keyOf = (v: Row) => v.deal_id ?? v.id;
 
 export function DoneTable({ items: first, next: firstNext, total }: { items: Row[]; next: string | null; total: number }) {
   const [items, setItems] = useState(first);
@@ -23,9 +26,9 @@ export function DoneTable({ items: first, next: firstNext, total }: { items: Row
     setErr("");
     try {
       const got = await call<Page>("GET", `/vendor/visits?tab=done&before=${encodeURIComponent(next)}`);
-      const seen = new Set(items.map((x) => x.id));
-      const add = got.items.filter((x) => !seen.has(x.id));
-      focusAt.current = add[0]?.id ?? null;
+      const seen = new Set(items.map(keyOf));
+      const add = got.items.filter((x) => !seen.has(keyOf(x)));
+      focusAt.current = add[0] ? keyOf(add[0]) : null;
       setItems([...items, ...add]);
       setNext(got.next_before);
     } catch (e) {
@@ -49,10 +52,11 @@ export function DoneTable({ items: first, next: firstNext, total }: { items: Row
           </tr></thead>
           <tbody>
             {items.map((v) => (
-              <tr key={v.id}>
+              <tr key={keyOf(v)}>
                 <td className={`mj-num ${s.cx} ${s.day}`}>{dayOf(v.received_at)}</td>
-                <th scope="row" tabIndex={-1} ref={(el) => { if (el && focusAt.current === v.id) { focusAt.current = null; el.focus(); } }}>
-                  <Who v={v} closed />
+                <th scope="row" tabIndex={-1} ref={(el) => { if (el && focusAt.current === keyOf(v)) { focusAt.current = null; el.focus(); } }}>
+                  {/* 끝난 공사인데 고객이 연락처를 보내지 않았으면 요청 번호, 그 밖에 연락처가 없으면 '가려졌어요' */}
+                  <Who v={v} closed={!(v.deal_id && !v.share_contact)} />
                 </th>
                 <td className={s.cx}>{v.region}</td>
                 <td className="r mj-num">{pyeongText(v.pyeong)}</td>

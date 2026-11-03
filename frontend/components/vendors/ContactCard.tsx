@@ -1,8 +1,10 @@
 // 실측 요청한 업체 카드 (시안 WVisit 카드 · WVendorDetail '요청한 뒤'). 연락처는 API가 공개 규칙을 지난 때만 준다.
 // 연락 방식 버튼은 업체가 정한 하나만: 전화 걸기 · 문자 보내기 · 카카오톡 채널 열기 · 홈페이지 상담 열기.
 // 확정한 업체는 연락처가 계속 보이고, 닫힌 업체는 shutKind로 '다른 업체로 정했어요'(확정이 살아 있을 때) · '지난 실측 닫힘'을 나눈다.
+// 확정한 업체 연락처는 공사가 끝난 날부터 1년까지 보이고, 업체가 공사를 끝냈다고 올렸으면 그 기한(until, 확정의 contact_until)을 보인다.
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { untilDay } from "@/components/schedule/text";
 import { phoneText } from "@/lib/labels";
 import { CancelVisit } from "./CancelVisit";
 import { CopyButton } from "./CopyButton";
@@ -38,9 +40,10 @@ function Way({ v }: { v: Visit }) {
   );
 }
 
-/** 열린 요청(요청함 · 견적서 옴)의 연락처 · 버튼 · 내 연락처 줄 */
-function Open({ v, requestText }: { v: Visit; requestText?: string }) {
+/** 열린 요청(요청함 · 견적서 옴)의 연락처 · 버튼 · 내 연락처 줄. until: 확정한 업체의 연락처 기한 (API 값) */
+function Open({ v, requestText, until }: { v: Visit; requestText?: string; until?: string | null }) {
   const ct = v.contact;
+  const keep = until ? `${untilDay(until)}까지` : "공사가 끝난 날부터 1년까지";
   return (
     <>
       {ct ? (
@@ -60,8 +63,8 @@ function Open({ v, requestText }: { v: Visit; requestText?: string }) {
       <p className={`mj-small ${c.ln}`}>
         {v.status === "chosen"
           ? v.share_contact
-            ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · 공사가 끝난 날부터 1년까지 서로 보여요</>
-            : <><Lock />내 연락처는 보내지 않았어요 · 업체 연락처는 공사가 끝난 날부터 1년까지 보여요</>
+            ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · <span className="mj-num">{keep}</span> 서로 보여요</>
+            : <><Lock />내 연락처는 보내지 않았어요 · 업체 연락처는 <span className="mj-num">{keep}</span> 보여요</>
           : v.share_contact
             ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · 업체가 먼저 연락할 수도 있어요</>
             : <><Lock />내 연락처는 보내지 않았어요 · 위 문구를 보내며 먼저 연락해 주세요</>}
@@ -115,9 +118,11 @@ type Props = {
   allHref?: string;
   /** 이 공정을 이미 확정함: 닫힌 요청은 '다른 업체로 정했어요', 다른 업체 담기를 두지 않는다 */
   locked?: boolean;
+  /** 확정한 요청의 연락처 기한 (업체가 공사를 끝냈다고 올린 뒤, 확정의 contact_until) */
+  until?: string | null;
 };
 
-export function ContactCard({ v, projectId, trade, titled, requestText, allHref, locked }: Props) {
+export function ContactCard({ v, projectId, trade, titled, requestText, allHref, locked, until }: Props) {
   const open = isLive(v.status) && v.contact_visible;
   const pickHref = `/projects/${projectId}/vendors?trade=${trade}`;
   const detail = v.vendor_id ? `/projects/${projectId}/vendors/${v.vendor_id}?trade=${trade}` : null;
@@ -138,7 +143,7 @@ export function ContactCard({ v, projectId, trade, titled, requestText, allHref,
           <Link className={`mj-lnk ${c.sm}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>확정한 견적서 보기<span className="mj-sr">, {v.vendor_name}</span></Link>
         </div>
       ) : null}
-      {open ? <Open v={v} requestText={requestText} /> : isLive(v.status) ? <p className="mj-small">연락처를 보일 수 있는 때가 지났어요.</p> : <Shut v={v} pickHref={pickHref} locked={locked} />}
+      {open ? <Open v={v} requestText={requestText} until={v.status === "chosen" ? until : null} /> : isLive(v.status) ? <p className="mj-small mj-num">{v.status === "chosen" && until ? `연락처는 ${untilDay(until)}까지 보였어요. 지금은 가려졌어요.` : "연락처를 보일 수 있는 때가 지났어요."}</p> : <Shut v={v} pickHref={pickHref} locked={locked} />}
       <div className={c.foot}>
         {allHref ? <Link className={`mj-lnk ${c.sm}`} href={allHref}>요청한 업체 모두 보기</Link> : <span className="mj-small mj-num">{when(v.created_at)} 요청</span>}
         {v.status === "requested" ? <CancelVisit projectId={projectId} visitId={v.id} name={v.vendor_name} shared={v.share_contact} /> : null}

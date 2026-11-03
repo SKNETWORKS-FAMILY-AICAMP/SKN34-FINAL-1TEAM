@@ -43,6 +43,17 @@ export function goLabel(st: string | null | undefined, status?: string | null): 
 export const jobHref = (dealId: string, st: string | null | undefined, status?: string | null) =>
   `/vendor/jobs/${dealId}${canMove(st, status) ? "?change=1" : ""}`;
 
+// ---- 공사 끝냈어요 (시안 WVCalendar '공사 끝냈어요') ----
+
+/** '공사 끝냈어요' · '남은 일 다 했어요'를 올릴 수 있는 확정 상태 (schedule.service FINISHABLE과 같다). 마지막 공사일부터인지는 API can_finish */
+export const isFinishable = (status: string | null | undefined) => status === "scheduled" || status === "fixing";
+
+/** 끝냄 버튼 말: 남은 일이면 '남은 일 다 했어요' */
+export const finishLabel = (status: string | null | undefined) => (status === "fixing" ? "남은 일 다 했어요" : "공사 끝냈어요");
+
+/** 공사 날짜 화면의 '공사 끝냈어요' 칸 */
+export const finishHref = (dealId: string) => `/vendor/jobs/${dealId}#j-finish`;
+
 /** 바로 해야 할 일이면 주 버튼 (날짜 내기 · 요청에 답하기 · 바꾸기 요청에 새 날짜 올리기) */
 export const needsAct = (st: string | null | undefined) => st === "waiting" || st === "requested" || st === "change_requested";
 

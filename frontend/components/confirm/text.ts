@@ -20,7 +20,7 @@ export const DEAL_LABEL: Record<string, string> = {
   confirmed: "공사 날짜 기다림",
   scheduled: "공사 날짜 수락함",
   checking: "공사 끝냄 · 내 확인 기다림",
-  fixing: "남은 일을 알렸어요",
+  fixing: "남은 일 기다림",
   done: "공사 끝남",
 };
 

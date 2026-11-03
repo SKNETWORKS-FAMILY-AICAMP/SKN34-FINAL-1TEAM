@@ -79,3 +79,6 @@
 .rad input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 .rad:has(input:checked) { border-color: var(--accent); background: var(--surface); }
 .dlgBtns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+/* 공사 탭: 고객이 적은 남은 일 */
+.say { display: block; max-width: 28em; margin-top: 2px; overflow-wrap: anywhere; white-space: pre-line; }
+.jobActs { gap: 6px; }

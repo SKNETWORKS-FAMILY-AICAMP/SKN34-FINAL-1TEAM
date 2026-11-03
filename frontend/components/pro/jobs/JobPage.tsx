@@ -1,4 +1,4 @@
-// 공사 날짜 내기 화면 틀 (시안 WVCalendar): 이동 경로 + 공사 날짜 칸(JobBoard) + 추가 금액 알리기(JobExtras, 고객이 날짜를 수락한 뒤).
+// 공사 날짜 내기 화면 틀 (시안 WVCalendar): 이동 경로 + 공사 날짜 칸(JobBoard) + 추가 금액 알리기(JobExtras, 고객이 날짜를 수락한 뒤) + 공사 끝냈어요(JobBoard 안 JobFinish).
 import Link from "next/link";
 import { workText } from "@/components/pro/inbox/text";
 import { won } from "@/lib/format";

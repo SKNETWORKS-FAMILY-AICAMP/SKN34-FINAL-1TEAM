@@ -115,3 +115,13 @@ table.days tr > th:first-child { padding-left: 0; }
 .exSum dd { margin: 0; display: flex; flex-direction: column; }
 .exBig { font-size: var(--fs-lg); font-weight: 700; }
 .exLead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+
+/* 공사가 끝났을 때: 업체가 끝냈다고 올림 · 남은 일 · 끝남 */
+.workTop { padding-top: 28px; }
+.workTop:empty { display: none; }
+.work { display: flex; flex-direction: column; gap: 20px; max-width: 960px; }
+.fixForm { display: flex; flex-direction: column; gap: 12px; max-width: 560px; }
+.doneList { list-style: none; margin: 0; padding: 0; max-width: 640px; border-top: 1px solid var(--line); }
+.doneList > li { display: flex; flex-direction: column; gap: 4px; padding-block: 12px; border-bottom: 1px solid var(--line); }
+.doneRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ctUntil { display: block; font-size: var(--fs-sm); font-weight: 400; color: var(--ink-sub); }

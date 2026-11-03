@@ -83,7 +83,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
               <ul role="list" className={s.cards}>
                 {rows.map((v) => (
                   <li key={v.id} className={s.card}>
-                    <ContactCard v={v} projectId={id} trade={trade} titled locked={!!deal} />
+                    <ContactCard v={v} projectId={id} trade={trade} titled locked={!!deal} until={deal?.visit_id === v.id ? deal.contact_until : null} />
                   </li>
                 ))}
               </ul>

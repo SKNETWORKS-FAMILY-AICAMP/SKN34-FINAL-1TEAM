@@ -2,6 +2,7 @@
 // 수락한 뒤 공사 날짜 바꾸기 (시안 WPlanDone '확정한 날짜 바꾸기' · WSchedule '수락한 뒤'):
 // 업체가 새 날짜를 올렸으면 '새 날짜 수락하기'(확인 창, 화면이 본 확정 공정표 버전으로) · 아니면 '공사 날짜 바꾸기 요청하기'(후보 1~3개 + 이유 필수).
 // 후보 · 끝나는 날 · 남은 요청 수는 API 값 그대로다. 수락하기 전까지는 지금 날짜가 그대로다.
+// 업체가 공사를 끝냈다고 올린 뒤(finished)에는 날짜 바꾸기 요청을 두지 않는다(서버도 409).
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -29,6 +30,8 @@ type Props = {
   /** 열린 날짜 바꾸기 요청 */
   request: DateReq | null;
   requestsLeft: number;
+  /** 업체가 공사를 끝냈다고 올린 뒤: 날짜를 바꾸지 않는다 */
+  finished: boolean;
   /** 새 날짜가 다른 공정과 겹쳐 수락할 수 없음 (API fit.conflicts) */
   conflict: boolean;
   /** 요청 후보: 지금과 같은 일하는 날 수, 다른 공정과 겹치지 않는 날부터 */
@@ -59,7 +62,7 @@ export function ChangeBox(p: Props) {
   const whyRef = useRef<HTMLTextAreaElement>(null);
   const tName = tradeLabel(p.trade);
   const x = p.proposal;
-  const canRequest = !p.request && p.requestsLeft > 0;
+  const canRequest = !p.finished && !p.request && p.requestsLeft > 0;
 
   const [busy, setBusy] = useState<"" | "accept" | "request">("");
   const [err, setErr] = useState<Err | null>(null);
@@ -230,7 +233,8 @@ export function ChangeBox(p: Props) {
         </form>
       ) : null}
 
-      {!p.request && p.requestsLeft <= 0 ? (
+      {p.finished ? <p className="mj-small">업체가 공사를 끝냈다고 올린 뒤에는 날짜를 바꿀 수 없어요.</p> : null}
+      {!p.finished && !p.request && p.requestsLeft <= 0 ? (
         <p className="mj-small">다른 날짜 요청은 수락 전후 합쳐 2번까지 할 수 있어요. 2번 다 써서 더 요청할 수 없어요. 날짜를 바꿔야 하면 {p.vendorName}에 전화해 주세요.</p>
       ) : null}
 

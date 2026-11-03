@@ -4,18 +4,20 @@
 // 할 일에서 본 요청은 '견적서 올리기', 기다림은 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
 // 공사 탭 줄은 공사 날짜 상태(dates_state)에 따라 '공사 날짜 내기' · '날짜 다시 내기' · '요청에 답하기' · '새 날짜 올리기' · '공사 날짜 바꾸기' · '공사 날짜 보기'로 /vendor/jobs/{deal_id}에 간다.
 // 고객 확인을 기다리는 추가 금액이 있으면 다음 할 일 아래 '추가 금액 확인 기다림 N건'(extras_pending)을 더한다.
+// 공사 끝냈어요: 날짜를 수락한 공사는 '공사 끝냈어요', 고객이 남은 일을 알렸으면 '남은 일 다 했어요'로 공사 날짜 화면의 끝냄 칸에 간다.
+// 끝냄 · 고객 확인 기다림(checking) · 남은 일(fixing)은 이 탭에 남고, 고객이 확인해 끝난 공사는 끝남 탭에 간다(끝낸 날 · 연락처 기한은 API 값).
 import Link from "next/link";
 import type { InboxPage, InboxSummary } from "@/lib/api/visit";
 import type { VendorPrices, VendorProfile } from "@/lib/api/vendor";
 import { dateSeoul, md } from "@/lib/format";
 import { phoneText, tradeLabel } from "@/lib/labels";
 import { contactLine, type Method } from "@/components/pro/profile/text";
-import { goLabel, jobHref, needsAct, span } from "@/components/pro/jobs/text";
+import { finishHref, goLabel, jobHref, needsAct, span } from "@/components/pro/jobs/text";
 import { Alert, Dash, Who } from "./Cells";
 import { DeclineButton } from "./DeclineButton";
 import { DoneNote } from "./DoneNote";
 import { DoneTable } from "./DoneTable";
-import { EMPTY, JOB_LABEL, TABS, TAB_NOTE, dayOf, pyeongText, stampOf, whoOf, type Row, type Tab } from "./text";
+import { EMPTY, JOB_LABEL, TABS, TAB_NOTE, dayOf, doneNote, pyeongText, stampOf, whoOf, type Row, type Tab } from "./text";
 import s from "./inbox.module.css";
 
 type Props = {
@@ -80,6 +82,12 @@ function WaitRow({ v }: { v: Row }) {
 /** 공사 탭 '다음 할 일': 공사 날짜 상태(API)대로. 날짜를 안 냈으면 기한, 다른 날짜 · 바꾸기 요청이면 고른 시작일 · 답할 기한, 기한이 지났으면 '기한 지남' */
 function NextJob({ v }: { v: Row }) {
   const st = v.dates_state;
+  if (v.deal_status === "checking") {
+    return <><span className="mj-st mj-st-wait"><Dash />{JOB_LABEL.checking}</span><br /><span className="mj-small mj-num">{doneNote(v)}</span></>;
+  }
+  if (v.deal_status === "fixing") {
+    return <><span className="mj-st mj-st-now">{JOB_LABEL.fixing}</span>{v.fixing_note ? <span className={s.say}>&lsquo;{v.fixing_note}&rsquo;</span> : null}</>;
+  }
   if (st === "waiting" && v.dates_due_at) {
     return (
       <>
@@ -121,6 +129,9 @@ function NextJob({ v }: { v: Row }) {
       </>
     );
   }
+  if (v.deal_status === "scheduled" && v.end_date) {
+    return <><span className={s.b}>{JOB_LABEL.scheduled}</span><br /><span className="mj-small mj-num">&lsquo;공사 끝냈어요&rsquo;는 마지막 공사일 {md(v.end_date)}부터 눌러져요</span></>;
+  }
   return <span className={s.b}>{JOB_LABEL[v.deal_status ?? ""] ?? "공사 진행"}</span>;
 }
 
@@ -142,9 +153,14 @@ function JobRow({ v }: { v: Row }) {
       <td><span className={s.mlab}>공사 날짜 </span><JobDates v={v} /></td>
       <td><NextJob v={v} />{v.extras_pending > 0 ? <><br /><span className="mj-st mj-st-wait mj-num"><Dash />추가 금액 확인 기다림 {v.extras_pending}건</span></> : null}</td>
       <td className="r">
-        <div className={s.acts}>
-          {v.deal_id ? (
+        <div className={`${s.acts} ${s.jobActs}`}>
+          {v.deal_id && v.deal_status === "fixing" ? (
+            <Link className={`mj-btn mj-btn-pri mj-btn-sm ${s.go} ${s.goPri}`} href={finishHref(v.deal_id)} aria-label={`${whoOf(v)} 남은 일 다 했어요`}>남은 일 다 했어요</Link>
+          ) : v.deal_id ? (
             <Link className={`mj-btn ${needsAct(v.dates_state) ? `mj-btn-pri ${s.goPri}` : "mj-btn-sec"} mj-btn-sm ${s.go}`} href={jobHref(v.deal_id, v.dates_state, v.deal_status)} aria-label={`${whoOf(v)} ${go}`}>{go}</Link>
+          ) : null}
+          {v.deal_id && v.deal_status === "scheduled" ? (
+            <Link className={`mj-btn mj-btn-sec mj-btn-sm ${s.go}`} href={finishHref(v.deal_id)} aria-label={`${whoOf(v)} 공사 끝냈어요`}>공사 끝냈어요</Link>
           ) : null}
           <Link className={`mj-lnk ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link>
         </div>

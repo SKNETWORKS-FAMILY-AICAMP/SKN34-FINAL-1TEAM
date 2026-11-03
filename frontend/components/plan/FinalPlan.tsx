@@ -1,6 +1,7 @@
 // 확정 공정표 화면 (시안 WPlanDone). 공사 날짜를 하나라도 수락하면 /projects/[id]/plan이 이 모습이 된다.
 // 칸 상태(수락함 · 수락 전 · 예상 자리) · 업체 · 날짜 · 일하는 날 · 새 날짜 미리 보기는 모두 API(계산 엔진) 값이다.
-// 공사 중 추가 금액은 공정마다 PlanExtras(확인 기다림이면 머리에 한 줄). 시안의 '공사 전에 할 일'(저장할 API가 없음) · 공사 끝냈어요(24번) · 상담 묻기는 넣지 않는다.
+// 공사 중 추가 금액은 공정마다 PlanExtras(확인 기다림이면 머리에 한 줄). 업체가 공사를 끝냈다고 올리면 WorkCheck(확인 · 남은 일 · 끝남, plan.deals)를 머리 아래 둔다.
+// 연락처 기한(contact_until)은 plan.deals 값 그대로다. 시안의 '공사 전에 할 일'(저장할 API가 없음) · 상담 묻기는 넣지 않는다.
 import Link from "next/link";
 import { Clock } from "@/components/confirm/DealStatus";
 import { day, when } from "@/components/confirm/text";
@@ -17,6 +18,7 @@ import { FinalDays } from "./FinalDays";
 import { PlanContacts, type PlanContact } from "./PlanContacts";
 import { PlanExtras, type ExtraDeal } from "./PlanExtras";
 import { StateBars, StateLegend } from "./StateBars";
+import { WorkCheck } from "./WorkCheck";
 import { blockRows, stateLine, workEnd, type Plan } from "./text";
 import s from "./plan.module.css";
 
@@ -64,6 +66,10 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
   // API 목록 순서가 고정되지 않아 막대와 같은 공정 순서로 늘어놓는다
   const workOrder = plan.blocks.filter((b) => b.kind === "work").map((b) => b.trade);
   const extraGroups = [...plan.extras].sort((a, b) => workOrder.indexOf(a.trade) - workOrder.indexOf(b.trade));
+  // 공사 끝냄 확인 · 연락처 기한: 공정마다 확정(plan.deals), 막대와 같은 공정 순서로
+  const deals = [...plan.deals].sort((a, b) => workOrder.indexOf(a.trade) - workOrder.indexOf(b.trade));
+  const dealTels = Object.fromEntries(deals.map((x) => [x.id, tel(x.trade)]));
+  const contactRows = contacts.map((c) => ({ ...c, until: deals.find((x) => x.trade === c.trade)?.contact_until ?? null }));
 
   return (
     <main id="main">
@@ -82,6 +88,8 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
         </div>
         <Link className="mj-lnk" href={`/projects/${id}/plan?kind=expected`}>예상 공정표 보기</Link>
       </div>
+
+      <div className={`mj-wrap ${s.workTop}`}><WorkCheck projectId={id} deals={deals} tels={dealTels} /></div>
 
       <div className="mj-wrap">
         <ChangeArea projectId={id} version={plan.version} items={items} lead={asked.length ? asked.map((t) => <RequestLine key={t.deal.id} t={t} />) : null} />
@@ -105,7 +113,7 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
 
       <div className={`mj-wrap ${s.foot}`}>
         <PlanExtras projectId={id} groups={extraGroups} deals={extraDeals} multi={rows.length > 1} />
-        <PlanContacts rows={contacts} />
+        <PlanContacts rows={contactRows} />
       </div>
     </main>
   );

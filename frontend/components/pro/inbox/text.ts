@@ -1,6 +1,6 @@
 // 작업함 · 요청 자세히(시안 WVInbox)에만 쓰는 화면 말 · 표시 함수. 날짜 · 금액은 새로 계산하지 않고 형식만 바꾼다.
 import type { Schemas } from "@/lib/backend/client";
-import { dateSeoul, decText, md, stampSeoul } from "@/lib/format";
+import { dateSeoul, dayParts, decText, dotDate, md, stampSeoul } from "@/lib/format";
 import { gradeLabel, tradeLabel } from "@/lib/labels";
 
 export type Row = Schemas["InboxRowOut"];
@@ -32,8 +32,18 @@ export const TAB_NOTE: Partial<Record<Tab, string>> = {
 /** 끝남 탭 다음 쪽 크기 (API 기본값과 같다) */
 export const PAGE = 20;
 
-/** 닫힌 요청이 어떻게 끝났나 */
-export function endLabel(v: Pick<Row, "status" | "close_reason">): string {
+/** 연락처 기한 "2027.11.23(화)" (API 값 그대로, 형식만) */
+export const untilDay = (iso: string) => `${dotDate(iso)}(${dayParts(iso).w})`;
+
+/** 고객이 확인해 끝난 공사: "11.23(월) 끝냄 · 연락처는 2027.11.23(화)까지" (끝낸 날 · 기한은 API 값) */
+export function doneNote(v: Pick<Row, "work_done_on" | "contact_until">): string {
+  const on = v.work_done_on ? `${md(v.work_done_on)} 끝냄` : "끝냄";
+  return v.contact_until ? `${on} · 연락처는 ${untilDay(v.contact_until)}까지` : on;
+}
+
+/** 닫힌 요청 · 끝난 공사가 어떻게 끝났나 */
+export function endLabel(v: Pick<Row, "status" | "close_reason" | "deal_status">): string {
+  if (v.deal_status === "done") return "공사 끝남";
   if (v.status === "cancelled") return "요청이 취소됐어요";
   if (v.status === "declined") return "내가 받지 않았어요";
   if (v.close_reason === "reselected") return "고객이 업체를 다시 고르기로 했어요";

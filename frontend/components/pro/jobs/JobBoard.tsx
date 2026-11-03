@@ -6,6 +6,7 @@
 //   스스로 바꾸기(scheduled · change_proposed): '공사 날짜 바꾸기'를 눌러 펼치고 이유 필수.
 //   고객 바꾸기 요청(change_requested): 고객이 고른 시작일(request_options, 끝나는 날은 API 값)에서 하나만 고른다.
 // 다시 골랐으면(closed) · 공사를 끝냈다고 올렸으면(status ≠ scheduled) 쓰기를 막는다. 추가 금액(JobExtras)은 children으로 받아 아래 링크 위에 둔다.
+// 수락한 뒤에는 추가 금액 아래 '공사 끝냈어요' · '남은 일 다 했어요'(JobFinish) 칸을 둔다. 수락한 날짜를 바꿀 때 인원은 수락한 날짜의 인원(accepted_crew)으로 채운다.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,11 +14,12 @@ import { FieldError } from "@/components/auth/parts";
 import { Alert, Dash } from "@/components/pro/inbox/Cells";
 import { CopyPhone } from "@/components/pro/inbox/CopyPhone";
 import { DoneNote } from "@/components/pro/inbox/DoneNote";
-import { iGa, pyeongText, telHref, workText } from "@/components/pro/inbox/text";
+import { iGa, pyeongText, telHref, untilDay, workText } from "@/components/pro/inbox/text";
 import { ApiError, call, errorText } from "@/lib/backend/client";
 import { dateSeoul, md, won } from "@/lib/format";
 import { crewLabel, phoneText, tradeLabel } from "@/lib/labels";
 import { FitChart } from "./FitChart";
+import { JobFinish } from "./JobFinish";
 import { JobDateField } from "./JobDateField";
 import { CREW_MAX, METHOD_LABEL, REASON_MAX, RESELECTED, canMove, eunNeun, isAfter, isOpen, methodText, needText, span, stamp, type Job, type Method, type Preview } from "./text";
 import s from "./jobs.module.css";
@@ -43,7 +45,7 @@ function fieldsOf(j: Job): Fields {
     call_on: p?.call_on ?? "",
     start: ask ? "" : p?.start ?? "",
     end: ask ? "" : p?.end ?? "",
-    crew: String(p?.crew ?? j.need.crew),
+    crew: String(p?.crew ?? j.accepted_crew ?? j.need.crew),
     reason: p?.kind === "change" ? p.reason ?? "" : "",
   };
 }
@@ -120,7 +122,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
   const id = job.deal_id;
   const st = job.dates_state;
   const after = isAfter(st);
-  const movable = after && job.status === "scheduled"; // 공사 끝냈어요(24번) 전까지 바꾼다
+  const movable = after && job.status === "scheduled"; // 공사 끝냈어요 전까지 바꾼다
   const mode: Mode = !after ? "initial" : st === "change_requested" ? "answer" : "change";
   const open = isOpen(st) || (movable && (mode === "answer" || editing));
   const v = job.visit;
@@ -298,7 +300,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
           {c?.phone ? (
             <>
               <p>{c.name} · <span className={`mj-num ${s.b} ${s.sel}`}>{phoneText(c.phone)}</span></p>
-              <p className="mj-small">공사가 끝난 날부터 1년까지 보여요</p>
+              <p className="mj-small mj-num">{job.contact_until ? `${untilDay(job.contact_until)}까지 보여요 · 끝냈다고 올린 날부터 1년` : "공사가 끝난 날부터 1년까지 보여요"}</p>
               <div className={s.btns}>
                 <CopyPhone phone={phoneText(c.phone)} name={c.name} />
                 <a className="mj-btn mj-btn-sec mj-btn-sm" href={telHref(c.phone)} aria-label={`${c.name}에게 전화 걸기`}><Phone />전화 걸기</a>
@@ -306,6 +308,8 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
             </>
           ) : st === "closed" ? (
             <p className="mj-small">요청이 닫혀 고객 연락처를 가렸어요.</p>
+          ) : job.contact_until && v.share_contact ? (
+            <p className="mj-small mj-num">연락처는 {untilDay(job.contact_until)}까지 보였어요. 지금은 가렸어요.</p>
           ) : (
             <p>연락처를 보내지 않은 고객이에요 · 고객이 요청 번호 <span className={s.code}>{v.code}</span>를 말해요</p>
           )}
@@ -453,7 +457,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
                     onChange={(e) => change({ crew: e.target.value.replace(/\D/g, "").slice(0, 2) })} />
                   <span aria-hidden="true">명</span>
                 </div>
-                <p id="j-crew-h" className="mj-hint">하루에 일하는 {crewLabel(job.trade)} 수예요. 믿집은 {job.need.crew}명으로 계산했어요.</p>
+                <p id="j-crew-h" className="mj-hint">하루에 일하는 {crewLabel(job.trade)} 수예요. {mode !== "initial" && job.accepted_crew ? `수락한 날짜는 ${job.accepted_crew}명이고, ` : ""}믿집은 {job.need.crew}명으로 계산했어요.</p>
                 {errs.crew ? <FieldError id="j-crew-e">{errs.crew}</FieldError> : null}
               </div>
 
@@ -507,6 +511,11 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
       ) : null}
 
       {children}
+
+      {after ? (
+        <JobFinish job={job} head={`${c?.name ?? v.code} · ${v.area_name} ${work}`} who={whoSay}
+          onSaved={(out) => { reset(out); setNote(null); setWarn(null); setEditing(false); router.refresh(); }} onStale={reload} />
+      ) : null}
 
       <p className={s.links}>
         <Link className="mj-lnk" href={`/vendor/requests/${v.id}`}>요청 자세히 보기</Link>

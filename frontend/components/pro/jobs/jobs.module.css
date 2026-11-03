@@ -132,3 +132,7 @@
 .exSum > div { display: flex; flex-direction: column; gap: 2px; padding-block: 12px; border-bottom: 1px solid var(--line); min-width: 0; }
 .exSum dt { font-size: var(--fs-sm); color: var(--ink-sub); }
 .exSum dd { margin: 0; display: flex; flex-direction: column; }
+
+/* 공사 끝냈어요 · 남은 일 */
+.fix { flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: var(--fs-md); }
+.fixText { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }

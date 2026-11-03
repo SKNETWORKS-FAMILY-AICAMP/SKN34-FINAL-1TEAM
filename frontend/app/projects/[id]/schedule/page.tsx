@@ -2,11 +2,13 @@
 // 읽기는 GET /projects/{id}/schedule 하나(공정마다 확정 · 낸 날짜 · 요청 · 겹침 · 요청 후보), 연락처는 GET /projects/{id}/visits?trade=.
 // 날짜 · 일하는 날 · 기한 · 겹침은 API 값 그대로다. 수락한 뒤에는 날짜 바꾸기(요청 · 업체가 올린 새 날짜 수락)를 여기서 하고 확정 공정표로 잇는다.
 // 공사 중 추가 금액(공정마다 extras)은 맨 아래 PlanExtras로 보이고 답한다(확정 공정표와 같은 칸).
+// 업체가 공사를 끝냈다고 올리면 WorkCheck(확인했어요 · 아직 남은 일이 있어요 · 남은 일 기다림 · 끝남)를 확정 공정표와 같이 쓰고, 날짜 바꾸기는 막는다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Check } from "@/components/vendors/icons";
-import { dealReselectText, canReselect, DEAL_LABEL } from "@/components/confirm/text";
+import { dealReselectText, canReselect } from "@/components/confirm/text";
 import { PlanExtras } from "@/components/plan/PlanExtras";
+import { WorkCheck } from "@/components/plan/WorkCheck";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { ContactStrip } from "@/components/schedule/ContactStrip";
 import { DatesBox } from "@/components/schedule/DatesBox";
@@ -14,7 +16,7 @@ import { DatesFacts } from "@/components/schedule/DatesFacts";
 import { Overlay } from "@/components/schedule/Overlay";
 import { ScheduleTabs } from "@/components/schedule/ScheduleTabs";
 import { ChangedLine, MoveLine, RequestLines, WaitLines } from "@/components/schedule/StateLines";
-import { isAccepted, span, type TradeDates } from "@/components/schedule/text";
+import { isAccepted, isFinished, span, type TradeDates } from "@/components/schedule/text";
 import { iGa, isTrade, telDigits, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { getSchedule } from "@/lib/api/schedule";
@@ -36,7 +38,10 @@ function heading(t: TradeDates | undefined, tName: string) {
   const v = t.deal.vendor_name;
   const x = t.proposal;
   if (isAccepted(t)) {
-    if (t.deal.status !== "scheduled") return { h: `${tName} 공사 · ${DEAL_LABEL[t.deal.status] ?? "수락함"}`, sub: null };
+    if (t.deal.status === "checking") return { h: `${tName} 공사가 끝났는지 확인해 주세요`, sub: `${iGa(v)} 공사를 끝냈다고 알렸어요.` };
+    if (t.deal.status === "fixing") return { h: `${tName} 남은 일을 기다려요`, sub: `${iGa(v)} 남은 일을 마치고 다시 올리면 확인해요.` };
+    if (t.deal.status === "done") return { h: `${tName} 공사가 끝났어요`, sub: null };
+    if (t.deal.status !== "scheduled") return { h: `${tName} 공사 날짜를 수락했어요`, sub: null };
     // 수락한 뒤 날짜 바꾸기: 업체가 새 날짜를 올림(요청에 답함 · 스스로 바꾸자고 함) · 고객이 요청함
     if (x) return { h: x.request_id ? `${iGa(v)} 새 ${tName} 날짜를 올렸어요` : `${iGa(v)} ${tName} 날짜를 바꾸자고 했어요`, sub: "내 공정표에 얹어 보고 수락하면 바뀌어요." };
     if (t.request) return { h: `${tName} 공사 날짜 바꾸기를 요청했어요`, sub: `${v} 답을 기다려요. 그동안 수락한 날짜는 그대로예요.` };
@@ -65,6 +70,8 @@ export default async function SchedulePage({ params, searchParams }: { params: P
   // 연락처: 확정한 요청(chosen)이 공개 규칙대로 준 것만
   const visit = deal ? (await listProjectVisits(id, trade))?.visits.find((v) => v.id === deal.visit_id) : undefined;
   const ct = visit?.contact_visible ? visit.contact : null;
+  const tel = ct?.phone ? telDigits(ct.phone) || null : null;
+  const finished = !!deal && isFinished(deal.status);
 
   // 다시 고르기 확인 창: 업체가 낸 날짜 · 보낸 요청도 없어진다는 말을 더한다
   const otherTrade = trades.find((o) => o !== trade);
@@ -107,6 +114,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
                     <DatesFacts x={x} vendorName={deal.vendor_name} weekendWork={sch.weekend_work} holidays={sch.holidays} dateLabel="새 날짜" />
                   </>
                 ) : null}
+                {finished ? <WorkCheck key={deal.id} projectId={id} deals={[deal]} tels={{ [deal.id]: tel }} /> : null}
               </>
             ) : x ? (
               <>
@@ -118,7 +126,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               <WaitLines vendorName={deal.vendor_name} dueAt={deal.dates_due_at} overdue={deal.overdue} />
             )}
 
-            {ct ? <ContactStrip trade={trade} vendorName={deal.vendor_name} ct={ct} /> : null}
+            {ct ? <ContactStrip trade={trade} vendorName={deal.vendor_name} ct={ct} until={deal.contact_until} /> : null}
 
             <Overlay trades={trades} rows={sch.trades} current={trade} />
 
@@ -129,6 +137,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               trade={trade}
               vendorName={deal.vendor_name}
               accepted={isAccepted(t)}
+              finished={finished}
               proposal={x}
               requested={!!t.request}
               request={t.request}
@@ -138,13 +147,13 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               options={t.start_options}
               weekendWork={sch.weekend_work}
               overdue={deal.overdue && !x}
-              tel={ct?.phone ? telDigits(ct.phone) || null : null}
+              tel={tel}
               seenVersion={sch.final_version}
               reselect={reselect}
               finalHref={`/projects/${id}/plan`}
             />
 
-            <PlanExtras projectId={id} groups={[t.extras]} deals={{ [deal.id]: { total: deal.quote.total, tel: ct?.phone ? telDigits(ct.phone) || null : null } }} multi={false} />
+            <PlanExtras projectId={id} groups={[t.extras]} deals={{ [deal.id]: { total: deal.quote.total, tel } }} multi={false} />
           </>
         )}
       </div>

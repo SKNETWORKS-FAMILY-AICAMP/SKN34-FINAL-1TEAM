@@ -29,6 +29,8 @@ type Props = {
   vendorName: string;
   /** 수락했거나 그 뒤 공사 상태 */
   accepted: boolean;
+  /** 업체가 공사를 끝냈다고 올린 뒤(내 확인 기다림 · 남은 일 · 끝남): 날짜 바꾸기 요청을 막는다 */
+  finished?: boolean;
   /** 수락 기다리는 날짜 (없으면 아직 안 냄) */
   proposal: Proposal | null;
   /** 열린 다른 날짜 요청이 있음 */
@@ -163,6 +165,7 @@ export function DatesBox(p: Props) {
             proposal={x}
             request={p.request}
             requestsLeft={p.requestsLeft}
+            finished={!!p.finished}
             conflict={p.conflict}
             options={p.options}
             weekendWork={p.weekendWork}
