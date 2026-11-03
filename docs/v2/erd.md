@@ -19,6 +19,7 @@ erDiagram
   standard_quotes ||--o{ standard_quote_lines : ""
   projects ||--o{ plans : "예상 · 확정 버전"
   plans ||--o{ plan_steps : ""
+  plans ||--o{ plan_days : "날짜별 할 일"
   vendors ||--o{ vendor_trades : ""
   vendors ||--o{ vendor_areas : ""
   vendors ||--o{ vendor_portfolio : ""
@@ -58,10 +59,11 @@ erDiagram
 | 표 | migration | 칸 · 제약 |
 | --- | --- | --- |
 | notifications | 0003_v2_notify | user · kind · project · `body ≤200`(고객 이름은 넣지 않음) · `link ≤200` · `dedup_key` · read_at. UQ(user, dedup_key) |
-| standard_quotes | 0005_v2_standard | project · trade · `version` · `project_rev` · `formula_ver` · `price_ver` · grade · supply · vat · total · `man_day numeric(4,1)`. UQ(project, trade, version) |
+| standard_quotes | 0005_v2_standard | project · trade · `version` · `project_rev` · `formula_ver` · `price_ver` · grade · area · pyeong · supply · vat · total · `man_day numeric(4,1)` · crew · notes(가정). UQ(project, trade, version) |
 | standard_quote_lines | 0005_v2_standard | (quote, key) PK, name · qty · unit · unit_price · amount · state(포함 상태 6종) · note · sort |
-| plans | 0006_v2_plan | project · kind(expected · final) · version · project_rev · formula_ver · start · end. UQ(project, kind, version) |
-| plan_steps | 0006_v2_plan | plan · trade(청소는 비움) · kind(work · dry · clean) · label · start · end · crew · sort. `deal_id`는 0012에 더함 |
+| plans | 0006_v2_plan | project · kind(expected · final) · version · project_rev · formula_ver · start · end · work_days · weekend_work. UQ(project, kind, version) |
+| plan_steps | 0006_v2_plan | plan · trade(건조 · 청소는 비움) · kind(work · dry · clean) · label · start · end · days · crew · man_day · sort. `deal_id`는 0012에 더함 |
+| plan_days | 0006_v2_plan | (plan, day) PK · trade · kind(work · dry · clean · off) · names(날짜별 할 일) |
 | vendor_faqs | 0007_v2_vendor_profile | (vendor, key) PK. key 5종(process · pricing · extra_cost · duration · as_refund), answer ≤200 |
 | vendor_links | 0007_v2_vendor_profile | vendor · label · url · sort. 5개까지(service) |
 | vendor_price_files | 0008_v2_vendor_price | file PK · vendor · trade. 가견적 근거 파일 |

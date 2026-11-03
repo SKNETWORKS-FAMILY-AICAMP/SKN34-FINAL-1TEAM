@@ -12,6 +12,7 @@ import app.files.models
 import app.notify.models
 import app.project.models
 import app.quote.models
+import app.schedule.models
 import app.vendor.models  # noqa: F401
 from app.config import settings
 from app.db import Base

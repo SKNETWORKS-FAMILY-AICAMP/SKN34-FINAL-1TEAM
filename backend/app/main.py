@@ -15,6 +15,7 @@ from app.files.router import router as files_router
 from app.notify.router import router as notify_router
 from app.project.router import router as project_router
 from app.quote.router import router as quote_router
+from app.schedule.router import router as schedule_router
 from app.shared.errors import (
     AppError,
     app_error_handler,
@@ -57,6 +58,7 @@ ROUTERS = [
     notify_router,
     project_router,
     quote_router,
+    schedule_router,
     vendor_router,
 ]
 for r in ROUTERS:
