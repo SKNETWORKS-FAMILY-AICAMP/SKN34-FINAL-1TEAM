@@ -1,0 +1,60 @@
+/* 업체 자세히 (시안 WVendorDetail · 페이지형) */
+.crumb { padding-top: 12px; padding-bottom: 8px; }
+.top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 28px 56px; padding-top: 8px; padding-bottom: 48px; }
+.hd { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.chip { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-s); font-size: var(--fs-xs); font-weight: 500; color: var(--ink-sub); white-space: nowrap; }
+.big { font-size: var(--fs-md); }
+.cc { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px clamp(16px, 2.5vw, 24px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.kv { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 16px; }
+.kv dt { font-size: var(--fs-sm); color: var(--ink-sub); padding-top: 1px; }
+.kv dd { margin: 0; }
+.strong { font-weight: 700; }
+.lock { display: flex; gap: 6px; align-items: flex-start; }
+.lock svg { flex: none; margin-top: 4px; }
+.was { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.cc :global(.mj-btn) { align-self: flex-start; }
+
+.dtl summary { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--accent-ink); font-weight: 700; cursor: pointer; list-style: none; }
+.dtl summary::-webkit-details-marker { display: none; }
+.chev { flex: none; }
+.dtl[open] .chev { transform: rotate(90deg); }
+.dtlBody { display: flex; flex-direction: column; gap: 10px; max-width: 640px; padding: 4px 0 8px; font-size: var(--fs-sm); }
+.dtlBody ul { margin: 0; padding-left: 18px; }
+
+.sec { padding-block: 40px; }
+.est { display: flex; flex-direction: column; gap: 2px; }
+.money { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.total { font-size: var(--fs-h1); font-weight: 700; }
+.none { font-size: var(--fs-lg); font-weight: 700; line-height: 1.4; }
+.calcBox { max-width: 640px; }
+.dtlBody .calc { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
+.calc li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.k { flex: 1 1 150px; min-width: 0; font-weight: 700; color: var(--ink); }
+.v { flex: 0 0 auto; max-width: 100%; }
+.f { flex: 1 1 100%; color: var(--ink-sub); overflow-wrap: anywhere; }
+.sum { font-size: var(--fs-sm); font-weight: 700; }
+.by { font-weight: 400; color: var(--ink-sub); }
+
+.ph { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 16px; max-width: 760px; }
+@media (max-width: 600px) { .ph { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ph figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.pic { aspect-ratio: 4 / 3; border: 1px solid var(--line-soft); border-radius: var(--radius-s); background: var(--surface-2); overflow: hidden; }
+.pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ph figcaption { font-size: var(--fs-sm); line-height: 1.5; }
+
+.qa { margin: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.qa > div { display: flex; flex-wrap: wrap; gap: 2px 24px; padding: 14px 0; border-bottom: 1px solid var(--line-soft); }
+.qa dt { flex: 0 0 180px; font-weight: 700; }
+.qa dd { flex: 1 1 320px; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+
+.bz { list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.bz li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.bk { flex: 0 0 160px; font-size: var(--fs-sm); color: var(--ink-sub); }
+.bv { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.bzNote { padding-top: 8px; }
+
+.end { display: flex; flex-direction: column; gap: 12px; padding-block: 32px 88px; border-top: 1px solid var(--line); }
+.endRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.gbtn { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--fs-sm); font-weight: 500; color: var(--ink-sub); text-decoration: none; }
+.gbtn:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
