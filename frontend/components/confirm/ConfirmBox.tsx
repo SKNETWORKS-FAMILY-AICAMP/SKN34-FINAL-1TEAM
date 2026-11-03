@@ -3,6 +3,7 @@
 // 체크는 화면 확인이라 서버에 보내지 않는다. 본 버전(seen_ver)은 비교 응답 값 그대로 보낸다.
 // 업체가 그사이 다시 올렸으면(409 quote_changed) 화면을 새로 읽어 새 버전을 보이고 다시 체크하게 한다.
 // 확정한 뒤에는 같은 자리에 '확정한 뒤' 모습을 둔다(새로 읽은 뒤에도 이 칸이 그대로 남아 초점을 잃지 않는다).
+// 공사 날짜를 수락하기 전이면 '○○ 업체 다시 고르기'(확인 창 → 업체 고르기)를 함께 둔다.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,7 +14,8 @@ import { ApiError, call, errorText } from "@/lib/backend/client";
 import { euro } from "@/lib/format";
 import { tradeLabel } from "@/lib/labels";
 import { DealStatus } from "./DealStatus";
-import { day, type ConfirmOut, type Deal } from "./text";
+import { Reselect } from "./Reselect";
+import { canReselect, day, dealReselectText, type ConfirmOut, type Deal } from "./text";
 import d from "@/components/vendors/dialog.module.css";
 import s from "./confirm.module.css";
 
@@ -32,6 +34,8 @@ type Props = {
   /** 이 요청으로 이미 확정했으면 그 확정 (서버가 읽음) */
   deal: Deal | null;
   compareHref: string;
+  /** 다른 공정과 그 확정 (다시 고르기 창의 '그대로예요') */
+  other: { trade: string; deal: Deal | null } | null;
 };
 
 type Err = { text: string; retry?: boolean };
@@ -40,7 +44,7 @@ const Spin = () => (
   <svg className={s.spin} width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M8 2a6 6 0 1 1-6 6" strokeLinecap="round" /></svg>
 );
 
-export function ConfirmBox({ projectId, visitId, trade, vendorName, seenVer, others, expired, validUntil, deal, compareHref }: Props) {
+export function ConfirmBox({ projectId, visitId, trade, vendorName, seenVer, others, expired, validUntil, deal, compareHref, other }: Props) {
   const router = useRouter();
   const dlg = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
@@ -65,7 +69,10 @@ export function ConfirmBox({ projectId, visitId, trade, vendorName, seenVer, oth
         {late ? (
           <p className={`mj-notice mj-notice-warn ${s.notice}`}><Warn /><span>유효기간이 지난 견적서로 확정했어요. 금액이 그대로인지 {vendorName}에 확인해 주세요.</span></p>
         ) : null}
-        <Link className={`mj-btn mj-btn-pri ${s.self}`} href={`/projects/${projectId}`}>내 공사로 가기</Link>
+        <div className={s.btns}>
+          <Link className="mj-btn mj-btn-pri" href={`/projects/${projectId}`}>내 공사로 가기</Link>
+          {canReselect(shown) ? <Reselect projectId={projectId} trade={trade} dealId={shown.id} {...dealReselectText(shown, other)} /> : null}
+        </div>
       </div>
     );
   }

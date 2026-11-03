@@ -30,7 +30,8 @@ type Props = {
   idp: string;
 };
 
-const NEEDS_REFRESH = new Set(["consent_changed", "slots_full", "already", "unavailable", "stale"]);
+// 그사이 바뀐 것: 다시 읽으면 화면이 맞춰진다(already_chosen은 확정 안내로 바뀐다)
+const NEEDS_REFRESH = new Set(["consent_changed", "slots_full", "already", "unavailable", "stale", "already_chosen"]);
 
 export function RequestDialog({ open, onClose, onSent, projectId, trade, vendors, message, consentVer, backTo, idp }: Props) {
   const router = useRouter();

@@ -1,13 +1,15 @@
 // 업체 고르기 (시안 WVendors): 이 집 공정의 업체 · 가견적(업체가 확인한 단가 × 표준견적서 수량, 믿집 계산) · 실측 요청에 담기.
 // 목록 · 남은 칸 · 동의 문구 버전은 GET /projects/{id}/vendors, 못 받은 시각은 GET /projects/{id}/visits에서 읽는다.
 // 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고 담기 · 요청을 막는다.
+// 확정 없이 다시 고르기로 닫힌 요청(close_reason reselected)이 있으면 '다시 고르는 중' 안내를 둔다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DealNote } from "@/components/confirm/DealNote";
+import { ReselectNote } from "@/components/confirm/ReselectNote";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { VendorBoard } from "@/components/vendors/VendorBoard";
 import { VTabs } from "@/components/vendors/VTabs";
-import { isTrade, type VTrade } from "@/components/vendors/text";
+import { isLive, isReselected, isTrade, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { listDeals } from "@/lib/api/schedule";
 import { listProjectVendors, listProjectVisits } from "@/lib/api/visit";
@@ -33,6 +35,8 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
   const closedAt = Object.fromEntries((visits?.visits ?? []).filter((v) => v.closed_at).map((v) => [v.id, v.closed_at as string]));
   const tName = tradeLabel(trade);
   const deal = deals?.[0] ?? null;
+  const mine = visits?.visits ?? [];
+  const again = !deal && mine.some(isReselected);
 
   const head = (
     <>
@@ -42,6 +46,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
         <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard`}>표준견적서 보기</Link>
       </div>
       {deal ? <div className={s.deal}><DealNote d={deal} projectId={id} /></div> : null}
+      {again ? <div className={s.deal}><ReselectNote trade={trade} again={!mine.some((v) => isLive(v.status))} /></div> : null}
     </>
   );
 

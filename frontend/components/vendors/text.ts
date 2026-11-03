@@ -84,6 +84,17 @@ export const VISIT_TONE: Record<string, "now" | "ok" | "off" | "bad"> = {
 };
 export const declineText = (code: string | null | undefined) => (code && code in DECLINE_LABEL ? DECLINE_LABEL[code as keyof typeof DECLINE_LABEL] : "");
 
+type Shut = { status: string; close_reason?: string | null };
+/** 고객이 '다시 고르기'로 닫은 요청 (close_reason reselected). '다시 고르는 중' 안내를 둘지 볼 때만 쓴다 */
+export const isReselected = (v: Shut) => v.status === "closed" && v.close_reason === "reselected";
+/** 닫힌 요청(closed)을 고객에게 어떻게 보일지. 업체 고르기 · 실측 · 업체 자세히가 이것 하나로 나눈다.
+ * 'other': 이 공정에 살아 있는 확정이 있고(locked) 다른 업체 확정으로 닫힘(other_chosen, 까닭 없는 예전 요청 포함) → '다른 업체로 정했어요'
+ * 'past': 그 밖의 닫힘 → '지난 실측 닫힘', 확정이 없으면 '다시 담기'. 닫힘이 아니면 null */
+export function shutKind(v: Shut, locked: boolean): "other" | "past" | null {
+  if (v.status !== "closed") return null;
+  return locked && (v.close_reason === "other_chosen" || !v.close_reason) ? "other" : "past";
+}
+
 /** API 시각 → "11.2(월) 15:30" */
 export const when = (iso: string | null | undefined) => (iso ? stampSeoul(new Date(iso)) : "");
 /** 날짜 "2026-11-03" → "11.3(화)" */

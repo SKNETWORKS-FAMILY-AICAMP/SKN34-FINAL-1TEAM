@@ -11,5 +11,5 @@
 .secHead { display: flex; flex-direction: column; gap: 4px; }
 .cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 24px; }
 .empty { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 8px 0; }
-.after { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; padding-top: 8px; }
-.deal { padding: 14px 16px; border-radius: var(--radius); background: var(--surface); }
+.after { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding-top: 8px; }
+.deal { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 14px 16px; border-radius: var(--radius); background: var(--surface); }

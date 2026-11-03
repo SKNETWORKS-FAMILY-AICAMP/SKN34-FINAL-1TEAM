@@ -45,13 +45,13 @@ export function WayIcon({ method }: { method: string }) {
   return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M2 8h12M8 2c1.8 1.7 2.6 3.7 2.6 6S9.8 12.3 8 14C6.2 12.3 5.4 10.3 5.4 8S6.2 3.7 8 2z" /></svg>;
 }
 
-/** 실측 요청 상태: 모양 + 글자 + 색 */
-export function VisitState({ status }: { status: string }) {
+/** 실측 요청 상태: 모양 + 글자 + 색. past면 '지난 실측 닫힘' (shutKind) */
+export function VisitState({ status, past }: { status: string; past?: boolean }) {
   const tone = VISIT_TONE[status] ?? "off";
   const icon = tone === "now"
     ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.6" /><circle cx="7" cy="7" r="2.4" fill="currentColor" /></svg>
     : tone === "ok" ? <Check />
     : tone === "bad" ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" /></svg>
     : null;
-  return <span className={`mj-st mj-st-${tone}`}>{icon}{VISIT_LABEL[status] ?? "확인 중"}</span>;
+  return <span className={`mj-st mj-st-${tone}`}>{icon}{past ? "지난 실측 닫힘" : VISIT_LABEL[status] ?? "확인 중"}</span>;
 }

@@ -1,14 +1,16 @@
 // 실측 요청 · 업체 연락 (시안 WVisit): 연락할 때 보낼 문구, 요청한 업체 카드(연락처 · 연락 방식 버튼 · 요청 취소).
 // 믿집은 방문 날짜를 잡지 않는다. 연락처는 API가 공개 규칙을 지난 요청에만 준다(취소함 · 못 받음은 가린다).
-// 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고, 보낼 문구 · 더 요청하기를 빼고, 닫힌 업체는 '다른 업체로 정했어요'다.
+// 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고 보낼 문구 · 더 요청하기를 뺀다.
+// 닫힌 업체는 닫힌 까닭(close_reason)으로 '다른 업체로 정했어요' · '지난 실측 닫힘'을 나누고, 다시 고르는 중이면 그 안내를 둔다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DealNote } from "@/components/confirm/DealNote";
+import { ReselectNote } from "@/components/confirm/ReselectNote";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { ContactCard } from "@/components/vendors/ContactCard";
 import { CopyButton } from "@/components/vendors/CopyButton";
 import { VTabs } from "@/components/vendors/VTabs";
-import { isLive, isTrade, type VTrade, type Visit } from "@/components/vendors/text";
+import { isLive, isReselected, isTrade, type VTrade, type Visit } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { listDeals } from "@/lib/api/schedule";
 import { listProjectVisits } from "@/lib/api/visit";
@@ -48,6 +50,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
   const text = !deal && rows.some((v) => isLive(v.status)) ? all.request_texts.find((t) => t.trade === trade)?.text ?? "" : "";
   const tName = tradeLabel(trade);
   const pickHref = `/projects/${id}/vendors?trade=${trade}`;
+  const again = !deal && all.visits.some((v) => v.trade === trade && isReselected(v));
 
   return (
     <main id="main">
@@ -61,6 +64,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
         <div className={s.main}>
           <VTabs base={`/projects/${id}/visits`} trades={trades} current={trade} counts={counts} />
           {deal ? <DealNote d={deal} projectId={id} /> : null}
+          {again ? <ReselectNote trade={trade} again={!rows.some((v) => isLive(v.status))} /> : null}
 
           {text ? (
             <section aria-labelledby="msg-t" className={s.sec}>

@@ -1,7 +1,8 @@
 "use client";
 // 업체 고르기 목록 + 실측 요청에 담기 (시안 WVendors). 담은 업체 · 남길 말은 이 기기 sessionStorage에 프로젝트 · 공정마다 둔다.
 // 금액 · 퍼센트는 API 값을 그대로 보인다. 담을 수 있는 수(slotsLeft)는 서버가 정한다(공정마다 3곳까지).
-// 이 공정을 확정했으면(locked) 담기 · 요청 칸을 두지 않는다. 확정 안내는 목록 위(head)에 화면이 그린다.
+// 이 공정을 확정했으면(locked) 담기 · 요청 칸을 두지 않는다. 확정 · 다시 고르는 중 안내는 목록 위(head)에 화면이 그린다.
+// 닫힌 줄은 shutKind로 나눈다: 확정이 살아 있을 때 다른 업체 확정은 '다른 업체로 정했어요', 그 밖은 '지난 실측 닫힘'(확정이 없으면 '다시 담기').
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -10,7 +11,7 @@ import { dotDate, won } from "@/lib/format";
 import { Check, Chev, Close, Picked, Plus, VisitState } from "./icons";
 import { readPick, writePick } from "./pick";
 import { RequestDialog } from "./RequestDialog";
-import { FAILED_TEXT, areasText, asMethod, declineText, feeText, isLive, vsText, when, type Created, type VendorRow, type VTrade } from "./text";
+import { FAILED_TEXT, areasText, asMethod, declineText, feeText, isLive, shutKind, vsText, when, type Created, type VendorRow, type VTrade } from "./text";
 import s from "./VendorBoard.module.css";
 
 type Props = {
@@ -114,6 +115,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
               const name = v.biz_name ?? "업체";
               const m = asMethod(v.contact_method);
               const vis = v.visit;
+              const kind = vis ? shutKind(vis, locked) : null;
               const on = picked.includes(v.vendor_id);
               const full = !on && room === 0;
               return (
@@ -147,13 +149,13 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                       <>
                         {vis ? (
                           <div className={s.state}>
-                            <VisitState status={vis.status} />
-                            <span className="mj-small mj-num">{[locked && vis.status === "closed" ? "다른 업체로 정했어요" : declineText(vis.decline_code), when(closedAt[vis.id])].filter(Boolean).join(" · ")}</span>
+                            <VisitState status={vis.status} past={kind === "past"} />
+                            <span className="mj-small mj-num">{[kind === "other" ? "다른 업체로 정했어요" : declineText(vis.decline_code), when(closedAt[vis.id])].filter(Boolean).join(" · ")}</span>
                           </div>
                         ) : null}
                         {locked ? null : (
                           <button type="button" className={s.pick} aria-pressed={on} aria-disabled={full || undefined} aria-describedby={full ? "pk-room" : undefined} onClick={() => toggle(v.vendor_id)}>
-                            {on ? <Picked /> : <Plus />}실측 요청에 담기<span className="mj-sr">, {name}</span>
+                            {on ? <Picked /> : <Plus />}{kind === "past" ? "다시 담기" : "실측 요청에 담기"}<span className="mj-sr">, {name}</span>
                           </button>
                         )}
                       </>

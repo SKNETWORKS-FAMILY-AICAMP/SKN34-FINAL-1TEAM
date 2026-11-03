@@ -1,13 +1,16 @@
 // 업체 자세히 (시안 WVendorDetail · 페이지형): 믿집이 확인한 것, 실측 · 연락, 가견적 '어떻게 계산했나요', 시공 사례,
 // 자주 묻는 5가지, 사업자 · 자격 정보. 가견적 줄은 API(계산 엔진) 값을 그대로 보이고 화면에서 곱하거나 더하지 않는다.
 // 요청한 뒤에는 실측 · 연락 카드가 펼쳐진다(연락처는 GET /projects/{id}/visits의 이 업체 요청).
+// 이 공정을 확정했으면(GET /projects/{id}/deals) 업체 고르기와 같은 확정 안내를 두고 '실측 요청'을 막는다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DealNote } from "@/components/confirm/DealNote";
 import { ContactCard } from "@/components/vendors/ContactCard";
 import { DetailRequest } from "@/components/vendors/DetailRequest";
 import { Check, Chev, Dash, Lock, Pen, VisitState } from "@/components/vendors/icons";
-import { FAQ_LABEL, areasText, asMethod, callHours, day, daySeoul, declineText, eunNeun, feeText, gwaWa, iGa, isLive, isTrade, vsText, when, type VTrade } from "@/components/vendors/text";
+import { FAQ_LABEL, areasText, asMethod, callHours, day, daySeoul, declineText, eunNeun, feeText, gwaWa, iGa, isLive, isTrade, shutKind, vsText, when, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
+import { listDeals } from "@/lib/api/schedule";
 import { getProjectVendor, listProjectVisits } from "@/lib/api/visit";
 import { CONTACT_LABEL, bizNoText, projectTitle, tradeLabel } from "@/lib/labels";
 import { decText, dotDate, numText, won, wonFull } from "@/lib/format";
@@ -29,8 +32,9 @@ export default async function VendorDetailPage({ params, searchParams }: { param
   const trades = (["dobae", "mokgong"] as VTrade[]).filter((t) => p.trades[t]);
   if (!trades.length) notFound();
   const trade = isTrade(asked) && trades.includes(asked) ? asked : trades[0];
-  const [d, visits] = await Promise.all([getProjectVendor(id, vid, trade), listProjectVisits(id, trade)]);
+  const [d, visits, deals] = await Promise.all([getProjectVendor(id, vid, trade), listProjectVisits(id, trade), listDeals(id, trade)]);
   if (!d) notFound();
+  const deal = deals?.[0] ?? null;
 
   const pr = d.profile;
   const name = pr.biz_name ?? "업체";
@@ -105,8 +109,8 @@ export default async function VendorDetailPage({ params, searchParams }: { param
             <>
               {mine ? (
                 <p className={s.was}>
-                  <VisitState status={mine.status} />
-                  <span className="mj-small mj-num">{[declineText(mine.decline_code), when(mine.closed_at)].filter(Boolean).join(" · ")}</span>
+                  <VisitState status={mine.status} past={shutKind(mine, !!deal) === "past"} />
+                  <span className="mj-small mj-num">{[shutKind(mine, !!deal) === "other" ? "다른 업체로 정했어요" : declineText(mine.decline_code), when(mine.closed_at)].filter(Boolean).join(" · ")}</span>
                 </p>
               ) : null}
               <dl className={s.kv}>
@@ -115,9 +119,13 @@ export default async function VendorDetailPage({ params, searchParams }: { param
                 {m ? <><dt>연락 방법</dt><dd>{CONTACT_LABEL[m]}</dd></> : null}
                 {hours ? <><dt>연락 받는 시간</dt><dd className="mj-num">{hours}</dd></> : null}
               </dl>
-              <p className={`mj-small ${s.lock}`}><Lock />실측을 요청하면 연락처가 보여요.</p>
-              {req("rq-top", full ? "full-h" : undefined)}
-              <p id="full-h" className="mj-small">{full ? "이미 3곳에 요청했어요. 요청을 취소하거나 업체가 못 받으면 칸이 비어요." : `방문 날짜는 ${gwaWa(name)} 직접 정해요.`}</p>
+              {deal ? <DealNote d={deal} projectId={id} /> : (
+                <>
+                  <p className={`mj-small ${s.lock}`}><Lock />실측을 요청하면 연락처가 보여요.</p>
+                  {req("rq-top", full ? "full-h" : undefined)}
+                  <p id="full-h" className="mj-small">{full ? "이미 3곳에 요청했어요. 요청을 취소하거나 업체가 못 받으면 칸이 비어요." : `방문 날짜는 ${gwaWa(name)} 직접 정해요.`}</p>
+                </>
+              )}
             </>
           )}
         </section>
@@ -215,7 +223,7 @@ export default async function VendorDetailPage({ params, searchParams }: { param
 
         <div className={s.end}>
           <div className={s.endRow}>
-            {live ? <VisitState status={live.status} /> : req("rq-end")}
+            {live ? <VisitState status={live.status} /> : deal ? null : req("rq-end")}
             <Link className={s.gbtn} href={listHref}>업체 목록으로</Link>
           </div>
           <p className="mj-small mj-num">{pr.updated_at ? `업체 정보 최종 수정 ${daySeoul(pr.updated_at)} · ` : ""}믿집은 공사 계약 당사자가 아니에요. 계약은 업체와 직접 해요.</p>

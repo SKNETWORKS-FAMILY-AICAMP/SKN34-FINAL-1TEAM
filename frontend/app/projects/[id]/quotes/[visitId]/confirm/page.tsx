@@ -1,6 +1,6 @@
 // 업체 확정 (시안 WConfirm): 고른 업체의 최신 실측 견적서 · 확정하기(파일 확인 체크 → 확인 창) · 확정하면 일어나는 일 · 다른 공정.
 // 읽기는 GET /projects/{id}/quotes?trade= (그 공정의 비교 · 확정), 다른 공정은 GET /projects/{id}/deals.
-// 금액 · 표준 대비 % · 유효기간 지남 · 공사 날짜 기한은 API 값 그대로다. '다시 고르기'는 20번에서 붙인다.
+// 금액 · 표준 대비 % · 유효기간 지남 · 공사 날짜 기한은 API 값 그대로다. 확정한 뒤 날짜 수락 전이면 '다시 고르기'를 둔다(ConfirmBox).
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmBox } from "@/components/confirm/ConfirmBox";
@@ -8,7 +8,7 @@ import { OtherTrade } from "@/components/confirm/OtherTrade";
 import { QuoteSummary } from "@/components/confirm/QuoteSummary";
 import { when } from "@/components/confirm/text";
 import { Warn } from "@/components/vendors/icons";
-import { eunNeun, gwaWa, iGa, isTrade, type VTrade } from "@/components/vendors/text";
+import { eunNeun, gwaWa, iGa, isTrade, shutKind, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { getQuoteCompare, type QuoteCompare } from "@/lib/api/quote";
 import { listDeals } from "@/lib/api/schedule";
@@ -74,9 +74,13 @@ export default async function ConfirmPage({ params, searchParams }: Params) {
     const all = await listProjectVisits(id);
     const v = all?.visits.find((x) => x.id === visitId);
     if (!v || !isTrade(v.trade)) notFound();
-    // 다른 업체를 확정해서 닫힌 요청이면 확정한 업체를 알린다
-    const done = (await listDeals(id, v.trade))?.[0];
-    if (done && v.status === "closed") return shut(v.trade, "이미 업체를 확정했어요.", <p className="mj-num">{tradeLabel(v.trade)} · {done.vendor_name} · {when(done.confirmed_at)} 확정</p>);
+    // 닫힌 요청: 확정이 살아 있고 다른 업체 확정으로 닫혔으면 확정한 업체를, 그 밖(지난 실측)은 업체 고르기로 보낸다
+    const done = (await listDeals(id, v.trade))?.[0] ?? null;
+    const kind = shutKind(v, !!done);
+    if (done && kind === "other") return shut(v.trade, "이미 업체를 확정했어요.", <p className="mj-num">{tradeLabel(v.trade)} · {done.vendor_name} · {when(done.confirmed_at)} 확정</p>);
+    if (kind === "past") {
+      return shut(v.trade, "지난 실측의 견적서라 고를 수 없어요.", done ? undefined : <Link className="mj-lnk" href={`/projects/${id}/vendors?trade=${v.trade}`}>업체 고르기</Link>);
+    }
     return shut(v.trade, SHUT[v.status] ?? "고를 수 없는 견적서예요.");
   }
 
@@ -119,6 +123,7 @@ export default async function ConfirmPage({ params, searchParams }: Params) {
             validUntil={r.latest.valid_until}
             deal={mine ? deal : null}
             compareHref={compareHref}
+            other={otherTrade ? { trade: otherTrade, deal: otherDeal } : null}
           />
 
           {mine ? null : (

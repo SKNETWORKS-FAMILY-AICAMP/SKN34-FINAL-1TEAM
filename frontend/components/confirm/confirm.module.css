@@ -50,3 +50,6 @@
 /* 이미 확정했을 때 (업체 고르기 · 실측 화면 위) */
 .dealNote { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 16px 6px; border-radius: var(--radius); background: var(--surface); }
 .sm { font-size: var(--fs-sm); }
+
+/* 다시 고르는 중 (업체 고르기 · 실측 화면 위) */
+.reNote { padding-bottom: 14px; }
