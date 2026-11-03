@@ -20,7 +20,7 @@ from app.schedule.schemas import (
 )
 from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
-from app.visit.schemas import InboxSummaryOut
+from app.visit.schemas import InboxSummaryOut, ReselectOut
 
 router = APIRouter(tags=["공정표 · 업체 확정"])
 customer_only = require_role("customer")
@@ -67,6 +67,20 @@ async def confirm(
     s: AsyncSession = Depends(get_session),
 ) -> ConfirmOut:
     return await service.confirm(s, user, project_id, visit_id, data, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/deals/{deal_id}/reselect",
+    response_model=ReselectOut,
+    summary="다시 고르기 (공사 날짜 수락 전만): 확정을 풀고 이 공정의 요청을 모두 닫는다",
+)
+async def reselect(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ReselectOut:
+    return await service.reselect(s, user, project_id, deal_id)
 
 
 @router.get(

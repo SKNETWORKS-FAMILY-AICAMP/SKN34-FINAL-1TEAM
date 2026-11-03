@@ -44,6 +44,8 @@ from app.visit.schemas import (
     QuoteVersionBrief,
     RecentOut,
     RequestTextOut,
+    ReselectIn,
+    ReselectOut,
     VendorDetailOut,
     VendorListOut,
     VendorRowOut,
@@ -91,7 +93,11 @@ def customer_contact_visible(v: Visit, today: date) -> bool:
 
 
 def _brief(v: Visit | None) -> VisitBrief | None:
-    return VisitBrief(id=v.id, status=v.status, decline_code=v.decline_code) if v else None
+    if v is None:
+        return None
+    return VisitBrief(
+        id=v.id, status=v.status, decline_code=v.decline_code, close_reason=v.close_reason
+    )
 
 
 def _day(at: datetime | None) -> date | None:
@@ -289,6 +295,7 @@ def _visit_out(
         share_contact=v.share_contact,
         message=v.message,
         decline_code=v.decline_code,
+        close_reason=v.close_reason,
         estimate_total=v.estimate_total,
         contact_visible=visible,
         contact=contacts.get(v.vendor_id) if visible and v.vendor_id else None,
@@ -319,6 +326,8 @@ async def request_visits(
     unit = (data.apt_name, data.dong, data.ho) if share else None
     await project_service.lock_for_visit(s, p.id, unit)  # 첫 요청이면 집 정보 고치기를 막는다
     live = await repo.live(s, p.id, data.trade)
+    if any(v.status == "chosen" for v in live):  # 확정이 살아 있으면 다시 고르기부터
+        raise AppError(409, "already_chosen", NOT_CHOOSABLE["chosen"])
     taken = {v.vendor_id for v in live}
     failed += [FailedOut(vendor_id=i, code="already") for i in ok if i in taken]
     new = [i for i in ok if i not in taken]
@@ -920,3 +929,62 @@ async def rows_for(
         )
         for v in visits
     }
+
+
+# ---- 다시 고르기: 이 공정의 살아 있는 요청을 모두 닫는다 (확정 전은 여기서, 확정 뒤는 schedule.service) ----
+
+RESELECTED = "고객이 업체를 다시 고르기로 했어요"
+
+
+async def close_for_reselect(
+    s: AsyncSession, project_id: uuid.UUID, trade: str, by: User
+) -> ReselectOut:
+    """요청함 · 견적서 옴 · 확정을 닫는다(reselected). 연락처는 바로 가려지고 칸 3개가 다시 빈다.
+    받은 견적서는 지우지 않는다. 확정했던 업체 알림은 부르는 쪽(deal)이 보낸다. commit은 부르는 쪽이."""
+    closed = []
+    for v in await repo.live(s, project_id, trade):
+        ok = await repo.set_status(
+            s,
+            v.id,
+            allowed_from=(v.status,),
+            values={"status": "closed", "close_reason": "reselected"},
+        )
+        if not ok:
+            raise AppError(409, "stale", "그사이 상태가 바뀌었어요. 새로 불러올게요.")
+        s.add(
+            VisitEvent(
+                visit_id=v.id,
+                from_status=v.status,
+                to_status="closed",
+                by_id=by.id,
+                code="reselected",
+            )
+        )
+        if v.status != "chosen" and v.vendor_id is not None:
+            await notify_service.add(
+                s,
+                user_id=v.vendor_id,
+                kind="visit_closed",
+                body=RESELECTED,
+                link=f"/vendor/requests/{v.id}",
+                dedup_key=f"visit:{v.id}:closed",
+            )
+        closed.append(v.id)
+    return ReselectOut(trade=trade, closed=closed, slots_left=SLOTS)
+
+
+async def reselect(
+    s: AsyncSession, user: User, project_id: uuid.UUID, data: ReselectIn
+) -> ReselectOut:
+    """견적 비교에서 다시 고르기 (확정 전): 프로젝트 잠금 → 이 공정의 요청을 모두 닫기 → 이력 · 알림.
+    확정이 살아 있으면 409(공사 날짜 화면의 다시 고르기를 쓴다)."""
+    p = await project_service.get_for(s, user, project_id)
+    await project_service.lock_for_visit(s, p.id)
+    live = await repo.live(s, p.id, data.trade)
+    if any(v.status == "chosen" for v in live):
+        raise AppError(409, "already_chosen", NOT_CHOOSABLE["chosen"])
+    if not live:
+        raise AppError(409, "invalid_state", "닫을 실측 요청이 없어요.")
+    out = await close_for_reselect(s, p.id, data.trade, user)
+    await s.commit()
+    return out

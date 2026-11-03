@@ -127,7 +127,12 @@ def test_request_creates_visits_locks_home_and_notifies(api):
     rows14 = {
         v["vendor_id"]: v for v in api.get(f"/projects/{pid}/vendors?trade=dobae").json()["vendors"]
     }
-    assert rows14[a]["visit"] == {"id": got[a]["id"], "status": "requested", "decline_code": None}
+    assert rows14[a]["visit"] == {
+        "id": got[a]["id"],
+        "status": "requested",
+        "decline_code": None,
+        "close_reason": None,
+    }
     detail = api.get(f"/projects/{pid}/vendors/{b}", params={"trade": "dobae"}).json()
     assert detail["visit"]["id"] == got[b]["id"]
     assert token

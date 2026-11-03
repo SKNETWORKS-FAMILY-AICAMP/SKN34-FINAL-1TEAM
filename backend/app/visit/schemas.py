@@ -19,6 +19,9 @@ class VisitBrief(BaseModel):
     id: uuid.UUID
     status: str
     decline_code: str | None
+    close_reason: str | None = Field(
+        description="닫힌 까닭: other_chosen(다른 업체 확정) · reselected(다시 고르기)"
+    )
 
 
 class VendorRowOut(BaseModel):
@@ -139,6 +142,9 @@ class VisitOut(BaseModel):
     share_contact: bool = Field(description="내 연락처를 보냈는지")
     message: str | None
     decline_code: str | None
+    close_reason: str | None = Field(
+        description="닫힌 까닭: other_chosen(다른 업체 확정) · reselected(다시 고르기)"
+    )
     estimate_total: int | None = Field(description="요청 때 가견적 사본 (없으면 비어 있다)")
     contact_visible: bool
     contact: ContactOut | None
@@ -149,6 +155,20 @@ class VisitOut(BaseModel):
 class VisitCreateOut(BaseModel):
     created: list[VisitOut]
     failed: list[FailedOut]
+
+
+class ReselectIn(BaseModel):
+    """견적 비교에서 다시 고르기 (확정 전): 이 공정의 요청을 모두 닫는다"""
+
+    trade: Trade
+
+
+class ReselectOut(BaseModel):
+    """다시 고르기 결과: 닫은 요청과 다시 빈 칸 수"""
+
+    trade: str
+    closed: list[uuid.UUID] = Field(description="닫은 실측 요청 (연락처는 바로 가려진다)")
+    slots_left: int = Field(description="다시 담을 수 있는 업체 수")
 
 
 class RequestTextOut(BaseModel):

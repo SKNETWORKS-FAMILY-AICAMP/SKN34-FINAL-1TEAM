@@ -15,6 +15,8 @@ from app.visit import service
 from app.visit.schemas import (
     DeclineIn,
     QuoteBoardOut,
+    ReselectIn,
+    ReselectOut,
     VendorDetailOut,
     VendorListOut,
     VendorVisitDetailOut,
@@ -114,6 +116,20 @@ async def cancel_visit(
     s: AsyncSession = Depends(get_session),
 ) -> VisitOut:
     return await service.cancel(s, user, project_id, visit_id, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/visits/reselect",
+    response_model=ReselectOut,
+    summary="다시 고르기 (확정 전): 이 공정의 실측 요청을 모두 닫고 칸 3개를 비운다",
+)
+async def reselect_visits(
+    project_id: uuid.UUID,
+    data: ReselectIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ReselectOut:
+    return await service.reselect(s, user, project_id, data)
 
 
 @router.get(

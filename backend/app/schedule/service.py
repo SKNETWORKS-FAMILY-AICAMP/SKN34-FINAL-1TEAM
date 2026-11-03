@@ -7,7 +7,7 @@
 import uuid
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ from app.shared.errors import AppError
 from app.shared.ids import uuid7
 from app.vendor import service as vendor_service
 from app.visit import service as visit_service
-from app.visit.schemas import InboxSummaryOut
+from app.visit.schemas import InboxSummaryOut, ReselectOut
 
 LEAD_DAYS = 14  # 공사 시기를 아직 모를 때: 오늘부터 2주 뒤 첫 일하는 날에 시작한다고 잡는다
 LABEL = {"mokgong": "목공", "dobae": "도배"}
@@ -308,6 +308,48 @@ async def confirm(
     (out,) = await _deal_out(s, [deal], today, now)
     expired = quote.valid_until is not None and quote.valid_until < today
     return ConfirmOut(deal=out, closed=closed, quote_expired=expired)
+
+
+AFTER_DATES = "공사 날짜를 수락한 뒤에는 업체를 다시 고를 수 없어요."
+
+
+async def reselect(
+    s: AsyncSession, user: User, project_id: uuid.UUID, deal_id: uuid.UUID
+) -> ReselectOut:
+    """다시 고르기 (공사 날짜 수락 전만, 한 트랜잭션): 프로젝트 잠금 → 확정 confirmed → reselected →
+    확정한 요청 · 남은 요청 닫기(reselected) → 이력 · 알림. 공정의 칸 3개가 다시 빈다."""
+    p = await project_service.get_for(s, user, project_id)
+    await project_service.lock_for_visit(s, p.id)  # 같은 집의 확정 · 요청 · 다시 고르기가 줄 선다
+    deal = await s.get(Deal, deal_id, populate_existing=True)
+    if deal is None or deal.project_id != p.id:
+        raise AppError(404, "not_found", "업체 확정을 찾을 수 없어요.")
+    if deal.status == "reselected":
+        raise AppError(409, "invalid_state", "이미 업체를 다시 고르기로 했어요.")
+    if deal.status != "confirmed":
+        raise AppError(409, "invalid_state", AFTER_DATES)
+    res = await s.execute(
+        update(Deal)
+        .where(Deal.id == deal.id, Deal.status == "confirmed")
+        .values(status="reselected")
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:  # 그사이 공사 날짜를 수락했다
+        raise AppError(409, "invalid_state", AFTER_DATES)
+    s.add(
+        DealEvent(deal_id=deal.id, from_status="confirmed", to_status="reselected", by_id=user.id)
+    )
+    out = await visit_service.close_for_reselect(s, p.id, deal.trade, user)
+    if deal.vendor_id is not None:
+        await notify_service.add(
+            s,
+            user_id=deal.vendor_id,
+            kind="deal_reselected",
+            body=visit_service.RESELECTED,
+            link=f"/vendor/requests/{deal.visit_id}",
+            dedup_key=f"deal:{deal.id}:reselected",
+        )
+    await s.commit()
+    return out
 
 
 async def deals_for(
