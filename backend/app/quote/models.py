@@ -1,18 +1,21 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     ARRAY,
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     SmallInteger,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -79,4 +82,79 @@ class StandardQuoteLine(Base):
     state: Mapped[str] = mapped_column(String(12))
     basis: Mapped[str] = mapped_column(String(10))
     source: Mapped[str] = mapped_column(String(120))
+    sort: Mapped[int] = mapped_column(SmallInteger)
+
+
+VAT_MODES = ("included", "excluded", "exempt")  # 넣은 금액이 부가세 포함 · 부가세 빼고 · 면세
+QUOTE_FILES_MAX = 10
+# 보낸 견적서에 꼭 있어야 하는 칸: 낼 금액 · 부가세 방식 (파일 1개 이상은 service가 본다)
+_SENT_FIELDS = " and ".join(f"{c} is not null" for c in ("entered_amount", "vat_mode", "total"))
+
+
+class VendorQuote(Base):
+    """업체 실측 견적서 한 버전. 파일은 업체 양식 그대로, 낼 금액 · 부가세 방식 · 공사 기간 ·
+    유효기간만 칸에 적는다(줄로 바꾸지 않음). 실측한 날 · 공사 기간 · 유효기간은 선택이다. 공급가 · 부가세 · 합계는 계산 엔진이 만든다.
+    sent_at이 비면 임시 저장(요청마다 하나), 보내면 그 버전은 바꾸지 않는다."""
+
+    __tablename__ = "vendor_quotes"
+    __table_args__ = (
+        UniqueConstraint("visit_id", "version", name="uq_vendor_quotes_version"),
+        Index(
+            "uq_vendor_quotes_draft",
+            "visit_id",
+            unique=True,
+            postgresql_where=text("sent_at is null"),
+        ),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("code ~ '^Q-[0-9]{4}-[0-9]{4,}$'", name="code"),
+        CheckConstraint("vat_mode in ('included', 'excluded', 'exempt')", name="vat_mode"),
+        CheckConstraint("entered_amount >= 0", name="entered_amount"),
+        CheckConstraint(
+            "(supply is null) = (total is null) and (vat is null) = (total is null)"
+            " and (total is null or (supply >= 0 and vat >= 0 and total = supply + vat))",
+            name="money",
+        ),
+        CheckConstraint(
+            "total is null or (entered_amount is not null and vat_mode is not null)",
+            name="money_from",
+        ),
+        CheckConstraint(
+            "vat_mode is distinct from 'exempt' or vat is null or vat = 0", name="exempt"
+        ),
+        CheckConstraint("days between 1 and 120", name="days"),
+        CheckConstraint("valid_until >= measured_on", name="valid_until"),
+        CheckConstraint(f"sent_at is null or ({_SENT_FIELDS})", name="sent_fields"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    visit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("visits.id", ondelete="CASCADE"), index=True
+    )
+    code: Mapped[str] = mapped_column(String(16), unique=True)  # Q-2611-0041
+    version: Mapped[int] = mapped_column(SmallInteger)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    measured_on: Mapped[date | None] = mapped_column(Date)
+    entered_amount: Mapped[int | None] = mapped_column(BigInteger)  # 업체가 적은 낼 금액
+    vat_mode: Mapped[str | None] = mapped_column(String(10))
+    supply: Mapped[int | None] = mapped_column(BigInteger)
+    vat: Mapped[int | None] = mapped_column(BigInteger)
+    total: Mapped[int | None] = mapped_column(BigInteger)  # 고객이 낼 금액
+    days: Mapped[int | None] = mapped_column(SmallInteger)  # 공사 기간 (일)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VendorQuoteFile(Base):
+    """견적서 버전에 붙인 업체 양식 파일 (files.kind = quote_doc). 파일 하나는 한 버전에만 붙는다."""
+
+    __tablename__ = "vendor_quote_files"
+    __table_args__ = (CheckConstraint("sort between 0 and 9", name="sort"),)
+
+    quote_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vendor_quotes.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, unique=True
+    )
     sort: Mapped[int] = mapped_column(SmallInteger)

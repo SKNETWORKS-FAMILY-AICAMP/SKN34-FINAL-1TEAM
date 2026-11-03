@@ -123,3 +123,9 @@ async def recent_moves(s: AsyncSession, vendor_id: uuid.UUID, since: datetime) -
         .group_by(VisitEvent.to_status)
     )
     return {st: n for st, n in (await s.execute(q)).all()}
+
+
+async def lock(s: AsyncSession, visit_id: uuid.UUID) -> Visit | None:
+    """같은 요청의 견적서 저장 · 보내기가 줄 서게 요청 행을 잠그고 다시 읽는다."""
+    q = select(Visit).where(Visit.id == visit_id).with_for_update()
+    return (await s.execute(q.execution_options(populate_existing=True))).scalar_one_or_none()

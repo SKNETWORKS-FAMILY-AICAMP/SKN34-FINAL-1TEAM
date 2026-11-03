@@ -6,23 +6,44 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.calc import dobae, mokgong
-from app.calc.common import FORMULA_VERSION, Step
+from app.calc.common import FORMULA_VERSION, Step, from_entered
 from app.calc.quote_diff import budget_gap
 from app.calc.standard_quote import house_area, house_pyeong
+from app.files import service as files_service
+from app.files.models import File
 from app.project import service as project_service
 from app.project.schemas import ProjectOut
-from app.quote.models import StandardQuote, StandardQuoteLine
-from app.quote.schemas import BudgetOut, StandardLineOut, StandardOut, StandardTradeOut
+from app.quote.models import (
+    StandardQuote,
+    StandardQuoteLine,
+    VendorQuote,
+    VendorQuoteFile,
+)
+from app.quote.schemas import (
+    BudgetOut,
+    QuoteBriefOut,
+    QuoteDraftIn,
+    QuoteFileOut,
+    StandardLineOut,
+    StandardOut,
+    StandardTradeOut,
+    VendorQuoteOut,
+)
 from app.refprice.book import DOBAE_2026H2, MOKGONG_2026H2
 from app.refprice.house import HOUSE_2026H2
+from app.shared.clock import now_utc
+from app.shared.errors import AppError
+from app.shared.ids import uuid7
 
 PRICE_VER = DOBAE_2026H2.version
 ROOM = "방"  # 방문 개수: 목공을 고른 공간 중 이름에 '방'이 든 곳
@@ -286,3 +307,192 @@ async def standard_for(s: AsyncSession, user: User, project_id: uuid.UUID) -> St
         total=total,
         budget=budget,
     )
+
+
+# ---- 업체 실측 견적서: 업체 양식 파일 + 요약 칸. 실측 요청(visit) 확인 · 상태 바꾸기는 visit.service가 한다 ----
+
+MISSING = {
+    "files": "견적서 파일을 하나 이상 올려 주세요.",
+    "entered_amount": "낼 금액을 넣어 주세요.",
+    "vat_mode": "넣은 금액이 부가세 포함인지 골라 주세요.",
+}  # 보낼 때 꼭 있어야 하는 칸. 실측한 날 · 공사 기간 · 유효기간은 선택
+
+
+async def _quote_files(
+    s: AsyncSession, quote_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[tuple[VendorQuoteFile, File]]]:
+    out: dict[uuid.UUID, list[tuple[VendorQuoteFile, File]]] = {i: [] for i in quote_ids}
+    if not quote_ids:
+        return out
+    q = (
+        select(VendorQuoteFile, File)
+        .join(File, File.id == VendorQuoteFile.file_id)
+        .where(VendorQuoteFile.quote_id.in_(quote_ids))
+        .order_by(VendorQuoteFile.sort)
+    )
+    for qf, f in (await s.execute(q)).all():
+        out[qf.quote_id].append((qf, f))
+    return out
+
+
+def _quote_out(q: VendorQuote, files: list[tuple[VendorQuoteFile, File]]) -> VendorQuoteOut:
+    return VendorQuoteOut(
+        id=q.id,
+        code=q.code,
+        version=q.version,
+        sent_at=q.sent_at,
+        measured_on=q.measured_on,
+        entered_amount=q.entered_amount,
+        vat_mode=q.vat_mode,
+        supply=q.supply,
+        vat=q.vat,
+        total=q.total,
+        days=q.days,
+        valid_until=q.valid_until,
+        created_at=q.created_at,
+        updated_at=q.updated_at,
+        files=[
+            QuoteFileOut(
+                file_id=f.id,
+                filename=f.filename,
+                content_type=f.content_type,
+                size=f.size,
+                sort=qf.sort,
+            )
+            for qf, f in files
+        ],
+    )
+
+
+async def _versions(s: AsyncSession, visit_id: uuid.UUID) -> list[VendorQuote]:
+    q = (
+        select(VendorQuote)
+        .where(VendorQuote.visit_id == visit_id)
+        .order_by(VendorQuote.version.desc())
+        .execution_options(populate_existing=True)
+    )
+    return list((await s.execute(q)).scalars().all())
+
+
+async def vendor_quotes(
+    s: AsyncSession, visit_id: uuid.UUID
+) -> tuple[VendorQuoteOut | None, list[VendorQuoteOut]]:
+    """(임시 저장본, 보낸 버전들 최신 먼저)"""
+    rows = await _versions(s, visit_id)
+    files = await _quote_files(s, [r.id for r in rows])
+    draft = next((_quote_out(r, files[r.id]) for r in rows if r.sent_at is None), None)
+    return draft, [_quote_out(r, files[r.id]) for r in rows if r.sent_at is not None]
+
+
+async def save_draft(
+    s: AsyncSession,
+    visit_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    data: QuoteDraftIn,
+    today: date,
+    exempt_only: bool,
+) -> None:
+    """임시 저장본을 통째로 바꾼다(없으면 다음 버전으로 만든다). commit은 부르는 쪽이 한다."""
+    if exempt_only and data.vat_mode not in (None, "exempt"):
+        raise AppError(422, "vat_mode", "면세 업체는 면세로만 적을 수 있어요.")
+    if data.measured_on is not None and data.measured_on > today:
+        raise AppError(422, "measured_on", "실측한 날은 오늘까지만 고를 수 있어요.")
+    if data.measured_on and data.valid_until and data.valid_until < data.measured_on:
+        raise AppError(422, "valid_until", "유효기간은 실측한 날 뒤로 골라 주세요.")
+    files = await files_service.owned(s, owner_id, data.file_ids)
+    if any(i not in files or files[i].kind != "quote_doc" for i in data.file_ids):
+        raise AppError(422, "file", "올린 견적서 파일을 다시 확인해 주세요.")
+    rows = await _versions(s, visit_id)
+    draft = next((r for r in rows if r.sent_at is None), None)
+    if data.file_ids:
+        used = select(VendorQuoteFile.file_id).where(VendorQuoteFile.file_id.in_(data.file_ids))
+        if draft is not None:
+            used = used.where(VendorQuoteFile.quote_id != draft.id)
+        if (await s.execute(used)).first():
+            raise AppError(409, "file_used", "다른 견적서에 붙인 파일이에요.")
+    if draft is None:
+        no = int(await s.scalar(text("select nextval('vendor_quote_code_seq')")))
+        draft = VendorQuote(
+            id=uuid7(),
+            visit_id=visit_id,
+            code=f"Q-{today:%y%m}-{no:04d}",
+            version=(rows[0].version + 1) if rows else 1,
+        )
+        s.add(draft)
+    money = (
+        from_entered(data.entered_amount, data.vat_mode)
+        if data.entered_amount is not None and data.vat_mode is not None
+        else None
+    )
+    draft.measured_on = data.measured_on
+    draft.entered_amount = data.entered_amount
+    draft.vat_mode = data.vat_mode
+    draft.supply, draft.vat, draft.total = (
+        (money.supply, money.vat, money.total) if money else (None, None, None)
+    )
+    draft.days = data.days
+    draft.valid_until = data.valid_until
+    draft.updated_at = now_utc()
+    await s.flush()
+    await s.execute(delete(VendorQuoteFile).where(VendorQuoteFile.quote_id == draft.id))
+    s.add_all(
+        [VendorQuoteFile(quote_id=draft.id, file_id=i, sort=n) for n, i in enumerate(data.file_ids)]
+    )
+    await s.flush()
+
+
+async def seal_draft(s: AsyncSession, visit_id: uuid.UUID, today: date) -> VendorQuote:
+    """임시 저장본을 보낸 버전으로 굳힌다. 빠진 칸은 칸별로 422. commit은 부르는 쪽이 한다."""
+    draft = next((r for r in await _versions(s, visit_id) if r.sent_at is None), None)
+    files = (await _quote_files(s, [draft.id]))[draft.id] if draft else []
+    missing = [k for k in MISSING if k == "files" and not files]
+    if draft is not None:
+        missing += [k for k in MISSING if k != "files" and getattr(draft, k) is None]
+    else:
+        missing = list(MISSING)
+    if missing:
+        raise AppError(
+            422,
+            "missing",
+            MISSING[missing[0]],
+            fields=[{"loc": [k], "msg": MISSING[k]} for k in missing],
+        )
+    if draft.valid_until is not None and draft.valid_until < today:
+        msg = "견적 유효기간이 지났어요. 날짜를 다시 골라 주세요."
+        raise AppError(422, "valid_until", msg, fields=[{"loc": ["valid_until"], "msg": msg}])
+    money = from_entered(draft.entered_amount, draft.vat_mode)  # 보낼 때 한 번 더 계산 엔진으로
+    res = await s.execute(
+        update(VendorQuote)
+        .where(VendorQuote.id == draft.id, VendorQuote.sent_at.is_(None))
+        .values(sent_at=now_utc(), supply=money.supply, vat=money.vat, total=money.total)
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        raise AppError(409, "invalid_state", "이미 보낸 견적서예요.")
+    return draft
+
+
+async def sent_briefs(
+    s: AsyncSession, visit_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, QuoteBriefOut]:
+    """요청마다 보낸 최신 견적서 요약"""
+    if not visit_ids:
+        return {}
+    q = (
+        select(VendorQuote)
+        .where(VendorQuote.visit_id.in_(visit_ids), VendorQuote.sent_at.is_not(None))
+        .order_by(VendorQuote.visit_id, VendorQuote.version.desc())
+        .ext(distinct_on(VendorQuote.visit_id))
+    )
+    return {
+        r.visit_id: QuoteBriefOut(
+            id=r.id,
+            code=r.code,
+            version=r.version,
+            total=r.total,
+            days=r.days,
+            valid_until=r.valid_until,
+            sent_at=r.sent_at,
+        )
+        for r in (await s.execute(q)).scalars()
+    }

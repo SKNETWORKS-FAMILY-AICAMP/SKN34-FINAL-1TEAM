@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import require_role
 from app.auth.models import User
 from app.db import get_session
+from app.quote.schemas import QuoteDraftIn
 from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
 from app.visit import service
 from app.visit.schemas import (
     DeclineIn,
     InboxSummaryOut,
+    QuoteBoardOut,
     VendorDetailOut,
     VendorListOut,
     VendorVisitDetailOut,
@@ -176,3 +178,43 @@ async def seen_visit(
 ) -> Response:
     await service.mark_seen(s, vendor, visit_id)
     return Response(status_code=204)
+
+
+@router.get(
+    "/vendor/visits/{visit_id}/quote",
+    response_model=QuoteBoardOut,
+    summary="실측 견적서 올리기 · 임시 저장본 · 보낸 버전 · 칸 한도",
+)
+async def quote_board(
+    visit_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> QuoteBoardOut:
+    return await service.quote_board(s, vendor, visit_id)
+
+
+@router.put(
+    "/vendor/visits/{visit_id}/quote",
+    response_model=QuoteBoardOut,
+    summary="실측 견적서 임시 저장 (통째로, 요청함 · 견적서 옴일 때만)",
+)
+async def save_quote(
+    visit_id: uuid.UUID,
+    data: QuoteDraftIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> QuoteBoardOut:
+    return await service.save_quote(s, vendor, visit_id, data, today_seoul())
+
+
+@router.post(
+    "/vendor/visits/{visit_id}/quote/send",
+    response_model=QuoteBoardOut,
+    summary="실측 견적서 보내기 (빠진 칸은 칸별 422, 이미 보냈으면 409)",
+)
+async def send_quote(
+    visit_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> QuoteBoardOut:
+    return await service.send_quote(s, vendor, visit_id, today_seoul())

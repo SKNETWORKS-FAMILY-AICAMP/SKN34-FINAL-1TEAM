@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
+from app.quote.schemas import QuoteBriefOut, VendorQuoteOut
 from app.vendor.schemas import AreaOut, ContactOut, EstimateOut, PublicProfileOut
 
 Direction = Literal["less", "more", "same"]  # 표준견적서보다 적어요 · 많아요 · 같아요
@@ -142,6 +143,7 @@ class VisitOut(BaseModel):
     contact_visible: bool
     contact: ContactOut | None
     closed_at: datetime | None = Field(description="취소 · 못 받음 · 닫힘이 된 때")
+    quote: QuoteBriefOut | None = Field(description="업체가 보낸 최신 실측 견적서 요약")
 
 
 class VisitCreateOut(BaseModel):
@@ -225,3 +227,16 @@ class VendorVisitDetailOut(VendorVisitRow):
     home_text: str = Field(description="노원구 · 32평 · 빈 집")
     when_text: str = Field(description="희망 시기: 11.16(월) ~ 11.23(월)")
     message: str | None
+
+
+class QuoteBoardOut(BaseModel):
+    """업체 실측 견적서 올리기 화면: 임시 저장본 · 보낸 버전 · 칸 한도"""
+
+    visit_id: uuid.UUID
+    visit_status: str
+    tax_kind: str = Field(description="면세 업체(exempt)는 부가세 방식이 exempt만 된다")
+    vat_modes: list[str] = Field(description="고를 수 있는 부가세 방식")
+    files_max: int
+    days_max: int
+    draft: VendorQuoteOut | None = Field(description="임시 저장본 (없으면 비어 있다)")
+    sent: list[VendorQuoteOut] = Field(description="보낸 버전 (최신 먼저)")

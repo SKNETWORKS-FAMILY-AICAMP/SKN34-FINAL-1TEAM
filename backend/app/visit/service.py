@@ -17,13 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.calc.quote_diff import percent_vs
-from app.calc.schedule import days_since, years_since
+from app.calc.schedule import JOB_MAX_DAYS, days_since, years_since
 from app.files import service as files_service
 from app.notify import service as notify_service
 from app.project import service as project_service
 from app.project.schemas import ProjectBrief, ProjectOut, WhenIn
 from app.quote import service as quote_service
-from app.quote.models import StandardQuote, StandardQuoteLine
+from app.quote.models import QUOTE_FILES_MAX, VAT_MODES, StandardQuote, StandardQuoteLine
+from app.quote.schemas import QuoteBriefOut, QuoteDraftIn
 from app.shared.clock import SEOUL, now_utc
 from app.shared.errors import AppError
 from app.shared.ids import uuid7
@@ -37,6 +38,7 @@ from app.visit.schemas import (
     EstimateDetailOut,
     FailedOut,
     InboxSummaryOut,
+    QuoteBoardOut,
     RecentOut,
     RequestTextOut,
     VendorDetailOut,
@@ -270,6 +272,7 @@ def _visit_out(
     contacts: dict[uuid.UUID, ContactOut],
     today: date,
     closed: dict[uuid.UUID, datetime] | None = None,
+    quotes: dict[uuid.UUID, QuoteBriefOut] | None = None,
 ) -> VisitOut:
     visible = contact_visible(v.status, v.contact_until, today)
     return VisitOut(
@@ -287,6 +290,7 @@ def _visit_out(
         contact_visible=visible,
         contact=contacts.get(v.vendor_id) if visible and v.vendor_id else None,
         closed_at=(closed or {}).get(v.id) if v.status in DONE else None,
+        quote=(quotes or {}).get(v.id),
     )
 
 
@@ -387,6 +391,7 @@ async def visits_for(
     rows = [v for v in every if trade is None or v.trade == trade]
     contacts = await vendor_service.contacts(s, [v.vendor_id for v in rows if v.vendor_id])
     closed = await repo.last_events(s, [v.id for v in rows if v.status in DONE])
+    quotes = await quote_service.sent_briefs(s, [v.id for v in rows])
     texts = []
     for t in [trade] if trade else trades:
         got = await quote_service.standard_trade(s, p, t)
@@ -399,7 +404,7 @@ async def visits_for(
             t: SLOTS - sum(1 for v in every if v.trade == t and v.status in LIVE) for t in trades
         },
         request_texts=texts,
-        visits=[_visit_out(v, contacts, today, closed) for v in rows],
+        visits=[_visit_out(v, contacts, today, closed, quotes) for v in rows],
     )
 
 
@@ -624,3 +629,82 @@ async def vendor_visit(
         when_text=_when(b.when),
         message=v.message,
     )
+
+
+# ---- 업체 실측 견적서: 임시 저장 · 보내기 (견적서 칸은 quote.service, 요청 상태는 여기서) ----
+
+CLOSED_FOR_QUOTE = {
+    "cancelled": "고객이 실측 요청을 취소해서 보낼 수 없어요.",
+    "declined": "못 받는다고 한 요청이에요.",
+    "closed": "닫힌 요청이라 견적서를 보낼 수 없어요.",
+    "chosen": "고객이 확정해서 다시 올릴 수 없어요.",
+}
+
+
+async def _locked_mine(s: AsyncSession, vendor: User, visit_id: uuid.UUID) -> Visit:
+    v = await repo.lock(s, visit_id)
+    if v is None or v.vendor_id != vendor.id:
+        raise AppError(404, "not_found", "실측 요청을 찾을 수 없어요.")
+    return v
+
+
+async def quote_board(s: AsyncSession, vendor: User, visit_id: uuid.UUID) -> QuoteBoardOut:
+    v = await _mine(s, vendor, visit_id)
+    tax = await vendor_service.tax_kind_of(s, vendor.id)
+    draft, sent = await quote_service.vendor_quotes(s, v.id)
+    return QuoteBoardOut(
+        visit_id=v.id,
+        visit_status=v.status,
+        tax_kind=tax,
+        vat_modes=["exempt"] if tax == "exempt" else list(VAT_MODES),
+        files_max=QUOTE_FILES_MAX,
+        days_max=JOB_MAX_DAYS,
+        draft=draft,
+        sent=sent,
+    )
+
+
+async def save_quote(
+    s: AsyncSession, vendor: User, visit_id: uuid.UUID, data: QuoteDraftIn, today: date
+) -> QuoteBoardOut:
+    """임시 저장 (요청함 · 견적서 옴일 때만). 금액은 계산 엔진이 공급가 · 부가세 · 합계로 나눈다."""
+    v = await _locked_mine(s, vendor, visit_id)
+    if v.status not in ("requested", "quoted"):
+        raise AppError(409, "invalid_state", CLOSED_FOR_QUOTE[v.status])
+    exempt = await vendor_service.tax_kind_of(s, vendor.id) == "exempt"
+    try:
+        await quote_service.save_draft(s, v.id, vendor.id, data, today, exempt)
+        await s.commit()
+    except IntegrityError as exc:  # 같은 파일을 동시에 두 견적서에 붙이면 UNIQUE가 막는다
+        await s.rollback()
+        raise AppError(409, "stale", "다른 곳에서 먼저 바꿨어요. 다시 열어 주세요.") from exc
+    return await quote_board(s, vendor, visit_id)
+
+
+async def send_quote(
+    s: AsyncSession, vendor: User, visit_id: uuid.UUID, today: date
+) -> QuoteBoardOut:
+    """첫 견적서 보내기: 임시 저장본을 굳히고 요청을 requested → quoted로 바꾼다(다시 올리기는 18번)."""
+    v = await _locked_mine(s, vendor, visit_id)
+    if v.status == "quoted":
+        raise AppError(409, "already_sent", "이미 견적서를 보냈어요.")
+    if v.status != "requested":
+        raise AppError(409, "invalid_state", CLOSED_FOR_QUOTE[v.status])
+    q = await quote_service.seal_draft(s, v.id, today)
+    ok = await repo.set_status(
+        s, v.id, allowed_from=("requested",), values={"status": "quoted", "quote_ver": q.version}
+    )
+    if not ok:
+        raise AppError(409, "invalid_state", "이미 견적서를 보냈어요.")
+    s.add(VisitEvent(visit_id=v.id, from_status="requested", to_status="quoted", by_id=vendor.id))
+    await notify_service.add(
+        s,
+        user_id=(await project_service.briefs(s, [v.project_id]))[v.project_id].owner_id,
+        kind="quote_sent",
+        body=f"{_i_ga(v.vendor_name)} 실측 견적서를 보냈어요 · {TRADE_LABEL[v.trade]}",
+        link=f"/projects/{v.project_id}/quotes?trade={v.trade}",
+        dedup_key=f"quote:{q.id}",
+        project_id=v.project_id,
+    )
+    await s.commit()
+    return await quote_board(s, vendor, visit_id)

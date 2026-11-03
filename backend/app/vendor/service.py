@@ -588,6 +588,12 @@ async def portfolio_file(s: AsyncSession, vendor_id: uuid.UUID, file_id: uuid.UU
     return (await repo.files_by_id(s, [file_id])).get(file_id)
 
 
+async def tax_kind_of(s: AsyncSession, vendor_id: uuid.UUID) -> str:
+    """과세(general) · 면세(exempt). 실측 견적서의 부가세 방식을 거를 때 쓴다."""
+    v = await s.get(Vendor, vendor_id)
+    return v.tax_kind if v else "general"
+
+
 async def contacts(s: AsyncSession, vendor_ids: list[uuid.UUID]) -> dict[uuid.UUID, ContactOut]:
     """업체 연락처 (대표 이름 · 휴대폰 · 연락 방식). 보여도 되는지는 visit.service가 정한다."""
     rows = await repo.vendors_by_id(s, vendor_ids) if vendor_ids else {}
