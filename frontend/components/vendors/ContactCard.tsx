@@ -1,5 +1,6 @@
 // 실측 요청한 업체 카드 (시안 WVisit 카드 · WVendorDetail '요청한 뒤'). 연락처는 API가 공개 규칙을 지난 때만 준다.
 // 연락 방식 버튼은 업체가 정한 하나만: 전화 걸기 · 문자 보내기 · 카카오톡 채널 열기 · 홈페이지 상담 열기.
+// 확정한 업체는 연락처가 계속 보이고, 확정 뒤 닫힌 업체(locked)는 '다른 업체로 정했어요'로 가려진다.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { phoneText } from "@/lib/labels";
@@ -57,16 +58,20 @@ function Open({ v, requestText }: { v: Visit; requestText?: string }) {
         </div>
       ) : null}
       <p className={`mj-small ${c.ln}`}>
-        {v.share_contact
-          ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · 업체가 먼저 연락할 수도 있어요</>
-          : <><Lock />내 연락처는 보내지 않았어요 · 위 문구를 보내며 먼저 연락해 주세요</>}
+        {v.status === "chosen"
+          ? v.share_contact
+            ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · 공사가 끝난 날부터 1년까지 서로 보여요</>
+            : <><Lock />내 연락처는 보내지 않았어요 · 업체 연락처는 공사가 끝난 날부터 1년까지 보여요</>
+          : v.share_contact
+            ? <><span className={c.ok}><Check /></span>내 연락처를 보냈어요 · 업체가 먼저 연락할 수도 있어요</>
+            : <><Lock />내 연락처는 보내지 않았어요 · 위 문구를 보내며 먼저 연락해 주세요</>}
       </p>
     </>
   );
 }
 
-/** 닫힌 요청(취소함 · 못 받음 · 닫힘): 연락처를 가린 까닭과 다음 할 일 */
-function Shut({ v, pickHref }: { v: Visit; pickHref: string }) {
+/** 닫힌 요청(취소함 · 못 받음 · 닫힘): 연락처를 가린 까닭과 다음 할 일. 확정 뒤(locked)에는 담기로 보내지 않는다 */
+function Shut({ v, pickHref, locked }: { v: Visit; pickHref: string; locked?: boolean }) {
   const name = v.vendor_name;
   return (
     <>
@@ -77,10 +82,15 @@ function Shut({ v, pickHref }: { v: Visit; pickHref: string }) {
         </>
       ) : v.status === "cancelled" ? (
         <p className="mj-small">연락처가 가려졌어요.{v.share_contact ? ` 보낸 내 연락처도 ${name}에서 바로 가려졌어요.` : ""}{v.closed_at ? <> <span className="mj-num">{when(v.closed_at)}</span> 취소</> : null}</p>
+      ) : locked ? (
+        <>
+          <p>다른 업체로 정했어요{v.closed_at ? <> · <span className="mj-num">{when(v.closed_at)}</span></> : null}</p>
+          <p className="mj-small">서로 보이던 연락처는 바로 가려졌어요.</p>
+        </>
       ) : (
         <p className="mj-small">닫힌 요청이에요. 연락처가 가려졌어요.</p>
       )}
-      <Link className={`mj-lnk ${c.sm}`} href={pickHref}>다른 업체 담기</Link>
+      {locked ? null : <Link className={`mj-lnk ${c.sm}`} href={pickHref}>다른 업체 담기</Link>}
     </>
   );
 }
@@ -95,9 +105,11 @@ type Props = {
   requestText?: string;
   /** 업체 자세히: '요청한 업체 모두 보기' */
   allHref?: string;
+  /** 이 공정을 이미 확정함: 닫힌 요청은 '다른 업체로 정했어요', 다른 업체 담기를 두지 않는다 */
+  locked?: boolean;
 };
 
-export function ContactCard({ v, projectId, trade, titled, requestText, allHref }: Props) {
+export function ContactCard({ v, projectId, trade, titled, requestText, allHref, locked }: Props) {
   const open = isLive(v.status) && v.contact_visible;
   const pickHref = `/projects/${projectId}/vendors?trade=${trade}`;
   const detail = v.vendor_id ? `/projects/${projectId}/vendors/${v.vendor_id}?trade=${trade}` : null;
@@ -112,8 +124,10 @@ export function ContactCard({ v, projectId, trade, titled, requestText, allHref 
       </div>
       {v.status === "quoted" ? (
         <Link className={`mj-btn mj-btn-pri ${c.cmp}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>비교하기<span className="mj-sr">, {v.vendor_name} 실측 견적서</span></Link>
+      ) : v.status === "chosen" ? (
+        <Link className={`mj-lnk ${c.sm}`} href={`/projects/${projectId}/quotes?trade=${trade}`}>확정한 견적서 보기<span className="mj-sr">, {v.vendor_name}</span></Link>
       ) : null}
-      {open ? <Open v={v} requestText={requestText} /> : isLive(v.status) ? <p className="mj-small">연락처를 보일 수 있는 때가 지났어요.</p> : <Shut v={v} pickHref={pickHref} />}
+      {open ? <Open v={v} requestText={requestText} /> : isLive(v.status) ? <p className="mj-small">연락처를 보일 수 있는 때가 지났어요.</p> : <Shut v={v} pickHref={pickHref} locked={locked} />}
       <div className={c.foot}>
         {allHref ? <Link className={`mj-lnk ${c.sm}`} href={allHref}>요청한 업체 모두 보기</Link> : <span className="mj-small mj-num">{when(v.created_at)} 요청</span>}
         {v.status === "requested" ? <CancelVisit projectId={projectId} visitId={v.id} name={v.vendor_name} shared={v.share_contact} /> : null}

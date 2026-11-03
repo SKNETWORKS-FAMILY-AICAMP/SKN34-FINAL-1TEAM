@@ -5,3 +5,4 @@
 .sm { font-size: var(--fs-sm); }
 .none { max-width: 760px; display: flex; flex-direction: column; }
 .empty { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 32px 0; }
+.deal { padding-top: 12px; }

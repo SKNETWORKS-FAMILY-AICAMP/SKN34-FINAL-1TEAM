@@ -1,6 +1,6 @@
 // 업체 한 곳의 실측 견적서 열 (시안 WCompare .qc). 보낸 최신 버전의 파일 · 낼 금액 · 칸, 다시 올렸으면 바뀐 칸과 이전 버전.
 // 견적서를 기다리는 업체는 '견적서 기다림' 열. 숫자는 모두 API 값이고, 공급가 · 부가세는 견적서 합계 칸에서만 나눠 보인다.
-// 업체가 비워 둔 칸(공사 기간 · 유효기간 · 실측한 날)은 보이지 않는다.
+// 업체가 비워 둔 칸(공사 기간 · 유효기간 · 실측한 날)은 보이지 않는다. 확정 전 견적서 옴이면 '이 업체로 확정하기'(확정 화면)를 둔다.
 import Link from "next/link";
 import { Check } from "@/components/vendors/icons";
 import { eunNeun } from "@/components/vendors/text";
@@ -13,9 +13,9 @@ const Clock = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="7" cy="7" r="5.5" /><path d="M7 4v3.2l2 1.3" /></svg>
 );
 
-type Props = { r: Row; projectId: string; trade: string; tradeName: string };
+type Props = { r: Row; projectId: string; trade: string; tradeName: string; confirmHref?: string | null };
 
-export function QuoteCard({ r, projectId, trade, tradeName }: Props) {
+export function QuoteCard({ r, projectId, trade, tradeName, confirmHref }: Props) {
   const name = r.vendor_name;
   const detail = r.vendor_id ? `/projects/${projectId}/vendors/${r.vendor_id}?trade=${trade}` : null;
   const est = r.estimate_total != null
@@ -110,6 +110,7 @@ export function QuoteCard({ r, projectId, trade, tradeName }: Props) {
       ) : null}
 
       {r.status === "chosen" ? <p className={`mj-st mj-st-ok ${s.chosen}`}><Check />{eunNeun(tradeName)} {euro(name)} 확정했어요</p> : null}
+      {confirmHref ? <Link className={`mj-btn mj-btn-sec ${s.go}`} href={confirmHref}>이 업체로 확정하기<span className="mj-sr"> · {name}</span></Link> : null}
     </li>
   );
 }

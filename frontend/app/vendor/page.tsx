@@ -15,7 +15,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 type Search = { tab?: string | string[]; declined?: string | string[] };
 
 // 업체 홈. 승인 전이면 가입 심사(시안 WVHome), 승인됐으면 작업함(시안 WVInbox).
-// 받은 요청이 하나도 없으면(할 일 · 기다림 · 끝남 모두 0) 승인 첫날 모습(WVFirst)이다.
+// 받은 요청이 하나도 없으면(할 일 · 기다림 · 공사 · 끝남 모두 0) 승인 첫날 모습(WVFirst)이다.
 // ?tab= 작업함 탭, ?declined= 방금 받지 않은 요청(맨 위 한 줄).
 export default async function VendorHome({ searchParams }: { searchParams: Promise<Search> }) {
   await requireRole("vendor", "/vendor");
@@ -47,11 +47,11 @@ export default async function VendorHome({ searchParams }: { searchParams: Promi
     Promise.all(mine.map((t) => getMyPrices(t).catch(() => null))),
     getMyProfile().catch(() => null),
     getInboxSummary(),
-    tab === "work" ? null : listInbox(tab),
+    listInbox(tab),
     declined ? getVendorVisit(declined) : null,
   ]);
 
-  if (summary && summary.todo + summary.waiting + summary.done > 0) {
+  if (summary && summary.todo + summary.waiting + summary.jobs + summary.done > 0) {
     const note = gone?.status === "declined" ? `${gone.code} ${workText(gone)} 요청을 받지 않았어요. 고객에게 고른 이유가 보이고, 이 요청은 끝남 탭으로 옮겼어요.` : null;
     return (
       <>

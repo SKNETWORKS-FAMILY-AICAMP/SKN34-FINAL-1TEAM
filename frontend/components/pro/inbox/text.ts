@@ -1,16 +1,16 @@
 // 작업함 · 요청 자세히(시안 WVInbox)에만 쓰는 화면 말 · 표시 함수. 날짜 · 금액은 새로 계산하지 않고 형식만 바꾼다.
 import type { Schemas } from "@/lib/backend/client";
-import { dateSeoul, decText, md } from "@/lib/format";
+import { dateSeoul, decText, md, stampSeoul } from "@/lib/format";
 import { gradeLabel, tradeLabel } from "@/lib/labels";
 
 export type Row = Schemas["InboxRowOut"];
 export type Detail = Schemas["VendorVisitDetailOut"];
-export type Tab = "todo" | "waiting" | "work" | "done";
+export type Tab = "todo" | "waiting" | "jobs" | "done";
 
 export const TABS: { k: Tab; t: string }[] = [
   { k: "todo", t: "할 일" },
   { k: "waiting", t: "기다림" },
-  { k: "work", t: "공사" },
+  { k: "jobs", t: "공사" },
   { k: "done", t: "끝남" },
 ];
 
@@ -18,14 +18,14 @@ export const TABS: { k: Tab; t: string }[] = [
 export const EMPTY: Record<Tab, string> = {
   todo: "지금 할 일이 없어요. 새 실측 요청이 오면 알림으로 알려 드려요.",
   waiting: "고객의 결정을 기다리는 일이 없어요.",
-  work: "확정된 공사가 없어요.",
+  jobs: "확정된 공사가 없어요.",
   done: "끝난 일이 아직 없어요.",
 };
 
 /** 탭 위 한 줄 안내 */
 export const TAB_NOTE: Partial<Record<Tab, string>> = {
   waiting: "고객이 확정하면 공사 탭으로, 다른 업체로 정하면 끝남 탭으로 가요.",
-  work: "확정된 공사예요. 공사 날짜를 내고 바꾸고, 추가 금액과 공사 끝남을 여기서 알려요.",
+  jobs: "확정된 공사예요. 공사 날짜를 내고 바꾸고, 추가 금액과 공사 끝남을 여기서 알려요.",
   done: "고르지 않았거나 취소된 요청은 닫히는 즉시 고객 이름과 연락처를 가려요. 공사가 끝난 고객은 끝냈다고 올린 날부터 1년까지 보여요.",
 };
 
@@ -46,6 +46,17 @@ export function endNote(v: Pick<Row, "closed_at">): string {
 }
 
 export const isDone = (status: string) => status === "cancelled" || status === "declined" || status === "closed";
+
+/** 공사 탭 '다음 할 일' (공사 날짜를 낸 뒤의 일은 공사 일정 화면에서 한다) */
+export const JOB_LABEL: Record<string, string> = {
+  confirmed: "공사 날짜 내기",
+  scheduled: "공사 날짜 확정",
+  checking: "공사 끝냄 · 고객 확인 기다림",
+  fixing: "남은 일이 있대요",
+};
+
+/** 기한 "11.4(수) 18:00" (API 시각 그대로, 서울) */
+export const stampOf = (iso: string) => stampSeoul(new Date(iso));
 
 /** 받은 날 "11.02(월)" */
 export const dayOf = (iso: string) => md(dateSeoul(iso));

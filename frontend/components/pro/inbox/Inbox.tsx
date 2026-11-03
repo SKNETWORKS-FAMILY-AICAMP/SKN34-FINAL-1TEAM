@@ -1,17 +1,18 @@
 // 작업함 (시안 WVInbox): 탭(할 일 · 기다림 · 공사 · 끝남) + 고른 탭의 표 + 오른쪽 카드 3개.
 // 탭은 주소(?tab=)로 바꾼다. 수는 GET /vendor/visits/summary, 줄은 GET /vendor/visits?tab=.
-// 공사 탭은 업체 확정이 생기는 뒤에 채운다(지금은 늘 0). 할 일에서 본 요청은 '견적서 올리기', 기다림은 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
+// 공사 탭은 확정된 공사(GET /vendor/visits?tab=jobs): 확정한 날 · 공사 날짜 · 다음 할 일(기한 · 기한 지남은 API 값).
+// 할 일에서 본 요청은 '견적서 올리기', 기다림은 '보낸 견적서 보기'로 실측 견적서 화면에 간다. '공사 날짜 내기' 버튼은 공사 일정 화면(21번)에서 붙인다.
 import Link from "next/link";
 import type { InboxPage, InboxSummary } from "@/lib/api/visit";
 import type { VendorPrices, VendorProfile } from "@/lib/api/vendor";
 import { dateSeoul, md } from "@/lib/format";
 import { phoneText, tradeLabel } from "@/lib/labels";
 import { contactLine, type Method } from "@/components/pro/profile/text";
-import { Dash, Who } from "./Cells";
+import { Alert, Dash, Who } from "./Cells";
 import { DeclineButton } from "./DeclineButton";
 import { DoneNote } from "./DoneNote";
 import { DoneTable } from "./DoneTable";
-import { EMPTY, TABS, TAB_NOTE, dayOf, pyeongText, whoOf, type Row, type Tab } from "./text";
+import { EMPTY, JOB_LABEL, TABS, TAB_NOTE, dayOf, pyeongText, stampOf, whoOf, type Row, type Tab } from "./text";
 import s from "./inbox.module.css";
 
 type Props = {
@@ -73,6 +74,37 @@ function WaitRow({ v }: { v: Row }) {
   );
 }
 
+/** 공사 탭 '다음 할 일': 날짜를 아직 안 냈으면 '공사 날짜 내기 · 기한', 기한이 지났으면 '기한 지남' */
+function NextJob({ v }: { v: Row }) {
+  const label = JOB_LABEL[v.deal_status ?? ""] ?? "공사 진행";
+  if (v.deal_status !== "confirmed" || !v.dates_due_at) return <span className={s.b}>{label}</span>;
+  return (
+    <>
+      {v.overdue ? <><span className="mj-st mj-st-bad"><Alert />기한 지남</span><br /></> : null}
+      <span className={s.b}>{label}</span><br />
+      <span className="mj-small mj-num">{stampOf(v.dates_due_at)}까지{v.overdue ? "였어요" : ""}</span>
+    </>
+  );
+}
+
+function JobRow({ v }: { v: Row }) {
+  return (
+    <tr>
+      <td className={`mj-num ${s.cx} ${s.day}`}>{v.confirmed_at ? dayOf(v.confirmed_at) : "—"}</td>
+      <th scope="row"><Who v={v} /></th>
+      <td className={s.cx}>{v.region}</td>
+      <td className="r mj-num">{pyeongText(v.pyeong)}</td>
+      <td><span className={s.mlab}>공사 날짜 </span>{v.start_date && v.end_date ? <span className={`mj-num ${s.day}`}>{md(v.start_date)} ~ {md(v.end_date)}</span> : <span className="mj-sub">아직 안 냈어요</span>}</td>
+      <td><NextJob v={v} /></td>
+      <td className="r">
+        <div className={s.acts}>
+          <Link className={`mj-lnk ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function Table({ name, caption, head, children }: { name: string; caption: string; head: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="mj-table-box" role="region" tabIndex={0} aria-label={`${name} 표, 옆으로 넘겨 볼 수 있어요`}>
@@ -108,7 +140,7 @@ function PriceLine({ trade, p, many }: { trade: string; p: VendorPrices | null; 
 }
 
 export function Inbox({ tab, summary, page, prices, profile, fallback, note }: Props) {
-  const count: Record<Tab, number> = { todo: summary.todo, waiting: summary.waiting, work: summary.jobs, done: summary.done };
+  const count: Record<Tab, number> = { todo: summary.todo, waiting: summary.waiting, jobs: summary.jobs, done: summary.done };
   const items = page?.items ?? [];
   const label = TABS.find((t) => t.k === tab)?.t ?? "";
   const vendorName = profile?.biz_name ?? fallback.biz ?? "우리 업체";
@@ -120,7 +152,7 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
   const r = summary.recent;
 
   let body: React.ReactNode;
-  if (tab === "work" || !items.length) body = <p className={s.empty}>{EMPTY[tab]}</p>;
+  if (!items.length) body = <p className={s.empty}>{EMPTY[tab]}</p>;
   else if (tab === "todo") {
     body = (
       <Table name="할 일" caption={`할 일 ${items.length}건, 새 요청부터`} head={<>
@@ -137,6 +169,15 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
         <th scope="col" className="r">평형</th><th scope="col">지금</th><th scope="col" className="r">기다린 날</th><th scope="col"><span className="mj-sr">행동</span></th>
       </>}>
         {items.map((v) => <WaitRow key={v.id} v={v} />)}
+      </Table>
+    );
+  } else if (tab === "jobs") {
+    body = (
+      <Table name="공사" caption={`확정된 공사 ${items.length}건, 최근 확정한 순서`} head={<>
+        <th scope="col" className={s.cx}>확정한 날</th><th scope="col">고객</th><th scope="col" className={s.cx}>지역</th>
+        <th scope="col" className="r">평형</th><th scope="col">공사 날짜</th><th scope="col">다음 할 일</th><th scope="col"><span className="mj-sr">행동</span></th>
+      </>}>
+        {items.map((v) => <JobRow key={v.deal_id ?? v.id} v={v} />)}
       </Table>
     );
   } else body = <DoneTable items={items} next={page?.next_before ?? null} total={summary.done} />;

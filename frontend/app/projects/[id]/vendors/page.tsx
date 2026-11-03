@@ -1,12 +1,15 @@
 // 업체 고르기 (시안 WVendors): 이 집 공정의 업체 · 가견적(업체가 확인한 단가 × 표준견적서 수량, 믿집 계산) · 실측 요청에 담기.
 // 목록 · 남은 칸 · 동의 문구 버전은 GET /projects/{id}/vendors, 못 받은 시각은 GET /projects/{id}/visits에서 읽는다.
+// 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고 담기 · 요청을 막는다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DealNote } from "@/components/confirm/DealNote";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { VendorBoard } from "@/components/vendors/VendorBoard";
 import { VTabs } from "@/components/vendors/VTabs";
 import { isTrade, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
+import { listDeals } from "@/lib/api/schedule";
 import { listProjectVendors, listProjectVisits } from "@/lib/api/visit";
 import { projectTitle, tradeLabel } from "@/lib/labels";
 import { eulReul, won } from "@/lib/format";
@@ -23,12 +26,13 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
   if (!trades.length) notFound();
   const trade = isTrade(asked) && trades.includes(asked) ? asked : trades[0];
 
-  const [lists, visits] = await Promise.all([Promise.all(trades.map((t) => listProjectVendors(id, t))), listProjectVisits(id, trade)]);
+  const [lists, visits, deals] = await Promise.all([Promise.all(trades.map((t) => listProjectVendors(id, t))), listProjectVisits(id, trade), listDeals(id, trade)]);
   const cur = lists[trades.indexOf(trade)];
   if (!cur) notFound();
   const counts = Object.fromEntries(trades.map((t, i) => [t, lists[i]?.vendors.length ?? 0]));
   const closedAt = Object.fromEntries((visits?.visits ?? []).filter((v) => v.closed_at).map((v) => [v.id, v.closed_at as string]));
   const tName = tradeLabel(trade);
+  const deal = deals?.[0] ?? null;
 
   const head = (
     <>
@@ -37,6 +41,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
         <p>{tName} 표준견적서 <strong className="mj-num">{won(cur.standard_total)}</strong> <span className="mj-small">부가세 포함</span></p>
         <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard`}>표준견적서 보기</Link>
       </div>
+      {deal ? <div className={s.deal}><DealNote d={deal} projectId={id} /></div> : null}
     </>
   );
 
@@ -58,6 +63,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
             consentVer={cur.consent_ver}
             vendors={cur.vendors}
             closedAt={closedAt}
+            locked={!!deal}
           />
         ) : (
           <div className={s.none}>

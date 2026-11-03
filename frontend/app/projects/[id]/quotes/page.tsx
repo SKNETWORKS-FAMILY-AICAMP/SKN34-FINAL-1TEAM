@@ -1,10 +1,11 @@
 // 실측 견적 비교 (시안 WCompare): 공정 탭(받은 수) · 표준견적서 합계 · 업체마다 보낸 최신 실측 견적서(파일 · 낼 금액 · 칸 · 이전 버전).
 // 읽기는 GET /projects/{id}/quotes?trade= 하나. 금액 · 표준 대비 % · 바뀐 칸 · 유효기간 지남은 API 값을 그대로 보인다.
-// '이 업체로 확정하기'는 업체 확정(19번)에서 붙인다.
+// 확정 전에는 견적서가 온 업체마다 '이 업체로 확정하기'(확정 화면), 확정한 뒤에는 확정 · 공사 날짜 기한 줄(시안 WConfirm '확정한 뒤')을 보인다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CompareTabs } from "@/components/compare/CompareTabs";
 import { QuoteCard } from "@/components/compare/QuoteCard";
+import { DealStatus } from "@/components/confirm/DealStatus";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { isTrade, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
@@ -29,7 +30,10 @@ export default async function QuotesPage({ params, searchParams }: { params: Pro
   const tName = tradeLabel(trade);
   const here = `${tName} 실측 견적 비교`;
   const pickHref = `/projects/${id}/vendors?trade=${trade}`;
-  const chosen = c.vendors.some((v) => v.status === "chosen");
+  const deal = c.deal;
+  const chosen = !!deal || c.vendors.some((v) => v.status === "chosen");
+  const confirmHref = (r: (typeof c.vendors)[number]) =>
+    !chosen && r.status === "quoted" && r.latest && r.seen_ver != null ? `/projects/${id}/quotes/${r.visit_id}/confirm?trade=${trade}` : null;
 
   return (
     <main id="main">
@@ -56,9 +60,10 @@ export default async function QuotesPage({ params, searchParams }: { params: Pro
             <h2 id="vq-t" className="mj-h2">업체가 보낸 실측 견적서</h2>
             <p className="mj-small">업체 양식 파일 그대로예요. 파일을 열어 보고 비교해 주세요.</p>
           </div>
+          {deal ? <div className={s.deal}><DealStatus d={deal} /></div> : null}
           {c.vendors.length ? (
             <ul role="list" className={s.cards}>
-              {c.vendors.map((r) => <QuoteCard key={r.visit_id} r={r} projectId={id} trade={trade} tradeName={tName} />)}
+              {c.vendors.map((r) => <QuoteCard key={r.visit_id} r={r} projectId={id} trade={trade} tradeName={tName} confirmHref={confirmHref(r)} />)}
             </ul>
           ) : (
             <div className={s.empty}>

@@ -1,13 +1,16 @@
 // 실측 요청 · 업체 연락 (시안 WVisit): 연락할 때 보낼 문구, 요청한 업체 카드(연락처 · 연락 방식 버튼 · 요청 취소).
 // 믿집은 방문 날짜를 잡지 않는다. 연락처는 API가 공개 규칙을 지난 요청에만 준다(취소함 · 못 받음은 가린다).
+// 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고, 보낼 문구 · 더 요청하기를 빼고, 닫힌 업체는 '다른 업체로 정했어요'다.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DealNote } from "@/components/confirm/DealNote";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { ContactCard } from "@/components/vendors/ContactCard";
 import { CopyButton } from "@/components/vendors/CopyButton";
 import { VTabs } from "@/components/vendors/VTabs";
 import { isLive, isTrade, type VTrade, type Visit } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
+import { listDeals } from "@/lib/api/schedule";
 import { listProjectVisits } from "@/lib/api/visit";
 import { projectTitle, tradeLabel } from "@/lib/labels";
 import s from "./page.module.css";
@@ -35,13 +38,14 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
   const trades = (["dobae", "mokgong"] as VTrade[]).filter((t) => p.trades[t]);
   if (!trades.length) notFound();
   const trade = isTrade(asked) && trades.includes(asked) ? asked : trades[0];
-  const all = await listProjectVisits(id);
+  const [all, deals] = await Promise.all([listProjectVisits(id), listDeals(id, trade)]);
   if (!all) notFound();
+  const deal = deals?.[0] ?? null;
 
   const counts = Object.fromEntries(trades.map((t) => [t, latest(all.visits, t).length]));
   const rows = latest(all.visits, trade);
-  // 보낼 문구는 연락할 업체(열린 요청)가 있을 때만 보인다
-  const text = rows.some((v) => isLive(v.status)) ? all.request_texts.find((t) => t.trade === trade)?.text ?? "" : "";
+  // 보낼 문구는 연락할 업체(열린 요청)가 있고 아직 확정하지 않았을 때만 보인다
+  const text = !deal && rows.some((v) => isLive(v.status)) ? all.request_texts.find((t) => t.trade === trade)?.text ?? "" : "";
   const tName = tradeLabel(trade);
   const pickHref = `/projects/${id}/vendors?trade=${trade}`;
 
@@ -56,6 +60,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
       <div className={`mj-wrap ${s.layout}`}>
         <div className={s.main}>
           <VTabs base={`/projects/${id}/visits`} trades={trades} current={trade} counts={counts} />
+          {deal ? <DealNote d={deal} projectId={id} /> : null}
 
           {text ? (
             <section aria-labelledby="msg-t" className={s.sec}>
@@ -74,7 +79,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
               <ul role="list" className={s.cards}>
                 {rows.map((v) => (
                   <li key={v.id} className={s.card}>
-                    <ContactCard v={v} projectId={id} trade={trade} titled />
+                    <ContactCard v={v} projectId={id} trade={trade} titled locked={!!deal} />
                   </li>
                 ))}
               </ul>
@@ -84,7 +89,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
                 <Link className="mj-btn mj-btn-pri" href={pickHref}>업체 고르기</Link>
               </div>
             )}
-            {rows.length && (all.slots_left[trade] ?? 0) > 0 ? (
+            {rows.length && !deal && (all.slots_left[trade] ?? 0) > 0 ? (
               <p className="mj-small">{all.slots_left[trade]}곳 더 요청할 수 있어요 · <Link className={`mj-lnk ${s.sm}`} href={pickHref}>다른 업체 담기</Link></p>
             ) : null}
           </section>

@@ -1,6 +1,7 @@
 // 실측 요청 자세히 (시안 WVInbox '새 실측 요청 · 고객에게 연락하기'와 '연락처를 안 보낸 요청' 메모).
 // 고객 연락처는 고객이 이 업체에 보내기로 골랐고 요청이 열려 있을 때만 API가 준다. 닫힌 요청은 어떻게 끝났는지만 보인다.
 // 방문 날짜는 믿집이 다루지 않는다. 요청함일 때 '견적서 올리기', 견적서 옴 · 확정일 때 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
+// 고객이 확정하면 연락처는 공사가 끝난 날부터 1년까지 보이고, 공사 날짜는 작업함 공사 탭에서 이어 간다.
 import Link from "next/link";
 import type { VendorProfile } from "@/lib/api/vendor";
 import { stampSeoul } from "@/lib/format";
@@ -83,7 +84,7 @@ export function Request({ v, profile }: { v: Detail; profile: VendorProfile | nu
                   <CopyPhone phone={phoneText(c.phone)} name={c.name} />
                 </div>
               ) : null}
-              <p className="mj-small">고객이 보내기로 고른 연락처예요. 요청이 닫히면 바로 가려져요.</p>
+              <p className="mj-small">{v.status === "chosen" ? "고객이 보내기로 고른 연락처예요. 공사가 끝난 날부터 1년까지 보여요." : "고객이 보내기로 고른 연락처예요. 요청이 닫히면 바로 가려져요."}</p>
             </div>
           ) : (
             <div className={s.part}>
@@ -98,10 +99,16 @@ export function Request({ v, profile }: { v: Detail; profile: VendorProfile | nu
               <DeclineButton visitId={v.id} name={c?.name ?? null} code={v.code} vendorName={profile?.biz_name ?? "우리 업체"} />
               <p className="mj-small">방문 날짜는 고객과 직접 정해요. 다녀와서 견적서를 올려요.</p>
             </div>
-          ) : v.status === "quoted" || v.status === "chosen" ? (
+          ) : v.status === "quoted" ? (
             <div className={s.foot}>
               <Link className="mj-btn mj-btn-sec" href={`/vendor/requests/${v.id}/quote`}>보낸 견적서 보기</Link>
-              {v.status === "quoted" ? <p className="mj-small">고객이 확정하기 전까지 다시 올릴 수 있어요.</p> : null}
+              <p className="mj-small">고객이 확정하기 전까지 다시 올릴 수 있어요.</p>
+            </div>
+          ) : v.status === "chosen" ? (
+            <div className={s.foot}>
+              <Link className="mj-btn mj-btn-pri" href="/vendor?tab=jobs">공사 탭으로 가기</Link>
+              <Link className="mj-btn mj-btn-sec" href={`/vendor/requests/${v.id}/quote`}>확정한 견적서 보기</Link>
+              <p className="mj-small">고객이 확정한 견적서는 다시 올릴 수 없어요. 공사 날짜는 공사 탭에서 확인해요.</p>
             </div>
           ) : null}
         </section>

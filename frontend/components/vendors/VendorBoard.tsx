@@ -1,6 +1,7 @@
 "use client";
 // 업체 고르기 목록 + 실측 요청에 담기 (시안 WVendors). 담은 업체 · 남길 말은 이 기기 sessionStorage에 프로젝트 · 공정마다 둔다.
 // 금액 · 퍼센트는 API 값을 그대로 보인다. 담을 수 있는 수(slotsLeft)는 서버가 정한다(공정마다 3곳까지).
+// 이 공정을 확정했으면(locked) 담기 · 요청 칸을 두지 않는다. 확정 안내는 목록 위(head)에 화면이 그린다.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -23,6 +24,8 @@ type Props = {
   vendors: VendorRow[];
   /** 닫힌 요청이 닫힌 때 (visit id → 시각, 실측 요청 목록에서) */
   closedAt: Record<string, string>;
+  /** 이 공정을 이미 확정함: 담기 · 실측 요청을 막는다 */
+  locked?: boolean;
 };
 
 type Sent = { ok: string[]; failed: { name: string; code: string }[] };
@@ -41,7 +44,7 @@ function Estimate({ v }: { v: VendorRow }) {
   );
 }
 
-export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, consentVer, vendors, closedAt }: Props) {
+export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, consentVer, vendors, closedAt, locked = false }: Props) {
   const router = useRouter();
   const [ids, setIds] = useState<string[]>([]);
   const [msg, setMsg] = useState("");
@@ -138,18 +141,21 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                         <VisitState status={vis.status} />
                         {vis.status === "requested" ? <Link className={`mj-lnk ${s.sm}`} href={`${base}/visits?trade=${trade}`}>연락처 보기<span className="mj-sr">, {name}</span></Link> : null}
                         {vis.status === "quoted" ? <Link className={`mj-lnk ${s.sm}`} href={`${base}/quotes?trade=${trade}`}>비교하기<span className="mj-sr">, {name} 실측 견적서</span></Link> : null}
+                        {vis.status === "chosen" ? <Link className={`mj-lnk ${s.sm}`} href={`${base}/visits?trade=${trade}`}>연락처 보기<span className="mj-sr">, {name}</span></Link> : null}
                       </div>
                     ) : (
                       <>
                         {vis ? (
                           <div className={s.state}>
                             <VisitState status={vis.status} />
-                            <span className="mj-small mj-num">{[declineText(vis.decline_code), when(closedAt[vis.id])].filter(Boolean).join(" · ")}</span>
+                            <span className="mj-small mj-num">{[locked && vis.status === "closed" ? "다른 업체로 정했어요" : declineText(vis.decline_code), when(closedAt[vis.id])].filter(Boolean).join(" · ")}</span>
                           </div>
                         ) : null}
-                        <button type="button" className={s.pick} aria-pressed={on} aria-disabled={full || undefined} aria-describedby={full ? "pk-room" : undefined} onClick={() => toggle(v.vendor_id)}>
-                          {on ? <Picked /> : <Plus />}실측 요청에 담기<span className="mj-sr">, {name}</span>
-                        </button>
+                        {locked ? null : (
+                          <button type="button" className={s.pick} aria-pressed={on} aria-disabled={full || undefined} aria-describedby={full ? "pk-room" : undefined} onClick={() => toggle(v.vendor_id)}>
+                            {on ? <Picked /> : <Plus />}실측 요청에 담기<span className="mj-sr">, {name}</span>
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -162,7 +168,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
         )}
       </div>
 
-      <aside className={s.side} aria-labelledby="pk-t">
+      {locked ? null : <aside className={s.side} aria-labelledby="pk-t">
         {sent ? (
           <div ref={sentRef} tabIndex={-1} role="status" className={s.sent}>
             {sent.ok.length ? (
@@ -217,20 +223,22 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
             </div>
           </details>
         </form>
-      </aside>
+      </aside>}
 
-      <RequestDialog
-        open={open}
-        onClose={() => setOpen(false)}
-        onSent={onSent}
-        projectId={projectId}
-        trade={trade}
-        vendors={picked.map((id) => ({ id, name: byId.get(id)?.biz_name ?? "업체" }))}
-        message={msg}
-        consentVer={consentVer}
-        backTo={backTo}
-        idp="rq"
-      />
+      {locked ? null : (
+        <RequestDialog
+          open={open}
+          onClose={() => setOpen(false)}
+          onSent={onSent}
+          projectId={projectId}
+          trade={trade}
+          vendors={picked.map((id) => ({ id, name: byId.get(id)?.biz_name ?? "업체" }))}
+          message={msg}
+          consentVer={consentVer}
+          backTo={backTo}
+          idp="rq"
+        />
+      )}
     </div>
   );
 }

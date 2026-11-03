@@ -33,7 +33,10 @@
   .cards.dense .cx { display: none; }
   .cards.dense tbody th { flex: 1 1 100%; }
   .cards .acts { align-items: flex-start; }
+  .cards .mlab { display: inline; }
 }
+/* 폰 카드에서만 보이는 칸 이름 (표 머리가 숨을 때) */
+.mlab { display: none; font-size: var(--fs-sm); color: var(--ink-sub); }
 
 /* 오른쪽 카드 */
 .card { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
