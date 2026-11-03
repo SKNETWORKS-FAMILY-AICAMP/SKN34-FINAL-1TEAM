@@ -1,9 +1,12 @@
 // 실측 요청 자세히 (시안 WVInbox '새 실측 요청 · 고객에게 연락하기'와 '연락처를 안 보낸 요청' 메모).
 // 고객 연락처는 고객이 이 업체에 보내기로 골랐고 요청이 열려 있을 때만 API가 준다. 닫힌 요청은 어떻게 끝났는지만 보인다.
 // 방문 날짜는 믿집이 다루지 않는다. 요청함일 때 '견적서 올리기', 견적서 옴 · 확정일 때 '보낸 견적서 보기'로 실측 견적서 화면에 간다.
-// 고객이 확정하면 연락처는 공사가 끝난 날부터 1년까지 보이고, 공사 날짜는 작업함 공사 탭에서 이어 간다.
+// 고객이 확정하면 연락처는 공사가 끝난 날부터 1년까지 보이고, 공사 날짜는 /vendor/jobs/{deal_id}에서 낸다.
+// 확정 공사의 deal_id · 공사 날짜 상태는 작업함 공사 탭(GET /vendor/visits?tab=jobs, 확정한 공사만 · 쪽 나눔 없음)에서 이 요청 줄을 찾아 읽는다.
 import Link from "next/link";
 import type { VendorProfile } from "@/lib/api/vendor";
+import { listInbox } from "@/lib/api/visit";
+import { datesLine, goLabel, needsAct } from "@/components/pro/jobs/text";
 import { stampSeoul } from "@/lib/format";
 import { CONTACT_LABEL, phoneText, type ContactMethod } from "@/lib/labels";
 import { Dash } from "./Cells";
@@ -29,8 +32,9 @@ function myWay(p: VendorProfile | null): string | null {
   return [CONTACT_LABEL[m], st && en ? `통화 ${st}~${en}` : null].filter(Boolean).join(" · ");
 }
 
-export function Request({ v, profile }: { v: Detail; profile: VendorProfile | null }) {
+export async function Request({ v, profile }: { v: Detail; profile: VendorProfile | null }) {
   const done = isDone(v.status);
+  const job = v.status === "chosen" ? (await listInbox("jobs").catch(() => null))?.items.find((x) => x.id === v.id && x.deal_id) ?? null : null;
   const c = v.customer;
   const way = myWay(profile);
   const here = c ? `${c.name} · ${v.area_name} ${workText(v)} 실측 요청` : `${v.code} 실측 요청`;
@@ -106,9 +110,13 @@ export function Request({ v, profile }: { v: Detail; profile: VendorProfile | nu
             </div>
           ) : v.status === "chosen" ? (
             <div className={s.foot}>
-              <Link className="mj-btn mj-btn-pri" href="/vendor?tab=jobs">공사 탭으로 가기</Link>
+              {job?.deal_id ? (
+                <Link className={`mj-btn ${needsAct(job.dates_state) ? "mj-btn-pri" : "mj-btn-sec"}`} href={`/vendor/jobs/${job.deal_id}`}>{goLabel(job.dates_state)}</Link>
+              ) : (
+                <Link className="mj-btn mj-btn-pri" href="/vendor?tab=jobs">공사 탭으로 가기</Link>
+              )}
               <Link className="mj-btn mj-btn-sec" href={`/vendor/requests/${v.id}/quote`}>확정한 견적서 보기</Link>
-              <p className="mj-small">고객이 확정한 견적서는 다시 올릴 수 없어요. 공사 날짜는 공사 탭에서 확인해요.</p>
+              <p className="mj-small mj-num">{job ? `${datesLine(job)} ` : ""}고객이 확정한 견적서는 다시 올릴 수 없어요.{job ? "" : " 공사 날짜는 공사 탭에서 확인해요."}</p>
             </div>
           ) : null}
         </section>
