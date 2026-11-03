@@ -8,11 +8,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     SmallInteger,
     String,
     Text,
     Time,
+    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +27,7 @@ TRADES = ("dobae", "mokgong")
 FAQ_KEYS = ("process", "pricing", "extra_cost", "duration", "as_refund")
 LINKS_MAX = 5  # 시공 사례 링크
 PORTFOLIO_MAX = 20  # 시공 사진
+PRICE_FILES_MAX = 10  # 공정마다 가견적 근거 파일
 
 
 class Vendor(Base):
@@ -170,3 +174,81 @@ class VendorLink(Base):
     sort: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
     label: Mapped[str | None] = mapped_column(String(40))
     url: Mapped[str] = mapped_column(String(300))
+
+
+class VendorPriceFile(Base):
+    """가견적 근거 파일 (예전 가견적서 · 견적서 · 단가표, files.kind = price_doc)"""
+
+    __tablename__ = "vendor_price_files"
+    __table_args__ = (CheckConstraint("trade in ('dobae', 'mokgong')", name="trade"),)
+
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    vendor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vendors.user_id", ondelete="CASCADE"), index=True
+    )
+    trade: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VendorPriceSet(Base):
+    """가견적 단가 묶음 한 버전. draft(고치는 중) → confirmed(고객 가견적에 씀) → retired(예전 것).
+
+    (업체, 공정)마다 draft 하나 · confirmed 하나만 둔다. 실측 요청은 그때의 confirmed 묶음을 가리킨다.
+    """
+
+    __tablename__ = "vendor_price_sets"
+    __table_args__ = (
+        UniqueConstraint("vendor_id", "trade", "version", name="uq_vendor_price_sets_version"),
+        Index(
+            "uq_vendor_price_sets_draft",
+            "vendor_id",
+            "trade",
+            unique=True,
+            postgresql_where=text("status = 'draft'"),
+        ),
+        Index(
+            "uq_vendor_price_sets_confirmed",
+            "vendor_id",
+            "trade",
+            unique=True,
+            postgresql_where=text("status = 'confirmed'"),
+        ),
+        CheckConstraint("trade in ('dobae', 'mokgong')", name="trade"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("status in ('draft', 'confirmed', 'retired')", name="status"),
+        CheckConstraint("(status = 'draft') = (confirmed_at is null)", name="confirmed_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    vendor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vendors.user_id", ondelete="CASCADE"), index=True
+    )
+    trade: Mapped[str] = mapped_column(String(10))
+    version: Mapped[int] = mapped_column(SmallInteger)
+    status: Mapped[str] = mapped_column(String(10), default="draft", server_default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class VendorPriceLine(Base):
+    """단가 묶음의 표준 행 한 줄: 단가(원, 부가세 빼고) 또는 같은 묶음의 다른 줄에 포함."""
+
+    __tablename__ = "vendor_price_lines"
+    __table_args__ = (
+        CheckConstraint("(unit_price is null) <> (included_in is null)", name="price_or_included"),
+        CheckConstraint("unit_price >= 0", name="unit_price"),
+        CheckConstraint("included_in <> key", name="included_in"),
+    )
+
+    set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vendor_price_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(20), primary_key=True)
+    unit_price: Mapped[int | None] = mapped_column(BigInteger)
+    included_in: Mapped[str | None] = mapped_column(String(20))
+    # 근거 파일을 지워도 확인한 단가는 남긴다 (출처만 비움)
+    source_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("files.id", ondelete="SET NULL"), index=True
+    )

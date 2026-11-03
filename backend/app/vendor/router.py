@@ -18,6 +18,10 @@ from app.vendor.deps import approved_vendor
 from app.vendor.schemas import (
     PortfolioIn,
     PortfolioOut,
+    PriceFileIn,
+    PriceFileOut,
+    PriceSetIn,
+    PricesOut,
     ProfileIn,
     ProfileOut,
     RejectIn,
@@ -136,4 +140,71 @@ async def remove_portfolio(
     s: AsyncSession = Depends(get_session),
 ) -> Response:
     await service.remove_portfolio(s, vendor, item_id)
+    return Response(status_code=204)
+
+
+TradeParam = Literal["dobae", "mokgong"]
+
+
+@router.get(
+    "/vendor/prices",
+    response_model=PricesOut,
+    summary="가견적 단가 · 근거 파일 (고치는 중 · 확인한 묶음, 고객에게 보이는 모습 예)",
+)
+async def prices(
+    trade: TradeParam,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PricesOut:
+    return await service.prices_for(s, vendor, trade)
+
+
+@router.put(
+    "/vendor/prices/{trade}",
+    response_model=PricesOut,
+    summary="가견적 단가 저장 (고치는 중인 묶음, 확인 전에는 고객에게 안 씀)",
+)
+async def save_prices(
+    trade: TradeParam,
+    data: PriceSetIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PricesOut:
+    return await service.save_prices(s, vendor, trade, data)
+
+
+@router.post(
+    "/vendor/prices/{trade}/confirm",
+    response_model=PricesOut,
+    summary="가견적 단가 확인했어요 (고치는 중 → 고객 가견적에 씀, 예전 묶음은 보관)",
+)
+async def confirm_prices(
+    trade: TradeParam,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PricesOut:
+    return await service.confirm_prices(s, vendor, trade)
+
+
+@router.post(
+    "/vendor/price-files",
+    status_code=201,
+    response_model=PriceFileOut,
+    summary="가견적 근거 파일 붙이기 (먼저 POST /files kind=price_doc)",
+)
+async def add_price_file(
+    data: PriceFileIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> PriceFileOut:
+    return await service.add_price_file(s, vendor, data)
+
+
+@router.delete("/vendor/price-files/{file_id}", status_code=204, summary="가견적 근거 파일 빼기")
+async def remove_price_file(
+    file_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    await service.remove_price_file(s, vendor, file_id)
     return Response(status_code=204)

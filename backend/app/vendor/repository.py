@@ -5,12 +5,16 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
+from app.files.models import File
 from app.vendor.models import (
     Vendor,
     VendorArea,
     VendorFaq,
     VendorLink,
     VendorPortfolio,
+    VendorPriceFile,
+    VendorPriceLine,
+    VendorPriceSet,
     VendorTrade,
 )
 
@@ -175,3 +179,78 @@ async def approved_ids(
             cond.append(VendorArea.sgg == sgg)
         q = q.where(select(VendorArea.vendor_id).where(*cond).exists())
     return list((await s.execute(q.order_by(Vendor.reviewed_at, Vendor.user_id))).scalars().all())
+
+
+async def price_sets(
+    s: AsyncSession, vendor_ids: list[uuid.UUID], trade: str, statuses: tuple[str, ...]
+) -> list[VendorPriceSet]:
+    q = select(VendorPriceSet).where(
+        VendorPriceSet.vendor_id.in_(vendor_ids),
+        VendorPriceSet.trade == trade,
+        VendorPriceSet.status.in_(statuses),
+    )
+    # 같은 요청 안에서 상태를 바꾼 뒤 다시 읽을 때 예전 값이 남지 않게
+    q = q.execution_options(populate_existing=True)
+    return list((await s.execute(q)).scalars().all())
+
+
+async def price_lines(s: AsyncSession, set_ids: list[uuid.UUID]) -> dict[uuid.UUID, list]:
+    out: dict[uuid.UUID, list[VendorPriceLine]] = {i: [] for i in set_ids}
+    q = select(VendorPriceLine).where(VendorPriceLine.set_id.in_(set_ids))
+    for ln in (await s.execute(q)).scalars():
+        out[ln.set_id].append(ln)
+    return out
+
+
+async def next_price_version(s: AsyncSession, vendor_id: uuid.UUID, trade: str) -> int:
+    top = await s.scalar(
+        select(func.max(VendorPriceSet.version)).where(
+            VendorPriceSet.vendor_id == vendor_id, VendorPriceSet.trade == trade
+        )
+    )
+    return (top or 0) + 1
+
+
+async def replace_price_lines(
+    s: AsyncSession, set_id: uuid.UUID, lines: list[VendorPriceLine]
+) -> None:
+    await s.execute(delete(VendorPriceLine).where(VendorPriceLine.set_id == set_id))
+    s.add_all(lines)
+
+
+async def set_price_status(
+    s: AsyncSession,
+    vendor_id: uuid.UUID,
+    trade: str,
+    *,
+    to: str,
+    allowed_from: str,
+    at: datetime | None = None,
+    set_id: uuid.UUID | None = None,
+) -> int:
+    """지금 상태가 allowed_from인 묶음만 바꾼다. 바뀐 행 수를 돌려준다."""
+    q = update(VendorPriceSet).where(
+        VendorPriceSet.vendor_id == vendor_id,
+        VendorPriceSet.trade == trade,
+        VendorPriceSet.status == allowed_from,
+    )
+    if set_id is not None:
+        q = q.where(VendorPriceSet.id == set_id)
+    values = {"status": to} | ({"confirmed_at": at} if at is not None else {})
+    res = await s.execute(q.values(**values).execution_options(synchronize_session=False))
+    return res.rowcount
+
+
+async def price_files(
+    s: AsyncSession, vendor_ids: list[uuid.UUID], trade: str | None = None
+) -> list[tuple[VendorPriceFile, File]]:
+    """근거 파일과 파일 정보(이름 · 형식 · 크기). 파일 표는 읽기 조인에만 쓴다."""
+    q = (
+        select(VendorPriceFile, File)
+        .join(File, File.id == VendorPriceFile.file_id)
+        .where(VendorPriceFile.vendor_id.in_(vendor_ids))
+        .order_by(VendorPriceFile.created_at, VendorPriceFile.file_id)
+    )
+    if trade:
+        q = q.where(VendorPriceFile.trade == trade)
+    return [(pf, f) for pf, f in (await s.execute(q)).all()]

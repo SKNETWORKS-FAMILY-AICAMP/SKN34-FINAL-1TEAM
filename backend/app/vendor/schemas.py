@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -237,3 +238,108 @@ class ProfileOut(PublicProfileOut):
     address: str | None
     site_url: str | None
     contact_url: str | None
+
+
+UNIT_PRICE_MAX = 10_000_000
+
+
+class PriceLineIn(BaseModel):
+    """표준 행 단가 한 줄: unit_price(원, 부가세 빼고) 또는 included_in(같은 묶음의 다른 줄 키)"""
+
+    key: str = Field(max_length=20)
+    unit_price: int | None = Field(default=None, ge=0, le=UNIT_PRICE_MAX)
+    included_in: str | None = Field(default=None, max_length=20)
+    source_file_id: uuid.UUID | None = Field(default=None, description="근거 파일 (선택)")
+
+    @model_validator(mode="after")
+    def _one(self) -> "PriceLineIn":
+        if (self.unit_price is None) == (self.included_in is None):
+            raise ValueError("단가를 넣거나 '다른 줄에 포함'을 골라 주세요.")
+        if self.included_in == self.key:
+            raise ValueError("자기 줄에는 포함할 수 없어요.")
+        return self
+
+
+class PriceSetIn(BaseModel):
+    """고치는 중인 단가 묶음(draft) 통째로 저장. 확인하기 전에는 고객에게 쓰지 않는다."""
+
+    lines: list[PriceLineIn] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def _unique(self) -> "PriceSetIn":
+        if len({ln.key for ln in self.lines}) != len(self.lines):
+            raise ValueError("같은 줄을 두 번 넣었어요.")
+        return self
+
+
+class PriceLineOut(BaseModel):
+    key: str
+    unit_price: int | None
+    included_in: str | None
+    source_file_id: uuid.UUID | None
+
+
+class EstimateLineOut(BaseModel):
+    key: str = Field(description="표준견적서 줄 키")
+    price_key: str = Field(description="업체 단가 키 (도배지는 paper_basic · paper_economy)")
+    name: str
+    unit: str
+    qty: Decimal
+    unit_price: int | None = Field(description="다른 줄에 포함이면 비어 있다")
+    included_in: str | None
+    included_in_name: str | None = Field(description="포함한 줄 이름 (도배지 (실크))")
+    amount: int
+    source: str | None = Field(description="근거 파일 이름")
+
+
+class EstimateOut(BaseModel):
+    """가견적 (믿집 계산): 업체 단가 × 표준견적서 수량. 금액은 원, 부가세는 따로."""
+
+    lines: list[EstimateLineOut]
+    supply: int
+    vat: int
+    total: int
+    missing: list[str] = Field(description="업체 단가가 없어 뺀 표준 행 키")
+    left_out: list[str] = Field(description="업체 단가를 받지 않는 줄이라 뺀 키 (짐 있는 집 할증)")
+
+
+class PriceSetOut(BaseModel):
+    id: uuid.UUID
+    version: int
+    status: str
+    created_at: datetime
+    confirmed_at: datetime | None
+    lines: list[PriceLineOut]
+    example: EstimateOut = Field(description="고객에게 보이는 모습 · 32평 아파트(빈 집) 예")
+
+
+class PriceRowOut(BaseModel):
+    key: str
+    name: str
+    unit: str
+
+
+class PriceFileIn(BaseModel):
+    """가견적 근거 파일 붙이기. 파일은 먼저 POST /files (kind=price_doc)로 올린다."""
+
+    file_id: uuid.UUID
+    trade: Trade
+
+
+class PriceFileOut(BaseModel):
+    file_id: uuid.UUID
+    trade: str
+    filename: str
+    content_type: str
+    size: int
+    created_at: datetime
+
+
+class PricesOut(BaseModel):
+    """업체 정보 '03 가견적에 쓸 견적서': 단가를 넣는 표준 행 · 근거 파일 · 고치는 중 · 확인한 묶음"""
+
+    trade: str
+    rows: list[PriceRowOut]
+    files: list[PriceFileOut]
+    draft: PriceSetOut | None
+    confirmed: PriceSetOut | None
