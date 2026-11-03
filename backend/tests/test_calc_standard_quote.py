@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.calc.common import Money, from_entered, with_vat
+from app.calc.common import Money, add_money, from_entered, with_vat
 from app.calc.quote_diff import budget_gap, percent_vs
 from app.calc.standard_quote import house_area, house_pyeong
 from app.refprice.holidays import HOLIDAYS, LAST_YEAR, days_off
@@ -52,6 +52,12 @@ def test_entered_amount_by_vat_mode():
         from_entered(-5, "excluded")
     with pytest.raises(ValueError):
         from_entered(5, "half")  # type: ignore[arg-type]
+
+
+def test_add_money_sums_each_column():
+    rows = [from_entered(150_000, "excluded"), from_entered(55_000, "included")]
+    assert add_money(rows) == Money(200_000, 20_000, 220_000)
+    assert add_money([]) == Money(0, 0, 0)
 
 
 def test_percent_vs_standard():

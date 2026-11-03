@@ -40,6 +40,7 @@ erDiagram
   deals ||--o{ date_requests : "다른 날짜 요청"
   deals ||--o{ date_proposals : "날짜 올림"
   deals ||--o{ extra_charges : "추가 금액"
+  extra_charges ||--o{ extra_charge_files : "공사 사진"
   deals ||--o{ plan_steps : ""
 ```
 
@@ -78,7 +79,8 @@ erDiagram
 | deal_events | 0013_v2_deal | deal · `from_status`(만들 때 NULL) · `to_status` · by(지우면 NULL) · note ≤300 · at |
 | date_requests | 0015_v2_dates | deal · reason · `wish_dates date[]`(1~3) · due_at · status(open · answered · withdrawn). 부분 UQ(deal) where open |
 | date_proposals | 0015_v2_dates · 0016_v2_date_change | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending. change는 이유 또는 답한 요청이 있음(0016) |
-| extra_charges | 0017_v2_extra | deal · title · reason · vat_mode · entered_amount · supply · vat · total · ack(pending · ok · talk) · acked_at |
+| extra_charges | 0017_v2_extra | deal · title ≤40 · reason ≤300 · vat_mode · entered_amount(0~10억) · supply · vat · total(calc from_entered, total = supply + vat, 면세면 vat 0) · ack(pending · ok · talk) · acked_at(ack ≠ pending일 때만) · by · created_at. 고치지 않고 새로 올린다 |
+| extra_charge_files | 0017_v2_extra | (extra, file) PK, file UQ, sort 0~4(5장까지). files.kind = work_photo |
 | project_checks | 0018_v2_checks | (project, key) PK · done_at · by |
 
 ## 상태와 허용 전이

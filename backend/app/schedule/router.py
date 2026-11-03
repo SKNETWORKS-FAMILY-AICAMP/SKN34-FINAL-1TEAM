@@ -3,6 +3,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,18 +14,21 @@ from app.schedule import service
 from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
     AcceptIn,
+    AckIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
     DateRequestIn,
     DatesIn,
     DealOut,
+    ExtraIn,
     InboxPageOut,
     JobOut,
     PlanOut,
     PlanRedo,
     PreviewOut,
     ScheduleOut,
+    TradeExtrasOut,
 )
 from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
@@ -231,3 +235,66 @@ async def propose_dates(
     s: AsyncSession = Depends(get_session),
 ) -> JobOut:
     return await service.propose_dates(s, vendor, deal_id, data, today_seoul())
+
+
+# ---- 공사 중 추가 금액 ----
+
+
+@router.post(
+    "/vendor/jobs/{deal_id}/extras",
+    status_code=201,
+    response_model=JobOut,
+    summary="추가 금액 알리기 (공사 날짜 수락 뒤 공사하는 동안, 고치지 않고 새로 올린다)",
+)
+async def add_extra(
+    deal_id: uuid.UUID,
+    data: ExtraIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> JobOut:
+    return await service.add_extra(s, vendor, deal_id, data, today_seoul())
+
+
+@router.get(
+    "/vendor/jobs/{deal_id}/extras/{extra_id}/files/{file_id}",
+    summary="추가 금액 공사 사진 (내 공사만)",
+)
+async def vendor_extra_photo(
+    deal_id: uuid.UUID,
+    extra_id: uuid.UUID,
+    file_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    return await service.vendor_extra_photo(s, vendor, deal_id, extra_id, file_id)
+
+
+@router.post(
+    "/projects/{project_id}/deals/{deal_id}/extras/{extra_id}/ack",
+    response_model=TradeExtrasOut,
+    summary="추가 금액에 답하기: 확인했어요 · 업체와 이야기할게요 (한 번만)",
+)
+async def ack_extra(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    extra_id: uuid.UUID,
+    data: AckIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> TradeExtrasOut:
+    return await service.ack_extra(s, user, project_id, deal_id, extra_id, data)
+
+
+@router.get(
+    "/projects/{project_id}/deals/{deal_id}/extras/{extra_id}/files/{file_id}",
+    summary="추가 금액 공사 사진 (내 집만)",
+)
+async def customer_extra_photo(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    extra_id: uuid.UUID,
+    file_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    return await service.customer_extra_photo(s, user, project_id, deal_id, extra_id, file_id)

@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.quote.schemas import QuoteBriefOut
-from app.schedule.models import CREW_MAX, WISH_MAX
+from app.schedule.models import CREW_MAX, EXTRA_AMOUNT_MAX, EXTRA_PHOTOS_MAX, WISH_MAX
 from app.visit.schemas import CompareOut, VendorVisitDetailOut, VendorVisitRow
 
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
@@ -56,6 +56,9 @@ class PlanOut(BaseModel):
     days: list[PlanDayOut]
     changes: list["PlanChangeOut"] = Field(
         default=[], description="확정 공정표: 수락 기다리는 새 날짜마다 바꾸면 어떻게 되는지"
+    )
+    extras: list["TradeExtrasOut"] = Field(
+        default=[], description="확정 공정표: 공정마다 업체가 알린 추가 금액 (확정 금액과 따로)"
     )
 
 
@@ -119,6 +122,7 @@ class InboxRowOut(VendorVisitRow):
     proposed_days: int | None = Field(default=None, description="날짜를 낸 뒤 지난 날 (공사 탭)")
     wish_dates: list[date] = Field(default=[], description="다른 날짜 요청: 고객이 고른 시작일")
     request_due_at: datetime | None = Field(default=None, description="다른 날짜 요청에 답할 기한")
+    extras_pending: int = Field(default=0, description="고객 확인을 기다리는 추가 금액 수")
 
 
 class InboxPageOut(BaseModel):
@@ -206,6 +210,7 @@ class TradeDatesOut(BaseModel):
     start_options: list[StartOptionOut] = Field(
         description="다른 날짜 요청 후보: 겹치지 않는 첫날부터, 같은 기간으로 끝나는 날"
     )
+    extras: "TradeExtrasOut"
 
 
 class HolidayOut(BaseModel):
@@ -250,6 +255,7 @@ class JobOut(BaseModel):
     request_options: list[StartOptionOut] = Field(
         description="수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 같은 기간으로 끝나는 날"
     )
+    extras: "TradeExtrasOut"
 
 
 class AcceptIn(BaseModel):
@@ -317,4 +323,79 @@ class PlanChangeOut(BaseModel):
     days: list[PlanDayOut]
 
 
+# ---- 공사 중 추가 금액 ----
+
+
+class ExtraIn(BaseModel):
+    """업체가 추가 금액 알리기. 한 번 올리면 고치지 않는다(잘못 올렸으면 새로 올린다)."""
+
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)] = (
+        Field(description="한 일")
+    )
+    reason: Reason = Field(description="이유 (고객에게 보여요)")
+    entered_amount: int = Field(ge=0, le=EXTRA_AMOUNT_MAX, description="업체가 적은 금액 (원)")
+    vat_mode: Literal["included", "excluded", "exempt"] = Field(
+        default="excluded", description="부가세 빼고 적은 금액이 기본 (면세 업체는 면세만)"
+    )
+    file_ids: list[uuid.UUID] = Field(
+        default=[],
+        max_length=EXTRA_PHOTOS_MAX,
+        description="공사 사진 (POST /files kind=work_photo)",
+    )
+
+    @model_validator(mode="after")
+    def _distinct(self):
+        if len(set(self.file_ids)) != len(self.file_ids):
+            raise ValueError("같은 사진을 두 번 붙였어요.")
+        return self
+
+
+class AckIn(BaseModel):
+    ack: Literal["ok", "talk"] = Field(description="확인했어요 · 업체와 이야기할게요")
+
+
+class MoneyOut(BaseModel):
+    supply: int
+    vat: int
+    total: int = Field(description="부가세 포함")
+
+
+class ExtraPhotoOut(BaseModel):
+    file_id: uuid.UUID
+    filename: str
+    content_type: str
+    size: int
+
+
+class ExtraOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    reason: str
+    vat_mode: str
+    entered_amount: int
+    supply: int
+    vat: int
+    total: int = Field(description="고객에게 보이는 금액 (부가세 포함, 믿집 계산)")
+    ack: Literal["pending", "ok", "talk"] = Field(
+        description="확인 기다림 · 확인했어요 · 업체와 이야기 중"
+    )
+    acked_at: datetime | None
+    created_at: datetime
+    photos: list[ExtraPhotoOut]
+
+
+class TradeExtrasOut(BaseModel):
+    """한 공정의 추가 금액. 합계는 계산 엔진이 더한다 (확정 금액에 넣지 않는다)."""
+
+    trade: str
+    deal_id: uuid.UUID
+    vendor_name: str
+    items: list[ExtraOut] = Field(description="올린 순")
+    ok: MoneyOut = Field(description="고객이 확인한 것")
+    pending: MoneyOut = Field(description="확인을 기다리는 것")
+    talk: MoneyOut = Field(description="업체와 이야기 중인 것")
+
+
 PlanOut.model_rebuild()
+TradeDatesOut.model_rebuild()
+JobOut.model_rebuild()

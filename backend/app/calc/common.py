@@ -3,6 +3,7 @@
 금액은 원 정수이고 반올림은 won() 한 곳에서만 한다. 면적 · 길이는 소수 한 자리, 품 · 기간은 0.5 단위로 올린다.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Literal, Protocol
@@ -115,3 +116,9 @@ def from_entered(amount: int, mode: VatMode, rate: Decimal = VAT_RATE) -> Money:
     if mode == "exempt":
         return Money(amount, 0, amount)
     raise ValueError("부가세 방식을 다시 골라 주세요")
+
+
+def add_money(items: Iterable[Money]) -> Money:
+    """금액 여러 줄의 공급가 · 부가세 · 합계를 각각 더한다 (줄마다 이미 원 단위라 반올림하지 않는다)."""
+    rows = list(items)
+    return Money(sum(m.supply for m in rows), sum(m.vat for m in rows), sum(m.total for m in rows))

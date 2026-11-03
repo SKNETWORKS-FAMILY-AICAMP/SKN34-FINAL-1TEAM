@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -268,3 +269,61 @@ class DateProposal(Base):
     by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# 공사 중 추가 금액: 업체가 알리고 고객이 확인(ok) 또는 이야기하자(talk). 믿집은 기록 · 알림만 한다
+ACKS = ("pending", "ok", "talk")
+EXTRA_AMOUNT_MAX = 1_000_000_000  # 실측 견적서 금액 한도와 같다
+EXTRA_PHOTOS_MAX = 5
+
+
+class ExtraCharge(Base):
+    """추가 금액 한 줄. 업체가 적은 금액 · 부가세 방식으로 계산 엔진(from_entered)이 공급가 · 부가세 ·
+    합계를 만든다. 한 번 올리면 고치지 않는다(잘못 올렸으면 새로 올린다). 확정 금액 합계에 넣지 않는다."""
+
+    __tablename__ = "extra_charges"
+    __table_args__ = (
+        CheckConstraint("length(btrim(title)) > 0", name="title"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+        CheckConstraint("vat_mode in ('included', 'excluded', 'exempt')", name="vat_mode"),
+        CheckConstraint(f"entered_amount between 0 and {EXTRA_AMOUNT_MAX}", name="entered_amount"),
+        CheckConstraint(
+            "supply >= 0 and vat >= 0 and total = supply + vat"
+            " and (vat_mode <> 'exempt' or vat = 0)"
+            " and (case when vat_mode = 'excluded' then supply else total end) = entered_amount",
+            name="amounts",
+        ),
+        CheckConstraint("ack in ('pending', 'ok', 'talk')", name="ack"),
+        CheckConstraint("(ack = 'pending') = (acked_at is null)", name="acked"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid7)
+    deal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str] = mapped_column(String(300))
+    vat_mode: Mapped[str] = mapped_column(String(10))
+    entered_amount: Mapped[int] = mapped_column(BigInteger)
+    supply: Mapped[int] = mapped_column(BigInteger)
+    vat: Mapped[int] = mapped_column(BigInteger)
+    total: Mapped[int] = mapped_column(BigInteger)
+    ack: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending")
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExtraChargeFile(Base):
+    """추가 금액에 붙인 공사 사진 (files.kind = work_photo). 사진 하나는 한 줄에만 붙는다."""
+
+    __tablename__ = "extra_charge_files"
+    __table_args__ = (CheckConstraint(f"sort between 0 and {EXTRA_PHOTOS_MAX - 1}", name="sort"),)
+
+    extra_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("extra_charges.id", ondelete="CASCADE"), primary_key=True
+    )
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, unique=True
+    )
+    sort: Mapped[int] = mapped_column(SmallInteger)

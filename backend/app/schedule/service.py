@@ -8,12 +8,13 @@ import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+from fastapi.responses import Response
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
-from app.calc.common import FORMULA_VERSION
+from app.calc.common import FORMULA_VERSION, Money, add_money, from_entered
 from app.calc.schedule import (
     JOB_MAX_DAYS,
     WEEKEND,
@@ -31,6 +32,8 @@ from app.calc.schedule import (
     trade_days,
     workdays,
 )
+from app.files import service as files_service
+from app.files.models import File
 from app.notify import service as notify_service
 from app.project import service as project_service
 from app.project.schemas import ProjectOut
@@ -42,12 +45,15 @@ from app.schedule.models import (
     DateRequest,
     Deal,
     DealEvent,
+    ExtraCharge,
+    ExtraChargeFile,
     Plan,
     PlanDay,
     PlanStep,
 )
 from app.schedule.schemas import (
     AcceptIn,
+    AckIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
@@ -55,11 +61,15 @@ from app.schedule.schemas import (
     DateRequestOut,
     DatesIn,
     DealOut,
+    ExtraIn,
+    ExtraOut,
+    ExtraPhotoOut,
     FitOut,
     HolidayOut,
     InboxPageOut,
     InboxRowOut,
     JobOut,
+    MoneyOut,
     NeedOut,
     OtherTradeOut,
     PlanBlockOut,
@@ -73,6 +83,7 @@ from app.schedule.schemas import (
     StartOptionOut,
     StepNeedOut,
     TradeDatesOut,
+    TradeExtrasOut,
 )
 from app.shared.clock import now_utc
 from app.shared.errors import AppError
@@ -466,6 +477,7 @@ async def vendor_inbox(
     rows = await visit_service.rows_for(s, [d.visit_id for d in deals], today)
     ids = [d.id for d in deals]
     pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
+    waiting = await _extras_pending(s, ids)
     now = now_utc()
     items = []
     for d in deals:
@@ -488,6 +500,7 @@ async def vendor_inbox(
                 proposed_days=days_since(x.created_at, today) if x else None,
                 wish_dates=list(r.wish_dates) if r else [],
                 request_due_at=r.due_at if r else None,
+                extras_pending=waiting.get(d.id, 0),
             )
         )
     return InboxPageOut(items=items, next_before=None)
@@ -725,6 +738,7 @@ async def schedule_for(
         await _changed(s, ids),
     )
     accepted = [d for d in deals if d.status in AFTER_DATES_ACCEPTED and d.start_date]
+    extras = await _extras(s, deals)
     trades = []
     for d, out in zip(deals, outs, strict=True):
         x, r = pend.get(d.id), reqs.get(d.id)
@@ -755,6 +769,7 @@ async def schedule_for(
                 requests_left=REQUESTS_MAX - d.date_request_count,
                 fit=fit,
                 start_options=options,
+                extras=extras[d.id],
             )
         )
     final = await _latest(s, p.id, "final")
@@ -946,6 +961,7 @@ async def _final_out(
         blocks=blocks,
         days=days,
         changes=changes,
+        extras=list((await _extras(s, deals)).values()),
     )
 
 
@@ -1166,6 +1182,7 @@ async def job_for(s: AsyncSession, vendor: User, deal_id: uuid.UUID, today: date
         request=_request_out(r, now) if r else None,
         requests_left=REQUESTS_MAX - d.date_request_count,
         request_options=_request_options(d, r, weekend),
+        extras=(await _extras(s, [d]))[d.id],
     )
 
 
@@ -1284,3 +1301,224 @@ async def propose_dates(
         await s.rollback()
         raise AppError(409, "stale", STALE) from exc
     return await job_for(s, vendor, deal_id, today)
+
+
+# ---- 공사 중 추가 금액: 업체가 알리고 고객이 확인하거나 이야기하자고 한다. 결제 · 계약은 하지 않는다 ----
+
+EXTRA_OPEN = ("scheduled", "fixing")  # 공사 날짜를 수락한 뒤 · 남은 일을 하는 동안
+
+
+def _money(m: Money) -> MoneyOut:
+    return MoneyOut(supply=m.supply, vat=m.vat, total=m.total)
+
+
+async def _extras(s: AsyncSession, deals: list[Deal]) -> dict[uuid.UUID, TradeExtrasOut]:
+    """공사마다 추가 금액 · 확인한 것 · 기다리는 것 · 이야기 중인 것 합계(계산 엔진)"""
+    ids = [d.id for d in deals]
+    rows = []
+    photos: dict[uuid.UUID, list[ExtraPhotoOut]] = {}
+    if ids:
+        q = select(ExtraCharge).where(ExtraCharge.deal_id.in_(ids)).order_by(ExtraCharge.created_at)
+        rows = list((await s.execute(q.execution_options(populate_existing=True))).scalars())
+    if rows:
+        q = (
+            select(ExtraChargeFile, File)
+            .join(File, File.id == ExtraChargeFile.file_id)
+            .where(ExtraChargeFile.extra_id.in_([x.id for x in rows]))
+            .order_by(ExtraChargeFile.sort)
+        )
+        for link, f in (await s.execute(q)).all():
+            photos.setdefault(link.extra_id, []).append(
+                ExtraPhotoOut(
+                    file_id=f.id, filename=f.filename, content_type=f.content_type, size=f.size
+                )
+            )
+    out = {}
+    for d in deals:
+        mine = [x for x in rows if x.deal_id == d.id]
+
+        def sum_of(ack: str, mine=mine) -> MoneyOut:
+            return _money(add_money(Money(x.supply, x.vat, x.total) for x in mine if x.ack == ack))
+
+        out[d.id] = TradeExtrasOut(
+            trade=d.trade,
+            deal_id=d.id,
+            vendor_name=d.vendor_name,
+            items=[
+                ExtraOut(
+                    id=x.id,
+                    title=x.title,
+                    reason=x.reason,
+                    vat_mode=x.vat_mode,
+                    entered_amount=x.entered_amount,
+                    supply=x.supply,
+                    vat=x.vat,
+                    total=x.total,
+                    ack=x.ack,
+                    acked_at=x.acked_at,
+                    created_at=x.created_at,
+                    photos=photos.get(x.id, []),
+                )
+                for x in mine
+            ],
+            ok=sum_of("ok"),
+            pending=sum_of("pending"),
+            talk=sum_of("talk"),
+        )
+    return out
+
+
+async def _extras_pending(s: AsyncSession, deal_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    if not deal_ids:
+        return {}
+    q = (
+        select(ExtraCharge.deal_id, func.count())
+        .where(ExtraCharge.deal_id.in_(deal_ids), ExtraCharge.ack == "pending")
+        .group_by(ExtraCharge.deal_id)
+    )
+    return {deal_id: int(n) for deal_id, n in (await s.execute(q)).all()}
+
+
+async def add_extra(
+    s: AsyncSession, vendor: User, deal_id: uuid.UUID, data: ExtraIn, today: date
+) -> JobOut:
+    """업체가 추가 금액 알리기 (한 트랜잭션). 잠금 순서: 프로젝트 → 확정 → 사진 → 추가 금액.
+    금액은 업체가 적은 값이고 공급가 · 부가세 · 합계는 계산 엔진이 만든다. 고객 알림."""
+    d = await _vendor_deal(s, vendor, deal_id)
+    if await vendor_service.tax_kind_of(s, vendor.id) == "exempt" and data.vat_mode != "exempt":
+        raise AppError(422, "vat_mode", "면세 업체는 면세로만 적을 수 있어요.")
+    money = from_entered(data.entered_amount, data.vat_mode)
+    await project_service.lock(s, d.project_id)
+    d = await _lock_deal(s, d.id)
+    if d is None or d.vendor_id != vendor.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    if d.status == "reselected":
+        raise AppError(409, "invalid_state", "다시 고른 업체의 공사예요.")
+    if d.status not in EXTRA_OPEN:
+        raise AppError(
+            409, "invalid_state", "공사 날짜를 수락한 뒤 공사하는 동안에만 알릴 수 있어요."
+        )
+    files = await files_service.owned(s, vendor.id, data.file_ids, lock=True)
+    if any(i not in files or files[i].kind != "work_photo" for i in data.file_ids):
+        raise AppError(422, "file", "올린 공사 사진을 다시 확인해 주세요.")
+    used = "다른 추가 금액에 붙인 사진이에요."
+    if data.file_ids:
+        q = select(ExtraChargeFile.file_id).where(ExtraChargeFile.file_id.in_(data.file_ids))
+        if (await s.execute(q)).first():
+            raise AppError(409, "file_used", used)
+    owner = (await project_service.briefs(s, [d.project_id]))[d.project_id].owner_id
+    try:
+        x = ExtraCharge(
+            id=uuid7(),
+            deal_id=d.id,
+            title=data.title,
+            reason=data.reason,
+            vat_mode=data.vat_mode,
+            entered_amount=data.entered_amount,
+            supply=money.supply,
+            vat=money.vat,
+            total=money.total,
+            by_id=vendor.id,
+        )
+        s.add(x)
+        await s.flush()
+        s.add_all(
+            [ExtraChargeFile(extra_id=x.id, file_id=i, sort=n) for n, i in enumerate(data.file_ids)]
+        )
+        await notify_service.add(
+            s,
+            user_id=owner,
+            kind="extra_added",
+            body=f"{i_ga(d.vendor_name)} 추가 금액을 알렸어요 · {LABEL[d.trade]}",
+            link=f"/projects/{d.project_id}/plan",
+            dedup_key=f"extra:{x.id}",
+            project_id=d.project_id,
+        )
+        await s.commit()
+    except IntegrityError as exc:  # 사진 하나는 한 줄에만 (UQ)
+        await s.rollback()
+        raise AppError(409, "file_used", used) from exc
+    return await job_for(s, vendor, deal_id, today)
+
+
+async def ack_extra(
+    s: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    extra_id: uuid.UUID,
+    data: AckIn,
+) -> TradeExtrasOut:
+    """고객이 추가 금액에 답하기 (확인 기다림에서만 한 번). 잠금 순서: 프로젝트 → 확정 → 추가 금액."""
+    p = await project_service.get_for(s, user, project_id)
+    await project_service.lock(s, p.id)
+    d = await _lock_deal(s, deal_id)
+    if d is None or d.project_id != p.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    x = await s.get(ExtraCharge, extra_id, populate_existing=True)
+    if x is None or x.deal_id != d.id:
+        raise AppError(404, "not_found", "추가 금액을 찾을 수 없어요.")
+    answered = "이미 답한 추가 금액이에요."
+    if x.ack != "pending":
+        raise AppError(409, "invalid_state", answered)
+    res = await s.execute(
+        update(ExtraCharge)
+        .where(ExtraCharge.id == x.id, ExtraCharge.ack == "pending")
+        .values(ack=data.ack, acked_at=now_utc())
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        raise AppError(409, "invalid_state", answered)
+    if d.vendor_id is not None:
+        await notify_service.add(
+            s,
+            user_id=d.vendor_id,
+            kind="extra_acked",
+            body="고객이 추가 금액을 확인했어요"
+            if data.ack == "ok"
+            else "고객이 추가 금액을 이야기하고 싶어 해요",
+            link=f"/vendor/jobs/{d.id}",
+            dedup_key=f"extra:{x.id}:ack",
+        )
+    await s.commit()
+    return (await _extras(s, [d]))[d.id]
+
+
+async def _extra_photo(
+    s: AsyncSession, deal: Deal, extra_id: uuid.UUID, file_id: uuid.UUID
+) -> Response:
+    q = (
+        select(File)
+        .join(ExtraChargeFile, ExtraChargeFile.file_id == File.id)
+        .join(ExtraCharge, ExtraCharge.id == ExtraChargeFile.extra_id)
+        .where(
+            ExtraChargeFile.extra_id == extra_id,
+            ExtraChargeFile.file_id == file_id,
+            ExtraCharge.deal_id == deal.id,
+        )
+    )
+    f = (await s.execute(q)).scalar_one_or_none()
+    if f is None:
+        raise AppError(404, "not_found", "사진을 찾을 수 없어요.")
+    return await files_service.respond(f)
+
+
+async def customer_extra_photo(
+    s: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    extra_id: uuid.UUID,
+    file_id: uuid.UUID,
+) -> Response:
+    p = await project_service.get_for(s, user, project_id)
+    d = await s.get(Deal, deal_id)
+    if d is None or d.project_id != p.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    return await _extra_photo(s, d, extra_id, file_id)
+
+
+async def vendor_extra_photo(
+    s: AsyncSession, vendor: User, deal_id: uuid.UUID, extra_id: uuid.UUID, file_id: uuid.UUID
+) -> Response:
+    return await _extra_photo(s, await _vendor_deal(s, vendor, deal_id), extra_id, file_id)
