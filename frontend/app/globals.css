@@ -26,6 +26,9 @@
   --danger-weak: #fdecea;
   --ok: #1e6b4f;
   --ok-weak: #e3f3ec;
+  --kakao: #fee500;      /* 카카오 로그인 버튼 (카카오 디자인 가이드) */
+  --kakao-hover: #f5dc00;
+  --kakao-ink: #191919;
   --radius-s: 4px;  /* 칩 */
   --radius: 6px;    /* 버튼 · 입력 · 알림 상자 */
   --radius-l: 12px;
