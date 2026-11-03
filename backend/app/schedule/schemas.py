@@ -60,6 +60,9 @@ class PlanOut(BaseModel):
     extras: list["TradeExtrasOut"] = Field(
         default=[], description="확정 공정표: 공정마다 업체가 알린 추가 금액 (확정 금액과 따로)"
     )
+    deals: list["DealOut"] = Field(
+        default=[], description="확정 공정표: 공정마다 공사 상태 · 끝낸 날 · 연락처 기한 · 남은 일"
+    )
 
 
 class PlanRedo(BaseModel):
@@ -91,7 +94,11 @@ class DealOut(BaseModel):
     )
     start_date: date | None
     end_date: date | None
-    work_done_on: date | None
+    work_done_on: date | None = Field(description="업체가 마지막으로 '공사 끝냈어요'를 올린 날")
+    contact_until: date | None = Field(
+        description="서로 연락처가 보이는 마지막 날 (끝냈다고 올린 날 + 1년)"
+    )
+    fixing_note: str | None = Field(description="남은 일 (고객이 적은 글, 남은 일 상태일 때)")
 
 
 class ConfirmOut(BaseModel):
@@ -123,6 +130,9 @@ class InboxRowOut(VendorVisitRow):
     wish_dates: list[date] = Field(default=[], description="다른 날짜 요청: 고객이 고른 시작일")
     request_due_at: datetime | None = Field(default=None, description="다른 날짜 요청에 답할 기한")
     extras_pending: int = Field(default=0, description="고객 확인을 기다리는 추가 금액 수")
+    work_done_on: date | None = None
+    contact_until: date | None = Field(default=None, description="고객 연락처가 보이는 마지막 날")
+    fixing_note: str | None = Field(default=None, description="고객이 알린 남은 일")
 
 
 class InboxPageOut(BaseModel):
@@ -256,6 +266,13 @@ class JobOut(BaseModel):
         description="수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 같은 기간으로 끝나는 날"
     )
     extras: "TradeExtrasOut"
+    accepted_crew: int | None = Field(description="수락한 날짜의 하루 작업 인원")
+    work_done_on: date | None
+    contact_until: date | None
+    fixing_note: str | None
+    can_finish: bool = Field(
+        description="'공사 끝냈어요'를 누를 수 있는지 (마지막 공사일부터, 공사 중 · 남은 일일 때)"
+    )
 
 
 class AcceptIn(BaseModel):
@@ -399,3 +416,10 @@ class TradeExtrasOut(BaseModel):
 PlanOut.model_rebuild()
 TradeDatesOut.model_rebuild()
 JobOut.model_rebuild()
+
+
+class CheckIn(BaseModel):
+    """고객이 공사 끝남 확인: 끝났어요(done) 또는 남은 일이 있어요(fixing, 남은 일 필수)"""
+
+    result: Literal["done", "fixing"]
+    note: Reason | None = Field(default=None, description="남은 일 (fixing일 때 필수)")

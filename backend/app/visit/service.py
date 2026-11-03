@@ -983,3 +983,12 @@ async def reselect(
     out = await close_for_reselect(s, p.id, data.trade, user)
     await s.commit()
     return out
+
+
+async def set_contact_until(s: AsyncSession, visit_id: uuid.UUID, until: date) -> None:
+    """확정한 요청의 연락처 기한을 적는다 (업체가 '공사 끝냈어요'를 올릴 때마다 새로).
+    서로 연락처를 보여도 되는지는 contact_visible이 이 값으로 정한다. commit은 부르는 쪽이."""
+    if not await repo.set_status(
+        s, visit_id, allowed_from=("chosen",), values={"contact_until": until}
+    ):
+        raise AppError(409, "stale", "그사이 상태가 바뀌었어요. 새로 불러올게요.")

@@ -20,6 +20,7 @@ from app.calc.schedule import (
     WEEKEND,
     Dated,
     TradePlan,
+    contact_until,
     count_workdays,
     days_since,
     due_at,
@@ -54,6 +55,7 @@ from app.schedule.models import (
 from app.schedule.schemas import (
     AcceptIn,
     AckIn,
+    CheckIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
@@ -311,6 +313,7 @@ async def _deal_out(
     contacts = await vendor_service.contacts(s, shown)
     ids = [d.id for d in deals]
     pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
+    notes = await _fixing_notes(s, [d.id for d in deals if d.status == "fixing"])
     return [
         DealOut(
             id=d.id,
@@ -327,6 +330,8 @@ async def _deal_out(
             start_date=d.start_date,
             end_date=d.end_date,
             work_done_on=d.work_done_on,
+            contact_until=visits[d.visit_id].contact_until if d.visit_id in visits else None,
+            fixing_note=notes.get(d.id),
         )
         for d in deals
     ]
@@ -463,6 +468,8 @@ async def vendor_inbox(
     limit: int,
 ) -> InboxPageOut:
     """업체 작업함. 공사 탭은 확정한 공사(끝남 · 다시 고르기 빼고), 확정한 순 최근 먼저."""
+    if tab == "done":
+        return await _done_tab(s, vendor, today, before, limit)
     if tab != "jobs":
         page = await visit_service.inbox(s, vendor, tab, today, before, limit)
         return InboxPageOut(
@@ -475,9 +482,14 @@ async def vendor_inbox(
     )
     deals = list((await s.execute(q)).scalars().all())
     rows = await visit_service.rows_for(s, [d.visit_id for d in deals], today)
+    until = {
+        v.id: v.contact_until
+        for v in (await visit_service.visits_by_id(s, [d.visit_id for d in deals])).values()
+    }
     ids = [d.id for d in deals]
     pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
     waiting = await _extras_pending(s, ids)
+    notes = await _fixing_notes(s, [d.id for d in deals if d.status == "fixing"])
     now = now_utc()
     items = []
     for d in deals:
@@ -501,6 +513,9 @@ async def vendor_inbox(
                 wish_dates=list(r.wish_dates) if r else [],
                 request_due_at=r.due_at if r else None,
                 extras_pending=waiting.get(d.id, 0),
+                work_done_on=d.work_done_on,
+                contact_until=until.get(d.visit_id),
+                fixing_note=notes.get(d.id),
             )
         )
     return InboxPageOut(items=items, next_before=None)
@@ -513,7 +528,12 @@ async def vendor_summary(s: AsyncSession, vendor: User) -> InboxSummaryOut:
         .select_from(Deal)
         .where(Deal.vendor_id == vendor.id, Deal.status.in_(OPEN_DEALS))
     )
-    return base.model_copy(update={"jobs": int(n or 0)})
+    done = await s.scalar(
+        select(func.count())
+        .select_from(Deal)
+        .where(Deal.vendor_id == vendor.id, Deal.status == "done")
+    )
+    return base.model_copy(update={"jobs": int(n or 0), "done": base.done + int(done or 0)})
 
 
 # ---- 공사 날짜: 업체가 내고 고객이 수락하거나 다른 날짜를 요청한다. 날짜 · 기간 · 기한은 calc가 만든다 ----
@@ -962,6 +982,9 @@ async def _final_out(
         days=days,
         changes=changes,
         extras=list((await _extras(s, deals)).values()),
+        deals=await _deal_out(
+            s, sorted(deals, key=lambda d: ORDER.index(d.trade)), today, now_utc()
+        ),
     )
 
 
@@ -1183,6 +1206,11 @@ async def job_for(s: AsyncSession, vendor: User, deal_id: uuid.UUID, today: date
         requests_left=REQUESTS_MAX - d.date_request_count,
         request_options=_request_options(d, r, weekend),
         extras=(await _extras(s, [d]))[d.id],
+        accepted_crew=(await _accepted_crews(s, [d.id])).get(d.id),
+        work_done_on=d.work_done_on,
+        contact_until=out.contact_until,
+        fixing_note=out.fixing_note,
+        can_finish=d.status in FINISHABLE and d.end_date is not None and today >= d.end_date,
     )
 
 
@@ -1522,3 +1550,161 @@ async def vendor_extra_photo(
     s: AsyncSession, vendor: User, deal_id: uuid.UUID, extra_id: uuid.UUID, file_id: uuid.UUID
 ) -> Response:
     return await _extra_photo(s, await _vendor_deal(s, vendor, deal_id), extra_id, file_id)
+
+
+# ---- 공사 끝냈어요 · 고객 확인 · 남은 일: 연락처는 업체가 마지막으로 끝냈다고 올린 날부터 1년 ----
+
+FINISHABLE = ("scheduled", "fixing")  # 공사 중 · 남은 일
+
+
+async def _fixing_notes(s: AsyncSession, deal_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """남은 일: 공사마다 가장 최근에 고객이 적은 글"""
+    if not deal_ids:
+        return {}
+    q = (
+        select(DealEvent)
+        .where(DealEvent.deal_id.in_(deal_ids), DealEvent.to_status == "fixing")
+        .order_by(DealEvent.deal_id, DealEvent.at.desc())
+    )
+    out: dict[uuid.UUID, str] = {}
+    for e in (await s.execute(q)).scalars():
+        if e.note:
+            out.setdefault(e.deal_id, e.note)
+    return out
+
+
+async def finish(s: AsyncSession, vendor: User, deal_id: uuid.UUID, today: date) -> JobOut:
+    """업체 '공사 끝냈어요' · '남은 일 다 했어요' (한 트랜잭션). 잠금 순서: 프로젝트 → 확정 → 요청 행.
+    마지막 공사일부터. 확정 → checking, 끝낸 날 = 오늘, 연락처 기한 = 오늘 + 1년(calc),
+    수락 기다리던 날짜 바꾸기는 닫는다. 고객 알림."""
+    d = await _vendor_deal(s, vendor, deal_id)
+    await project_service.lock(s, d.project_id)
+    d = await _lock_deal(s, d.id)
+    if d is None or d.vendor_id != vendor.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    if d.status == "checking":
+        raise AppError(409, "invalid_state", "이미 끝냈다고 올렸어요. 고객 확인을 기다려요.")
+    if d.status == "done":
+        raise AppError(409, "invalid_state", "고객이 확인해서 끝난 공사예요.")
+    if d.status not in FINISHABLE:
+        raise AppError(409, "invalid_state", "공사 날짜를 수락한 뒤에 올릴 수 있어요.")
+    if d.end_date is None or today < d.end_date:
+        raise AppError(409, "too_early", "마지막 공사일부터 누를 수 있어요.")
+    again = d.status == "fixing"
+    now = now_utc()
+    await _set(s, Deal, d.id, d.status, {"status": "checking", "work_done_on": today})
+    ev = DealEvent(
+        id=uuid7(), deal_id=d.id, from_status=d.status, to_status="checking", by_id=vendor.id
+    )
+    s.add(ev)
+    await _close_dates(s, d.id, now)  # 끝낸 뒤에는 날짜를 바꾸지 않는다
+    await visit_service.set_contact_until(s, d.visit_id, contact_until(today))
+    owner = (await project_service.briefs(s, [d.project_id]))[d.project_id].owner_id
+    who = i_ga(d.vendor_name)
+    body = (
+        f"{who} 남은 일을 다 했다고 알렸어요 · 확인해 주세요"
+        if again
+        else f"{who} 공사를 끝냈다고 알렸어요 · 확인해 주세요"
+    )
+    await notify_service.add(
+        s,
+        user_id=owner,
+        kind="work_done",
+        body=body,
+        link=f"/projects/{d.project_id}/plan",
+        dedup_key=f"deal_event:{ev.id}",  # 끝냄 · 확인은 여러 번 오갈 수 있어 이력마다
+        project_id=d.project_id,
+    )
+    await s.commit()
+    return await job_for(s, vendor, deal_id, today)
+
+
+async def check_work(
+    s: AsyncSession,
+    user: User,
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    data: CheckIn,
+    today: date,
+) -> DealOut:
+    """고객이 공사 끝남 확인 (끝냈다고 올린 뒤에만): 끝났어요 → done, 남은 일이 있어요 → fixing(남은 일
+    글은 이력 note). 잠금 순서: 프로젝트 → 확정. 업체 알림."""
+    p = await project_service.get_for(s, user, project_id)
+    if data.result == "fixing" and data.note is None:
+        raise AppError(422, "note", "남은 일을 적어 주세요.")
+    await project_service.lock(s, p.id)
+    d = await _lock_deal(s, deal_id)
+    if d is None or d.project_id != p.id:
+        raise AppError(404, "not_found", NO_DEAL)
+    if d.status != "checking":
+        raise AppError(409, "invalid_state", "업체가 공사를 끝냈다고 올린 뒤에 확인할 수 있어요.")
+    await _set(s, Deal, d.id, "checking", {"status": data.result})
+    ev = DealEvent(
+        id=uuid7(),
+        deal_id=d.id,
+        from_status="checking",
+        to_status=data.result,
+        by_id=user.id,
+        note=data.note if data.result == "fixing" else None,
+    )
+    s.add(ev)
+    if d.vendor_id is not None:
+        await notify_service.add(
+            s,
+            user_id=d.vendor_id,
+            kind="work_checked",
+            body="고객이 공사 끝남을 확인했어요"
+            if data.result == "done"
+            else f"고객이 남은 일이 있대요 · {LABEL[d.trade]}",
+            link=f"/vendor/jobs/{d.id}",
+            dedup_key=f"deal_event:{ev.id}",  # 끝냄 · 확인은 여러 번 오갈 수 있어 이력마다
+        )
+    await s.commit()
+    d = await s.get(Deal, d.id, populate_existing=True)
+    (out,) = await _deal_out(s, [d], today, now_utc())
+    return out
+
+
+async def _done_tab(
+    s: AsyncSession, vendor: User, today: date, before: datetime | None, limit: int
+) -> InboxPageOut:
+    """끝남 탭: 닫히거나 받지 않은 요청 + 고객이 확인해 끝난 공사, 끝난 때 최근 순으로 limit씩."""
+    page = await visit_service.inbox(s, vendor, "done", today, before, limit)
+    at = (
+        select(DealEvent.deal_id, func.max(DealEvent.at).label("at"))
+        .where(DealEvent.to_status == "done")
+        .group_by(DealEvent.deal_id)
+        .subquery()
+    )
+    q = (
+        select(Deal, at.c.at)
+        .join(at, at.c.deal_id == Deal.id)
+        .where(Deal.vendor_id == vendor.id, Deal.status == "done")
+    )
+    if before is not None:
+        q = q.where(at.c.at < before)
+    pairs = list((await s.execute(q.order_by(at.c.at.desc()).limit(limit))).all())
+    rows = await visit_service.rows_for(s, [d.visit_id for d, _ in pairs], today)
+    until = {
+        v.id: v.contact_until
+        for v in (await visit_service.visits_by_id(s, [d.visit_id for d, _ in pairs])).values()
+    }
+    items = [InboxRowOut(**r.model_dump()) for r in page.items] + [
+        InboxRowOut(
+            **{**rows[d.visit_id].model_dump(), "closed_at": done_at},
+            deal_id=d.id,
+            deal_status=d.status,
+            confirmed_at=d.created_at,
+            dates_due_at=d.dates_due_at,
+            start_date=d.start_date,
+            end_date=d.end_date,
+            work_done_on=d.work_done_on,
+            contact_until=until.get(d.visit_id),
+        )
+        for d, done_at in pairs
+        if d.visit_id in rows
+    ]
+    items.sort(key=lambda r: r.closed_at, reverse=True)
+    items = items[:limit]
+    more = len(items) == limit
+    return InboxPageOut(items=items, next_before=items[-1].closed_at if more else None)

@@ -15,6 +15,7 @@ from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
     AcceptIn,
     AckIn,
+    CheckIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
@@ -298,3 +299,34 @@ async def customer_extra_photo(
     s: AsyncSession = Depends(get_session),
 ) -> Response:
     return await service.customer_extra_photo(s, user, project_id, deal_id, extra_id, file_id)
+
+
+# ---- 공사 끝냈어요 · 고객 확인 ----
+
+
+@router.post(
+    "/vendor/jobs/{deal_id}/done",
+    response_model=JobOut,
+    summary="공사 끝냈어요 · 남은 일 다 했어요 (마지막 공사일부터, 연락처는 오늘부터 1년)",
+)
+async def finish(
+    deal_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> JobOut:
+    return await service.finish(s, vendor, deal_id, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/deals/{deal_id}/check",
+    response_model=DealOut,
+    summary="공사 끝남 확인: 끝났어요 · 남은 일이 있어요 (업체가 끝냈다고 올린 뒤에만)",
+)
+async def check_work(
+    project_id: uuid.UUID,
+    deal_id: uuid.UUID,
+    data: CheckIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> DealOut:
+    return await service.check_work(s, user, project_id, deal_id, data, today_seoul())
