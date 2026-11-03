@@ -239,8 +239,11 @@ class DateProposal(Base):
         # 통화로 정했으면 통화한 날이 있다
         CheckConstraint("(method = 'call') = (call_on is not null)", name="call_on"),
         CheckConstraint("reason is null or length(btrim(reason)) > 0", name="reason"),
-        # 확정한 날짜를 바꿀 때(change)는 이유가 있다
-        CheckConstraint("kind = 'initial' or reason is not null", name="change_reason"),
+        # 확정한 날짜를 바꿀 때(change)는 이유가 있다. 고객 요청에 답한 것이면 요청에 이유가 있다
+        CheckConstraint(
+            "kind = 'initial' or reason is not null or request_id is not null",
+            name="change_reason",
+        ),
         CheckConstraint("plan_version is null or plan_version >= 1", name="plan_version"),
         CheckConstraint("(status = 'pending') = (decided_at is null)", name="decided"),
     )

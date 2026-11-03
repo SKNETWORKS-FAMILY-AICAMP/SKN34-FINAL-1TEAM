@@ -15,6 +15,7 @@ from app.calc.schedule import (
     count_workdays,
     days_since,
     due_at,
+    fix_plan,
     free_range,
     lay_out,
     order_conflicts,
@@ -59,6 +60,65 @@ def test_example_house_matches_the_plan():
     assert by_day[date(2026, 11, 21)].kind == "off"
     assert by_day[date(2026, 11, 23)].names == ("마감 · 확인 · 청소",)
     assert len(plan.days) == 11
+
+
+def test_fixed_dates_place_blocks_and_push_dry_and_clean():
+    off = days_off(date(2026, 11, 1), date(2026, 12, 31))
+    # 목공만 수락(11.16~11.18), 도배는 날짜 없음 → 목공 다음 일하는 날부터 계산한 기간
+    plan = fix_plan(
+        example(), {"mokgong": (date(2026, 11, 16), date(2026, 11, 18))}, date(2026, 11, 2), off
+    )
+    work = [(b.trade, b.start, b.end, b.days) for b in plan.blocks if b.kind == "work"]
+    assert work == [
+        ("mokgong", date(2026, 11, 16), date(2026, 11, 18), 3),
+        ("dobae", date(2026, 11, 19), date(2026, 11, 23), 3),
+    ]
+    assert plan == lay_out(example(), date(2026, 11, 16), off)  # 계산한 자리와 같으면 같은 공정표
+    # 도배를 11.24(화) ~ 11.26(목)으로 바꾸면 건조 · 청소가 같이 밀린다
+    moved = fix_plan(
+        example(),
+        {
+            "mokgong": (date(2026, 11, 16), date(2026, 11, 18)),
+            "dobae": (date(2026, 11, 24), date(2026, 11, 26)),
+        },
+        date(2026, 11, 2),
+        off,
+    )
+    by = {b.kind if b.trade is None else b.trade: b for b in moved.blocks}
+    assert (by["dobae"].start, by["dobae"].end, by["dobae"].days) == (
+        date(2026, 11, 24),
+        date(2026, 11, 26),
+        3,
+    )
+    assert (by["dry"].start, by["dry"].end) == (date(2026, 11, 27), date(2026, 11, 28))
+    assert (by["clean"].start, moved.end) == (date(2026, 11, 29), date(2026, 11, 29))
+    days = {t.day: t for t in moved.days}
+    assert days[date(2026, 11, 19)].kind == "off"  # 목공 · 도배 사이 빈 날
+    assert days[date(2026, 11, 26)].names == ("마감 · 확인 · 청소",)
+    assert moved.work_days == 6
+
+
+def test_fixed_range_longer_or_shorter_than_the_steps():
+    steps = [Step("paper", "바르기", 3), Step("finish", "마감", 1)]  # 반나절 4개 = 2일
+    long = fix_plan(
+        [TradePlan("dobae", steps, 4)],
+        {"dobae": (date(2026, 11, 16), date(2026, 11, 19))},
+        date(2026, 11, 16),
+    )
+    names = [t.names for t in long.days if t.kind == "work"]
+    assert names == [("바르기",), ("바르기",), ("바르기",), ("마감",)]  # 4일에 나눠 놓는다
+    short = fix_plan(
+        [TradePlan("dobae", steps, 4)],
+        {"dobae": (date(2026, 11, 16), date(2026, 11, 16))},
+        date(2026, 11, 16),
+    )
+    assert [t.names for t in short.days if t.kind == "work"] == [("바르기", "마감")]
+    with pytest.raises(ValueError):  # 주말뿐인 날짜
+        fix_plan(
+            [TradePlan("dobae", steps, 4)],
+            {"dobae": (date(2026, 11, 21), date(2026, 11, 22))},
+            date(2026, 11, 16),
+        )
 
 
 def test_next_trade_starts_after_a_holiday():

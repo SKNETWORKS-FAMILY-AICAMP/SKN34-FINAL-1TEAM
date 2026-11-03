@@ -12,7 +12,7 @@ from app.calc.schedule import due_at, workdays
 from app.db import SessionLocal
 from app.refprice.holidays import HOLIDAYS, days_off
 from app.schedule import service
-from app.schedule.schemas import DatesIn
+from app.schedule.schemas import AcceptIn, DatesIn
 from app.shared.clock import today_seoul
 from app.shared.errors import AppError
 from tests.conftest import BACKEND, query
@@ -23,6 +23,7 @@ from tests.test_visit_inbox import login
 TODAY = today_seoul()
 OFF = days_off(TODAY, TODAY + timedelta(days=400))
 WEEKEND_DAY = TODAY + timedelta(days=(5 - TODAY.weekday()) % 7 or 7)  # 다음 토요일
+SEEN0 = {"seen_version": 0}  # 확정 공정표가 아직 없을 때 본 버전
 HOLIDAY = next(d for d in sorted(HOLIDAYS) if d > TODAY + timedelta(days=1) and d.weekday() < 5)
 
 
@@ -155,9 +156,9 @@ def test_propose_again_then_accept(api):
     assert t["fit"]["conflicts"] == [] and len(t["start_options"]) == 5
     assert all(o["start"] != c for o in t["start_options"])
     base = f"/projects/{pid}/deals/{did}/dates"
-    old = api.post(f"{base}/{first['id']}/accept")
+    old = api.post(f"{base}/{first['id']}/accept", json=SEEN0)
     assert old.status_code == 409 and old.json()["error"]["code"] == "dates_changed"
-    ok = api.post(f"{base}/{second['id']}/accept")
+    ok = api.post(f"{base}/{second['id']}/accept", json=SEEN0)
     assert ok.status_code == 200, ok.text
     (t,) = ok.json()["trades"]
     assert (
@@ -186,7 +187,7 @@ def test_propose_again_then_accept(api):
             "dedup_key": f"date_proposal:{second['id']}:accepted",
         }
     ]
-    again = api.post(f"{base}/{second['id']}/accept")
+    again = api.post(f"{base}/{second['id']}/accept", json=SEEN0)
     assert again.status_code == 409 and again.json()["error"]["code"] == "invalid_state"
     assert api.post(f"/projects/{pid}/deals/{did}/reselect").status_code == 409
 
@@ -263,7 +264,9 @@ def test_request_answer_and_two_requests_only(api):
     t = sched(api, pid)
     assert (t["requests_left"], t["request"]) == (0, None)
     assert (
-        api.post(f"/projects/{pid}/deals/{did}/dates/{t['proposal']['id']}/accept").status_code
+        api.post(
+            f"/projects/{pid}/deals/{did}/dates/{t['proposal']['id']}/accept", json=SEEN0
+        ).status_code
         == 200
     )
 
@@ -278,7 +281,10 @@ def test_open_request_is_closed_when_the_customer_accepts(api):
         ).status_code
         == 201
     )
-    assert api.post(f"/projects/{pid}/deals/{did}/dates/{p1['id']}/accept").status_code == 200
+    assert (
+        api.post(f"/projects/{pid}/deals/{did}/dates/{p1['id']}/accept", json=SEEN0).status_code
+        == 200
+    )
     assert query("select status from date_requests")[0]["status"] == "withdrawn"
 
 
@@ -354,7 +360,7 @@ def test_overlap_can_be_sent_but_not_accepted(api):
     t = api.get(f"/projects/{pid}/schedule").json()["trades"][1]
     assert t["deal"]["trade"] == "dobae" and t["fit"]["conflicts"][0]["vendor_name"] == "바름집수리"
     assert t["start_options"][0]["start"] == after  # 겹치지 않는 첫날부터
-    r = api.post(f"/projects/{pid}/deals/{did}/dates/{t['proposal']['id']}/accept")
+    r = api.post(f"/projects/{pid}/deals/{did}/dates/{t['proposal']['id']}/accept", json=SEEN0)
     assert (
         r.status_code == 409
         and r.json()["error"]["message"] == "겹치는 날이 있어 수락할 수 없어요."
@@ -417,7 +423,9 @@ def test_two_accepts_at_once_only_one_wins(api):
     async def go():
         async with SessionLocal() as s:
             user = await s.get(User, me)
-            return await service.accept_dates(s, user, uuid.UUID(pid), uuid.UUID(did), x, TODAY)
+            return await service.accept_dates(
+                s, user, uuid.UUID(pid), uuid.UUID(did), x, AcceptIn(seen_version=0), TODAY
+            )
 
     results = _run_both(go, go)
     errors = [r for r in results if isinstance(r, AppError)]
@@ -436,7 +444,9 @@ def test_accept_and_propose_again_at_once(api):
     async def accept():
         async with SessionLocal() as s:
             user = await s.get(User, me)
-            return await service.accept_dates(s, user, uuid.UUID(pid), uuid.UUID(did), x, TODAY)
+            return await service.accept_dates(
+                s, user, uuid.UUID(pid), uuid.UUID(did), x, AcceptIn(seen_version=0), TODAY
+            )
 
     async def again():
         async with SessionLocal() as s:
@@ -465,7 +475,7 @@ def test_only_my_jobs_and_my_home(api):
     )
     customer_calls = (
         lambda: api.get(f"/projects/{pid}/schedule"),
-        lambda: api.post(f"/projects/{pid}/deals/{did}/dates/{x}/accept"),
+        lambda: api.post(f"/projects/{pid}/deals/{did}/dates/{x}/accept", json=SEEN0),
         lambda: api.post(
             f"/projects/{pid}/deals/{did}/date-requests", json={"wish_dates": [days(28)[0]]}
         ),
@@ -475,8 +485,14 @@ def test_only_my_jobs_and_my_home(api):
     assert all(c().status_code == 403 for c in customer_calls)  # 업체 → 고객 API
     use(api, customer)
     assert all(c().status_code == 403 for c in vendor_calls)  # 고객 → 업체 API
-    assert api.post(f"/projects/{pid}/deals/{did}/dates/{uuid.uuid4()}/accept").status_code == 404
-    assert api.post(f"/projects/{pid}/deals/{uuid.uuid4()}/dates/{x}/accept").status_code == 404
+    assert (
+        api.post(f"/projects/{pid}/deals/{did}/dates/{uuid.uuid4()}/accept", json=SEEN0).status_code
+        == 404
+    )
+    assert (
+        api.post(f"/projects/{pid}/deals/{uuid.uuid4()}/dates/{x}/accept", json=SEEN0).status_code
+        == 404
+    )
     signup(api, "other@mitjip.test")
     assert all(c().status_code == 404 for c in customer_calls)  # 남의 집
     make_admin(api)

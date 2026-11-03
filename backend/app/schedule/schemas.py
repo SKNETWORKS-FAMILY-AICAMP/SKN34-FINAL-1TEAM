@@ -10,8 +10,13 @@ from app.schedule.models import CREW_MAX, WISH_MAX
 from app.visit.schemas import CompareOut, VendorVisitDetailOut, VendorVisitRow
 
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
-# 공사 날짜 상태: 아직 안 냄 · 냄(수락 기다림) · 다른 날짜 요청 열림 · 수락함(이후 공사 상태) · 다시 고름
-DatesState = Literal["waiting", "proposed", "requested", "scheduled", "closed"]
+# 공사 날짜 상태: 아직 안 냄 · 냄(수락 기다림) · 다른 날짜 요청 열림 · 수락함 · 다시 고름
+# 수락한 뒤 날짜 바꾸기: 고객이 바꾸기 요청(change_requested) · 새 날짜 수락 기다림(change_proposed)
+DatesState = Literal[
+    "waiting", "proposed", "requested", "scheduled", "change_requested", "change_proposed", "closed"
+]
+# 공정표 칸: 확정(수락한 날짜) · 수락 전(낸 날짜) · 예상(날짜 없는 공정 · 건조 · 청소)
+BlockState = Literal["confirmed", "pending", "expected"]
 
 
 class PlanBlockOut(BaseModel):
@@ -23,6 +28,9 @@ class PlanBlockOut(BaseModel):
     days: int
     crew: int | None
     man_day: Decimal | None
+    state: BlockState = "expected"
+    deal_id: uuid.UUID | None = None
+    vendor_name: str | None = None
 
 
 class PlanDayOut(BaseModel):
@@ -31,6 +39,7 @@ class PlanDayOut(BaseModel):
     kind: str
     names: list[str]
     holiday: str | None
+    state: BlockState = "expected"
 
 
 class PlanOut(BaseModel):
@@ -45,6 +54,9 @@ class PlanOut(BaseModel):
     computed_at: datetime
     blocks: list[PlanBlockOut]
     days: list[PlanDayOut]
+    changes: list["PlanChangeOut"] = Field(
+        default=[], description="확정 공정표: 수락 기다리는 새 날짜마다 바꾸면 어떻게 되는지"
+    )
 
 
 class PlanRedo(BaseModel):
@@ -205,6 +217,9 @@ class ScheduleOut(BaseModel):
     project_id: uuid.UUID
     weekend_work: bool = Field(description="주말에도 공사 (아니면 토 · 일은 쉬는 날)")
     holidays: list[HolidayOut] = Field(description="오늘부터 180일 안의 공휴일")
+    final_version: int = Field(
+        description="확정 공정표 최신 버전 (없으면 0). 수락할 때 그대로 보낸다"
+    )
     trades: list[TradeDatesOut] = Field(description="목공 → 도배 순, 확정한 공정만")
 
 
@@ -232,6 +247,15 @@ class JobOut(BaseModel):
     proposal: ProposalOut | None
     request: DateRequestOut | None
     requests_left: int
+    request_options: list[StartOptionOut] = Field(
+        description="수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 같은 기간으로 끝나는 날"
+    )
+
+
+class AcceptIn(BaseModel):
+    seen_version: int = Field(
+        ge=0, description="화면이 본 확정 공정표 버전 (없으면 0). 그사이 바뀌었으면 409"
+    )
 
 
 class DatesIn(BaseModel):
@@ -241,7 +265,14 @@ class DatesIn(BaseModel):
     end: date
     crew: int = Field(ge=1, le=CREW_MAX, description="하루 작업 인원")
     method: Literal["app", "call"] = Field(description="믿집에서 내기 · 고객과 통화로 정함")
+    kind: Literal["initial", "change"] = Field(
+        default="initial",
+        description="처음 내기 · 다시 내기(initial) 또는 수락한 날짜 바꾸기(change)",
+    )
     call_on: date | None = Field(default=None, description="통화로 정했으면 통화한 날 (필수)")
+    reason: Reason | None = Field(
+        default=None, description="수락한 날짜를 바꿀 때 이유 (고객 요청에 답할 때는 없어도 된다)"
+    )
     request_id: uuid.UUID | None = Field(
         default=None, description="화면이 본 열린 요청 (그사이 바뀌었으면 409)"
     )
@@ -267,3 +298,23 @@ class DateRequestIn(BaseModel):
         if len(set(self.wish_dates)) != len(self.wish_dates):
             raise ValueError("같은 날을 두 번 골랐어요.")
         return self
+
+
+class PlanChangeOut(BaseModel):
+    """수락한 날짜를 바꾸는 새 날짜: 지금 → 새 날짜, 바꾸면 건조 · 청소도 같이 밀린 공정표"""
+
+    trade: str
+    deal_id: uuid.UUID
+    vendor_name: str
+    current_start: date
+    current_end: date
+    proposal: ProposalOut
+    fit: FitOut
+    start: date
+    end: date
+    work_days: int
+    blocks: list[PlanBlockOut]
+    days: list[PlanDayOut]
+
+
+PlanOut.model_rebuild()

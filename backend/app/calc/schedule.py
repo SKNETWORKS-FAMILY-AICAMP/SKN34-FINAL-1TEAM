@@ -2,13 +2,14 @@
 
 - 공정 기간: 단계마다 반나절 단위로 센 것을 더해 하루 단위로 올린다(공정 계산이 단계를 만든다).
 - 잇기: 넘긴 순서대로 공정을 놓고, 뒤 공정은 앞 공정이 끝난 다음 일하는 날 시작한다.
+  날짜를 정한 공정(업체가 냄 · 고객이 수락함)은 그 날짜에 두고 단계를 그 안의 일하는 날에 나눈다.
   일하는 날은 주말 요일과 쉬는 날(공휴일)을 뺀 날이다. 짐 정리 단계는 처음 한 번만 둔다.
 - 도배가 있으면 끝난 다음 날부터 자연 건조(달력 날짜), 그다음 입주 청소(고객이 직접)를 둔다.
 - 기한: 기준 시각의 서울 날짜 + N일의 18:00(달력 날짜).
 - 연락처 기한: 업체가 마지막으로 '공사 끝냈어요'를 올린 날의 1년 뒤 같은 날(2월 29일이면 2월 28일).
 """
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Literal
@@ -103,6 +104,31 @@ def lay_out(
     weekend: Collection[int] = WEEKEND,
 ) -> Plan:
     """공정을 순서대로 하루 단위로 잇는다. trades가 비면 ValueError."""
+    return fix_plan(trades, {}, start, days_off, weekend)
+
+
+def _range_days(
+    d_from: date, d_to: date, days_off: Collection[date], weekend: Collection[int]
+) -> list[date]:
+    if d_to < d_from or (d_to - d_from).days > JOB_MAX_DAYS:
+        raise ValueError("공사 날짜 범위를 다시 확인해 주세요")
+    span = (d_from + timedelta(days=i) for i in range((d_to - d_from).days + 1))
+    days = [d for d in span if not is_off(d, days_off, weekend)]
+    if not days:
+        raise ValueError("정한 날짜 안에 일하는 날이 없어요")
+    return days
+
+
+def fix_plan(
+    trades: Sequence[TradePlan],
+    fixed: Mapping[str, tuple[date, date]],
+    start: date,
+    days_off: Collection[date] = (),
+    weekend: Collection[int] = WEEKEND,
+) -> Plan:
+    """공정을 순서대로 놓는다. fixed에 있는 공정은 그 날짜(업체가 낸 · 고객이 수락한 날짜)에 두고,
+    없는 공정은 앞 공정이 끝난 다음 일하는 날(첫 공정이면 start)부터 계산한 기간만큼 놓는다.
+    단계는 그 공정의 일하는 날에 반나절 비율로 나눠 놓는다. 건조 · 청소는 도배 · 마지막 작업 뒤."""
     if not trades:
         raise ValueError("공정이 하나 이상 있어야 해요")
     seen_prep = False
@@ -112,33 +138,36 @@ def lay_out(
     for tp in trades:
         steps = [s for s in tp.steps if not (s.key == "prep" and seen_prep)]
         seen_prep = seen_prep or any(s.key == "prep" for s in steps)
-        n = trade_days(steps)
-        days = workdays(cursor, n, days_off, weekend)
-        pos = 0
-        for s in steps:
-            for half in range(pos, pos + s.half_days):
-                d = days[half // 2]
-                names = tasks.setdefault(d, (tp.trade, "work", []))[2]
-                if s.name not in names:
-                    names.append(s.name)
-            pos += s.half_days
+        if tp.trade in fixed:
+            days = _range_days(*fixed[tp.trade], days_off, weekend)
+        else:
+            days = workdays(cursor, trade_days(steps), days_off, weekend)
+        halves = [s for s in steps for _ in range(s.half_days)]
+        n, total = len(days), len(halves)
+        for k, d in enumerate(days):
+            got = [halves[h] for h in range(total) if h * n // total == k]
+            for s in got or [halves[k * total // n]]:  # 날이 반나절보다 많으면 그때 하던 단계
+                entry = tasks.setdefault(d, (tp.trade, "work", []))
+                if entry[0] == tp.trade and s.name not in entry[2]:
+                    entry[2].append(s.name)
         blocks.append(Block(tp.trade, "work", "", days[0], days[-1], n, tp.crew))
         cursor = days[-1] + timedelta(days=1)
-    work_end = blocks[-1].end
-    if any(tp.trade == "dobae" for tp in trades):
-        dry_start = work_end + timedelta(days=1)
+    work_end = max(b.end for b in blocks)
+    dobae = next((b for b in blocks if b.trade == "dobae"), None)
+    if dobae is not None:
+        dry_start = dobae.end + timedelta(days=1)
         dry_end = dry_start + timedelta(days=DRY_DAYS - 1)
         blocks.append(Block(None, "dry", "자연 건조", dry_start, dry_end, DRY_DAYS, None))
         for i in range(DRY_DAYS):
             tasks[dry_start + timedelta(days=i)] = (None, "dry", ["창문을 닫고 자연 건조"])
-        work_end = dry_end
+        work_end = max(work_end, dry_end)
     clean_start = work_end + timedelta(days=1)
     clean_end = clean_start + timedelta(days=CLEAN_DAYS - 1)
     blocks.append(Block(None, "clean", "입주 청소", clean_start, clean_end, CLEAN_DAYS, None))
     for i in range(CLEAN_DAYS):
         tasks[clean_start + timedelta(days=i)] = (None, "clean", ["입주 청소 · 고객이 직접"])
 
-    first = blocks[0].start
+    first = min(b.start for b in blocks)
     out: list[DayTask] = []
     d = first
     while d <= clean_end:

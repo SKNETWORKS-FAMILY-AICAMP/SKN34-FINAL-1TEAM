@@ -12,6 +12,7 @@ from app.db import get_session
 from app.schedule import service
 from app.schedule.models import CREW_MAX
 from app.schedule.schemas import (
+    AcceptIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
@@ -37,14 +38,15 @@ Trade = Literal["dobae", "mokgong"]
 @router.get(
     "/projects/{project_id}/plan",
     response_model=PlanOut,
-    summary="공정표 (예상 공정표, 만든 사람 · 관리자)",
+    summary="공정표: 공사 날짜를 수락했으면 확정 공정표, 아니면 예상 공정표 (만든 사람 · 관리자)",
 )
 async def plan(
     project_id: uuid.UUID,
+    kind: Literal["expected", "final"] | None = None,
     user: User = Depends(current_user),
     s: AsyncSession = Depends(get_session),
 ) -> PlanOut:
-    return await service.plan_for(s, user, project_id, today_seoul())
+    return await service.plan_for(s, user, project_id, today_seoul(), kind)
 
 
 @router.post(
@@ -159,16 +161,19 @@ async def schedule(
 @router.post(
     "/projects/{project_id}/deals/{deal_id}/dates/{proposal_id}/accept",
     response_model=ScheduleOut,
-    summary="낸 공사 날짜 수락 (겹치면 409, 그사이 다시 냈으면 409 dates_changed)",
+    summary="낸 공사 날짜 · 새 날짜 수락 → 확정 공정표 새 버전 (겹침 · 다시 냄 · 공정표 바뀜은 409)",
 )
 async def accept_dates(
     project_id: uuid.UUID,
     deal_id: uuid.UUID,
     proposal_id: uuid.UUID,
+    data: AcceptIn,
     user: User = Depends(customer_only),
     s: AsyncSession = Depends(get_session),
 ) -> ScheduleOut:
-    return await service.accept_dates(s, user, project_id, deal_id, proposal_id, today_seoul())
+    return await service.accept_dates(
+        s, user, project_id, deal_id, proposal_id, data, today_seoul()
+    )
 
 
 @router.post(

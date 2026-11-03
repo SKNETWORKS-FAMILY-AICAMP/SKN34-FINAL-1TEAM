@@ -77,9 +77,9 @@ erDiagram
 | deals | 0013_v2_deal | project · trade · vendor(지우면 NULL) · vendor_name 사본 · visit(UQ) · `quote_id`(확정한 버전, 지우기 막음) · status(confirmed · scheduled · checking · fixing · done · reselected) · `dates_due_at`(calc due_at: 확정 + 2일 18:00) · start · end(함께, end ≥ start, scheduled부터 있음) · work_done_on(checking · fixing · done일 때만) · `date_request_count 0~2` · created_at. 부분 UQ(project, trade) where status ≠ reselected |
 | deal_events | 0013_v2_deal | deal · `from_status`(만들 때 NULL) · `to_status` · by(지우면 NULL) · note ≤300 · at |
 | date_requests | 0015_v2_dates | deal · reason · `wish_dates date[]`(1~3) · due_at · status(open · answered · withdrawn). 부분 UQ(deal) where open |
-| date_proposals | 0015_v2_dates | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending |
-| extra_charges | 0016_v2_extra | deal · title · reason · vat_mode · entered_amount · supply · vat · total · ack(pending · ok · talk) · acked_at |
-| project_checks | 0017_v2_checks | (project, key) PK · done_at · by |
+| date_proposals | 0015_v2_dates · 0016_v2_date_change | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending. change는 이유 또는 답한 요청이 있음(0016) |
+| extra_charges | 0017_v2_extra | deal · title · reason · vat_mode · entered_amount · supply · vat · total · ack(pending · ok · talk) · acked_at |
+| project_checks | 0018_v2_checks | (project, key) PK · done_at · by |
 
 ## 상태와 허용 전이
 
@@ -100,6 +100,7 @@ erDiagram
 - 3곳 한도: `project.service.lock_for_visit()`가 프로젝트 행을 잠그고 빈 slot을 고른다. 동시 요청은 slot 부분 UQ에 걸리고 409가 된다.
 - 확정 · 다시 올리기: `visits.quote_ver`가 '본 버전'일 때만 조건부로 바꾼다.
 - 두 공정 동시 수락: `plans` (project, final, 본 버전 + 1) UQ로 한쪽이 409.
+- 확정 공정표(final)는 날짜를 수락할 때마다 새 버전을 쌓는다. 수락한 공정 칸은 `plan_steps.deal_id`가 있고, 날짜 없는 공정 · 건조 · 청소는 예상 자리다.
 - 연락처 공개는 `visit.service` 한 곳에서 계산한다: requested · quoted, 또는 chosen이고 오늘 ≤ contact_until(없으면 공개).
 - contact_until = 업체가 마지막으로 '공사 끝냈어요'를 올린 날 + 1년(계산 엔진, 2/29 처리).
 - 가견적 = 업체의 confirmed 단가 묶음 × 이 집 표준견적서 수량(계산 엔진). 요청할 때 묶음 id와 합계를 visits에 고정한다.

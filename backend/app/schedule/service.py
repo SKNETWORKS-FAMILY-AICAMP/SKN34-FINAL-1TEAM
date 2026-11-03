@@ -6,6 +6,7 @@
 
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +22,7 @@ from app.calc.schedule import (
     count_workdays,
     days_since,
     due_at,
+    fix_plan,
     free_range,
     is_off,
     lay_out,
@@ -45,6 +47,7 @@ from app.schedule.models import (
     PlanStep,
 )
 from app.schedule.schemas import (
+    AcceptIn,
     CompareDealOut,
     ConfirmIn,
     ConfirmOut,
@@ -60,6 +63,7 @@ from app.schedule.schemas import (
     NeedOut,
     OtherTradeOut,
     PlanBlockOut,
+    PlanChangeOut,
     PlanDayOut,
     PlanOut,
     PlanRedo,
@@ -120,6 +124,41 @@ async def _latest(s: AsyncSession, project_id: uuid.UUID, kind: str) -> Plan | N
     return (await s.scalars(q)).first()
 
 
+def _add_parts(
+    s: AsyncSession,
+    row: Plan,
+    plan,
+    man_days: dict[str, Decimal],
+    deal_of: dict[str, uuid.UUID] | None = None,
+) -> None:
+    """공정표 칸 · 날짜별 할 일 행을 더한다. deal_of: 확정 공정표에서 수락한 공정의 업체 확정."""
+    deal_of = deal_of or {}
+    s.add_all(
+        [
+            PlanStep(
+                plan_id=row.id,
+                trade=b.trade,
+                kind=b.kind,
+                label=b.label or LABEL.get(b.trade or "", ""),
+                start_date=b.start,
+                end_date=b.end,
+                days=b.days,
+                crew=b.crew,
+                man_day=man_days.get(b.trade) if b.trade else None,
+                sort=i,
+                deal_id=deal_of.get(b.trade or ""),
+            )
+            for i, b in enumerate(plan.blocks)
+        ]
+    )
+    s.add_all(
+        [
+            PlanDay(plan_id=row.id, day=d.day, trade=d.trade, kind=d.kind, names=list(d.names))
+            for d in plan.days
+        ]
+    )
+
+
 async def _save(
     s: AsyncSession, p: ProjectOut, start: date, weekend_work: bool, prev: Plan | None
 ) -> None:
@@ -137,29 +176,7 @@ async def _save(
     )
     s.add(row)
     await s.flush()
-    s.add_all(
-        [
-            PlanStep(
-                plan_id=row.id,
-                trade=b.trade,
-                kind=b.kind,
-                label=b.label or LABEL.get(b.trade or "", ""),
-                start_date=b.start,
-                end_date=b.end,
-                days=b.days,
-                crew=b.crew,
-                man_day=man_days.get(b.trade) if b.trade else None,
-                sort=i,
-            )
-            for i, b in enumerate(plan.blocks)
-        ]
-    )
-    s.add_all(
-        [
-            PlanDay(plan_id=row.id, day=d.day, trade=d.trade, kind=d.kind, names=list(d.names))
-            for d in plan.days
-        ]
-    )
+    _add_parts(s, row, plan, man_days)
     try:
         await s.commit()
     except IntegrityError:  # 동시에 두 번 만들면 먼저 저장한 버전을 쓴다
@@ -219,10 +236,21 @@ async def _out(s: AsyncSession, plan: Plan) -> PlanOut:
     )
 
 
-async def plan_for(s: AsyncSession, user: User, project_id: uuid.UUID, today: date) -> PlanOut:
-    """GET /projects/{id}/plan: 만든 사람 · 관리자만. 지금은 예상 공정표를 보여 준다."""
+async def plan_for(
+    s: AsyncSession, user: User, project_id: uuid.UUID, today: date, kind: str | None = None
+) -> PlanOut:
+    """GET /projects/{id}/plan: 만든 사람 · 관리자만. 공사 날짜를 하나라도 수락했으면 확정 공정표,
+    아니면 예상 공정표. kind로 골라 볼 수 있다."""
     p = await project_service.get_for(s, user, project_id)
-    return await _out(s, await ensure_expected(s, p, today))
+    expected = await ensure_expected(s, p, today)
+    final = await _latest(s, p.id, "final")
+    if kind == "expected" or (kind is None and final is None):
+        return await _out(s, expected)
+    if final is None:
+        raise AppError(
+            404, "not_found", "확정 공정표가 아직 없어요. 공사 날짜를 수락하면 만들어져요."
+        )
+    return await _final_out(s, p, expected, final, today)
 
 
 async def redo(
@@ -521,20 +549,23 @@ async def _changed(s: AsyncSession, deal_ids: list[uuid.UUID]) -> set[uuid.UUID]
 def _state(d: Deal, pending: DateProposal | None, req: DateRequest | None) -> str:
     if d.status == "reselected":
         return "closed"
-    if d.status != "confirmed":
-        return "scheduled"
-    if req is not None:
-        return "requested"
-    return "proposed" if pending is not None else "waiting"
+    if d.status == "confirmed":
+        if req is not None:
+            return "requested"
+        return "proposed" if pending is not None else "waiting"
+    if d.status == "scheduled":  # 수락한 뒤 날짜 바꾸기
+        if req is not None:
+            return "change_requested"
+        if pending is not None:
+            return "change_proposed"
+    return "scheduled"
 
 
 def _overdue(d: Deal, pending: DateProposal | None, req: DateRequest | None, now: datetime) -> bool:
     """기한 지남(상태가 아님): 날짜를 아직 안 냈는데 확정 기한이 지났거나, 열린 요청의 기한이 지났다."""
-    if d.status != "confirmed":
-        return False
-    if req is not None:
+    if req is not None:  # 날짜 요청 · 바꾸기 요청 모두 기한이 있다
         return now > req.due_at
-    return pending is None and now > d.dates_due_at
+    return d.status == "confirmed" and pending is None and now > d.dates_due_at
 
 
 def _weekend(plan: Plan | None) -> tuple[int, ...]:
@@ -699,15 +730,20 @@ async def schedule_for(
         x, r = pend.get(d.id), reqs.get(d.id)
         others = [o for o in accepted if o.trade != d.trade]
         fit = _fit(d.trade, x.start_date, x.end_date, others, weekend, today) if x else None
+        # 요청 후보: 수락 전이면 낸 날짜, 수락 뒤면 지금 날짜와 같은 기간으로
+        base = (x.start_date, x.end_date) if x and d.status == "confirmed" else None
+        if d.status == "scheduled":
+            base = (d.start_date, d.end_date)
         options = []
-        if x is not None and fit is not None:
+        if base is not None:
             tomorrow = today + timedelta(days=1)
-            first = max(tomorrow, fit.start_from or tomorrow)
-            n = count_workdays(x.start_date, x.end_date, _off(x.start_date), weekend)
+            room = _fit(d.trade, *base, others, weekend, today)
+            first = max(tomorrow, room.start_from or tomorrow)
+            n = count_workdays(*base, _off(base[0]), weekend)
             options = [
                 StartOptionOut(start=a, end=b)
                 for a, b in start_choices(
-                    first, max(n, 1), OPTIONS, {x.start_date}, _off(first), weekend
+                    first, max(n, 1), OPTIONS, {base[0]}, _off(first), weekend
                 )
             ]
         trades.append(
@@ -721,11 +757,195 @@ async def schedule_for(
                 start_options=options,
             )
         )
+    final = await _latest(s, p.id, "final")
     return ScheduleOut(
         project_id=p.id,
         weekend_work=plan.weekend_work,
         holidays=_holidays(today),
+        final_version=final.version if final else 0,
         trades=trades,
+    )
+
+
+CHANGEABLE = ("confirmed", "scheduled")  # 공사 끝냈어요(24번) 전까지 날짜를 내고 바꾼다
+DONE_DATES = "공사를 끝냈다고 올린 뒤에는 날짜를 바꿀 수 없어요."
+
+
+def _changeable(d: Deal) -> None:
+    if d.status == "reselected":
+        raise AppError(409, "invalid_state", "다시 고른 업체의 공사예요.")
+    if d.status not in CHANGEABLE:
+        raise AppError(409, "invalid_state", DONE_DATES)
+
+
+def _iso(a: date, b: date) -> str:
+    return f"{a.isoformat()}~{b.isoformat()}"
+
+
+async def _accepted_crews(s: AsyncSession, deal_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """수락한 날짜의 하루 인원 (가장 최근에 수락한 것)"""
+    if not deal_ids:
+        return {}
+    q = (
+        select(DateProposal)
+        .where(DateProposal.deal_id.in_(deal_ids), DateProposal.status == "accepted")
+        .order_by(DateProposal.deal_id, DateProposal.decided_at.desc())
+    )
+    out: dict[uuid.UUID, int] = {}
+    for x in (await s.execute(q)).scalars():
+        out.setdefault(x.deal_id, x.crew)
+    return out
+
+
+def _compose(
+    p: ProjectOut,
+    fixed: dict[str, tuple[date, date]],
+    crews: dict[str, int],
+    expected: Plan,
+    today: date,
+):
+    """정한 날짜는 그대로, 날짜 없는 공정은 예상 자리에 놓은 공정표 (계산 엔진)"""
+    calcs = quote_service.calc_trades(p, crews)
+    trades = [TradePlan(c.trade, c.steps, c.crew) for c in calcs]
+    start = max(expected.start_date, today + timedelta(days=1))
+    off = _off(min([start, today] + [f[0] for f in fixed.values()]))
+    return fix_plan(trades, fixed, start, off, _weekend(expected)), {
+        c.trade: c.man_day for c in calcs
+    }
+
+
+def _plan_parts(plan, man_days, states: dict[str, str], deals: dict[str, Deal]):
+    blocks = [
+        PlanBlockOut(
+            trade=b.trade,
+            kind=b.kind,
+            label=b.label or LABEL.get(b.trade or "", ""),
+            start=b.start,
+            end=b.end,
+            days=b.days,
+            crew=b.crew,
+            man_day=man_days.get(b.trade) if b.trade else None,
+            state=states.get(b.trade or "", "expected"),
+            deal_id=deals[b.trade].id if b.trade in deals else None,
+            vendor_name=deals[b.trade].vendor_name if b.trade in deals else None,
+        )
+        for b in plan.blocks
+    ]
+    days = [
+        PlanDayOut(
+            day=d.day,
+            trade=d.trade,
+            kind=d.kind,
+            names=list(d.names),
+            holiday=HOLIDAYS.get(d.day),
+            state=states.get(d.trade or "", "expected"),
+        )
+        for d in plan.days
+    ]
+    return blocks, days
+
+
+async def _final_parts(s: AsyncSession, project_id: uuid.UUID):
+    """살아 있는 확정 · 수락한 확정 · 수락 기다리는 날짜 · 인원"""
+    q = select(Deal).where(Deal.project_id == project_id, Deal.status != "reselected")
+    deals = list((await s.execute(q.execution_options(populate_existing=True))).scalars().all())
+    accepted = [d for d in deals if d.status in AFTER_DATES_ACCEPTED and d.start_date]
+    ids = [d.id for d in deals]
+    pend = await _pending(s, ids)
+    crews = await _accepted_crews(s, [d.id for d in accepted])
+    return deals, accepted, pend, crews
+
+
+async def _save_final(
+    s: AsyncSession, p: ProjectOut, expected: Plan, seen: int, today: date
+) -> Plan:
+    """확정 공정표 새 버전 (부르는 쪽 트랜잭션 안, 확정 날짜를 바꾼 뒤). 본 버전이 최신이 아니면 409.
+    (project, final, version) UQ가 동시에 둘이 만드는 것도 막는다."""
+    latest = await _latest(s, p.id, "final")
+    if (latest.version if latest else 0) != seen:
+        raise AppError(409, "plan_changed", "공정표가 바뀌었어요. 새로 불러올게요.")
+    _, accepted, _, crews = await _final_parts(s, p.id)
+    fixed = {d.trade: (d.start_date, d.end_date) for d in accepted}
+    plan, man_days = _compose(
+        p, fixed, {d.trade: crews[d.id] for d in accepted if d.id in crews}, expected, today
+    )
+    row = Plan(
+        project_id=p.id,
+        kind="final",
+        version=seen + 1,
+        project_rev=p.rev,
+        formula_ver=FORMULA_VERSION,
+        start_date=plan.start,
+        end_date=plan.end,
+        work_days=plan.work_days,
+        weekend_work=expected.weekend_work,
+    )
+    s.add(row)
+    await s.flush()
+    _add_parts(s, row, plan, man_days, {d.trade: d.id for d in accepted})
+    return row
+
+
+async def _final_out(
+    s: AsyncSession, p: ProjectOut, expected: Plan, final: Plan, today: date
+) -> PlanOut:
+    """확정 공정표: 수락한 날짜(확정) · 수락 기다리는 첫 날짜(수락 전) · 날짜 없는 공정(예상)을
+    계산 엔진으로 얹는다. 수락한 날짜를 바꾸자는 새 날짜는 changes에 바꾼 뒤 모습으로."""
+    deals, accepted, pend, crews = await _final_parts(s, p.id)
+    by = {d.trade: d for d in deals}
+    fixed = {d.trade: (d.start_date, d.end_date) for d in accepted}
+    states = {d.trade: "confirmed" for d in accepted}
+    use = {d.trade: crews[d.id] for d in accepted if d.id in crews}
+    for d in deals:
+        x = pend.get(d.id)
+        if d.status == "confirmed" and x is not None:
+            fixed[d.trade], states[d.trade], use[d.trade] = (
+                (x.start_date, x.end_date),
+                "pending",
+                x.crew,
+            )
+    plan, man_days = _compose(p, fixed, use, expected, today)
+    blocks, days = _plan_parts(plan, man_days, states, by)
+    weekend = _weekend(expected)
+    changed = await _changed(s, [d.id for d in accepted])
+    changes = []
+    for d in accepted:
+        x = pend.get(d.id)
+        if x is None:
+            continue
+        moved = {**fixed, d.trade: (x.start_date, x.end_date)}
+        plan2, md2 = _compose(p, moved, {**use, d.trade: x.crew}, expected, today)
+        b2, d2 = _plan_parts(plan2, md2, {**states, d.trade: "pending"}, by)
+        others = [o for o in accepted if o.trade != d.trade]
+        changes.append(
+            PlanChangeOut(
+                trade=d.trade,
+                deal_id=d.id,
+                vendor_name=d.vendor_name,
+                current_start=d.start_date,
+                current_end=d.end_date,
+                proposal=_proposal_out(x, d.id in changed, weekend),
+                fit=_fit(d.trade, x.start_date, x.end_date, others, weekend, today),
+                start=plan2.start,
+                end=plan2.end,
+                work_days=plan2.work_days,
+                blocks=b2,
+                days=d2,
+            )
+        )
+    return PlanOut(
+        project_id=p.id,
+        kind="final",
+        version=final.version,
+        project_rev=final.project_rev,
+        start=plan.start,
+        end=plan.end,
+        work_days=plan.work_days,
+        weekend_work=expected.weekend_work,
+        computed_at=final.created_at,
+        blocks=blocks,
+        days=days,
+        changes=changes,
     )
 
 
@@ -735,13 +955,15 @@ async def accept_dates(
     project_id: uuid.UUID,
     deal_id: uuid.UUID,
     proposal_id: uuid.UUID,
+    data: AcceptIn,
     today: date,
 ) -> ScheduleOut:
-    """고객이 낸 날짜 수락 (한 트랜잭션): 프로젝트 · 확정 잠금 → 겹침 확인 → 날짜 pending → accepted →
-    확정 confirmed → scheduled + 공사 날짜 → 열린 요청 닫기 → 이력 · 알림. 확정 공정표는 22번."""
+    """고객이 낸 날짜 수락 (한 트랜잭션). 잠금 순서: 프로젝트 → 확정 → 제안 · 요청 → 공정표(insert).
+    처음이면 확정 confirmed → scheduled, 수락한 뒤 바꾸기면 scheduled 그대로 날짜만 바꾼다(이력 note).
+    열린 요청은 닫고, 확정 공정표 새 버전을 만든다(본 버전 + 1)."""
     p = await project_service.get_for(s, user, project_id)
-    plan = await _latest(s, p.id, "expected")
-    await project_service.lock_for_visit(s, p.id)  # 다른 공정 수락과 겹침 확인이 줄 선다
+    expected = await ensure_expected(s, p, today)
+    await project_service.lock_for_visit(s, p.id)  # 다른 공정 수락과 겹침 확인 · 버전이 줄 선다
     d = await _lock_deal(s, deal_id)
     if d is None or d.project_id != p.id:
         raise AppError(404, "not_found", NO_DEAL)
@@ -750,31 +972,35 @@ async def accept_dates(
         raise AppError(404, "not_found", "공사 날짜를 찾을 수 없어요.")
     if d.status == "reselected":
         raise AppError(409, "invalid_state", "다시 고른 업체의 날짜라 수락할 수 없어요.")
-    if d.status != "confirmed":
-        raise AppError(409, "invalid_state", "이미 공사 날짜를 수락했어요.")
+    if d.status not in CHANGEABLE:
+        raise AppError(409, "invalid_state", DONE_DATES)
     if x.status == "superseded":
         raise AppError(409, "dates_changed", "날짜가 바뀌었어요. 새 날짜를 확인해 주세요.")
+    if x.status == "accepted":
+        raise AppError(409, "invalid_state", "이미 공사 날짜를 수락했어요.")
     if x.status != "pending":
         raise AppError(409, "invalid_state", "수락할 수 없는 날짜예요.")
     if x.start_date < today:
         raise AppError(409, "start_passed", "시작일이 지났어요. 다른 날짜를 요청해 주세요.")
-    fit = _fit(
-        d.trade, x.start_date, x.end_date, await _others(s, p.id, d.trade), _weekend(plan), today
-    )
-    if fit.conflicts:
+    others = await _others(s, p.id, d.trade)
+    if _fit(d.trade, x.start_date, x.end_date, others, _weekend(expected), today).conflicts:
         raise AppError(409, "overlap", "겹치는 날이 있어 수락할 수 없어요.")
     now = now_utc()
+    first = d.status == "confirmed"
     try:
         await _set(s, DateProposal, x.id, "pending", {"status": "accepted", "decided_at": now})
-        await _set(
-            s,
-            Deal,
-            d.id,
-            "confirmed",
-            {"status": "scheduled", "start_date": x.start_date, "end_date": x.end_date},
-        )
+        dates = {"start_date": x.start_date, "end_date": x.end_date}
+        await _set(s, Deal, d.id, d.status, {"status": "scheduled", **dates})
         s.add(
-            DealEvent(deal_id=d.id, from_status="confirmed", to_status="scheduled", by_id=user.id)
+            DealEvent(
+                deal_id=d.id,
+                from_status=d.status,
+                to_status="scheduled",
+                by_id=user.id,
+                note=None
+                if first
+                else f"날짜 바꿈 {_iso(d.start_date, d.end_date)} → {_iso(x.start_date, x.end_date)}",
+            )
         )
         await s.execute(
             update(DateRequest)
@@ -782,19 +1008,22 @@ async def accept_dates(
             .values(status="withdrawn", closed_at=now)
             .execution_options(synchronize_session=False)
         )
+        await _save_final(s, p, expected, data.seen_version, today)
         if d.vendor_id is not None:
             await notify_service.add(
                 s,
                 user_id=d.vendor_id,
                 kind="dates_accepted",
-                body="고객이 공사 날짜를 수락했어요",
+                body="고객이 공사 날짜를 수락했어요"
+                if first
+                else "고객이 새 공사 날짜를 수락했어요",
                 link=f"/vendor/jobs/{d.id}",
                 dedup_key=f"date_proposal:{x.id}:accepted",
             )
         await s.commit()
-    except IntegrityError as exc:
+    except IntegrityError as exc:  # 확정 공정표 버전 UQ
         await s.rollback()
-        raise AppError(409, "stale", STALE) from exc
+        raise AppError(409, "plan_changed", "공정표가 바뀌었어요. 새로 불러올게요.") from exc
     return await schedule_for(s, user, project_id, today)
 
 
@@ -806,7 +1035,8 @@ async def request_dates(
     data: DateRequestIn,
     today: date,
 ) -> ScheduleOut:
-    """다른 날짜 요청 (2번까지): 낸 날짜는 그대로 두고 업체가 다음 날 18:00까지 새 날짜를 낸다."""
+    """다른 날짜 요청 · 수락한 날짜 바꾸기 요청 (합쳐 2번까지): 지금 날짜는 그대로 두고 업체가
+    다음 날 18:00까지 새 날짜를 낸다. 수락한 뒤에는 이유가 필수다."""
     p = await project_service.get_for(s, user, project_id)
     weekend = _weekend(await ensure_expected(s, p, today))
     off = _off(today)
@@ -819,9 +1049,11 @@ async def request_dates(
     d = await _lock_deal(s, deal_id)
     if d is None or d.project_id != p.id:
         raise AppError(404, "not_found", NO_DEAL)
-    if d.status != "confirmed":
-        raise AppError(409, "invalid_state", "공사 날짜를 수락하기 전에만 요청할 수 있어요.")
-    if (await _pending(s, [d.id])).get(d.id) is None:
+    _changeable(d)
+    change = d.status == "scheduled"
+    if change and data.reason is None:
+        raise AppError(422, "reason", "날짜를 바꾸고 싶은 이유를 적어 주세요.")
+    if not change and (await _pending(s, [d.id])).get(d.id) is None:
         raise AppError(409, "no_dates", "업체가 공사 날짜를 낸 뒤에 요청할 수 있어요.")
     if (await _open_requests(s, [d.id])).get(d.id) is not None:
         raise AppError(
@@ -836,7 +1068,7 @@ async def request_dates(
             update(Deal)
             .where(
                 Deal.id == d.id,
-                Deal.status == "confirmed",
+                Deal.status == d.status,
                 Deal.date_request_count < REQUESTS_MAX,
             )
             .values(date_request_count=Deal.date_request_count + 1)
@@ -859,7 +1091,9 @@ async def request_dates(
                 s,
                 user_id=d.vendor_id,
                 kind="dates_requested",
-                body="고객이 다른 공사 날짜를 요청했어요",
+                body="고객이 공사 날짜 바꾸기를 요청했어요"
+                if change
+                else "고객이 다른 공사 날짜를 요청했어요",
                 link=f"/vendor/jobs/{d.id}",
                 dedup_key=f"date_request:{req.id}",
             )
@@ -868,6 +1102,20 @@ async def request_dates(
         await s.rollback()
         raise AppError(409, "already_requested", "이미 다른 날짜를 요청했어요.") from exc
     return await schedule_for(s, user, project_id, today)
+
+
+def _request_options(
+    d: Deal, r: DateRequest | None, weekend: tuple[int, ...]
+) -> list[StartOptionOut]:
+    """수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 지금과 같은 일하는 날 수로 끝나는 날"""
+    if r is None or d.status != "scheduled" or d.start_date is None:
+        return []
+    n = count_workdays(d.start_date, d.end_date, _off(d.start_date), weekend)
+    off = _off(min(r.wish_dates))
+    return [
+        StartOptionOut(start=w, end=workdays(w, max(n, 1), off, weekend)[-1])
+        for w in sorted(r.wish_dates)
+    ]
 
 
 async def _vendor_deal(s: AsyncSession, vendor: User, deal_id: uuid.UUID) -> Deal:
@@ -917,6 +1165,7 @@ async def job_for(s: AsyncSession, vendor: User, deal_id: uuid.UUID, today: date
         proposal=_proposal_out(x, d.id in await _changed(s, [d.id]), weekend) if x else None,
         request=_request_out(r, now) if r else None,
         requests_left=REQUESTS_MAX - d.date_request_count,
+        request_options=_request_options(d, r, weekend),
     )
 
 
@@ -947,12 +1196,15 @@ async def preview_dates(
 async def propose_dates(
     s: AsyncSession, vendor: User, deal_id: uuid.UUID, data: DatesIn, today: date
 ) -> JobOut:
-    """업체가 공사 날짜 내기 (한 트랜잭션): 확정 잠금 → 앞서 낸 날짜 superseded → 새 날짜 pending →
-    열린 요청 answered → 고객 알림. 겹쳐도 낼 수 있고(고객이 수락할 수 없다), 수락 뒤에는 22번."""
+    """업체가 공사 날짜 내기 (한 트랜잭션). 잠금 순서: 프로젝트 → 확정 → 제안 · 요청.
+    앞서 낸 날짜 superseded → 새 날짜 pending → 열린 요청 answered → 고객 알림. 겹쳐도 낼 수 있다.
+    수락한 뒤(scheduled)에는 바꾸기(change): 고객 요청에 답하면 고객이 고른 시작일 중에서 같은 기간,
+    스스로 바꾸면 이유 필수. 고객이 수락하기 전까지 지금 날짜는 그대로다."""
     d = await _vendor_deal(s, vendor, deal_id)
     p = await project_service.get_out(s, d.project_id)
     plan = await ensure_expected(s, p, today)
-    _check_range(data.start, data.end, today, _weekend(plan))
+    weekend = _weekend(plan)
+    _check_range(data.start, data.end, today, weekend)
     if data.method == "call":
         if data.call_on is None:
             raise AppError(422, "call_on", "통화한 날을 골라 주세요.")
@@ -964,12 +1216,27 @@ async def propose_dates(
         raise AppError(404, "not_found", NO_DEAL)
     if d.status == "reselected":
         raise AppError(409, "invalid_state", "고객이 업체를 다시 고르기로 했어요.")
-    if d.status != "confirmed":
+    if d.status not in CHANGEABLE:
+        raise AppError(409, "invalid_state", DONE_DATES)
+    change = d.status == "scheduled"
+    if change and data.kind == "initial":  # 그사이 고객이 수락했다
         raise AppError(409, "invalid_state", "고객이 이미 공사 날짜를 수락했어요.")
+    if not change and data.kind == "change":
+        raise AppError(
+            409, "invalid_state", "고객이 아직 수락하지 않은 날짜예요. 날짜 다시 내기로 내 주세요."
+        )
     x = (await _pending(s, [d.id])).get(d.id)
     r = (await _open_requests(s, [d.id])).get(d.id)
     if data.request_id is not None and (r is None or r.id != data.request_id):
         raise AppError(409, "request_changed", "고객 요청이 바뀌었어요. 새로 불러올게요.")
+    if change and r is not None:
+        allowed = {(o.start, o.end) for o in _request_options(d, r, weekend)}
+        if (data.start, data.end) not in allowed:
+            raise AppError(
+                422, "request_dates", "고객이 고른 시작일 중에서 같은 기간으로 골라 주세요."
+            )
+    if change and r is None and data.reason is None:
+        raise AppError(422, "reason", "날짜를 바꾸는 이유를 적어 주세요. 고객에게 보여요.")
     owner = (await project_service.briefs(s, [d.project_id]))[d.project_id].owner_id
     now = now_utc()
     try:
@@ -986,6 +1253,8 @@ async def propose_dates(
             method=data.method,
             call_on=data.call_on if data.method == "call" else None,
             request_id=r.id if r else None,
+            kind="change" if change else "initial",
+            reason=data.reason if change else None,
             plan_version=plan.version,
             by_id=vendor.id,
         )
@@ -993,13 +1262,20 @@ async def propose_dates(
         await s.flush()
         if r is not None:
             await _set(s, DateRequest, r.id, "open", {"status": "answered", "closed_at": now})
-        again = "다시 " if x is not None else ""
+        who, label = i_ga(d.vendor_name), LABEL[d.trade]
+        if not change:
+            again = "다시 " if x is not None else ""
+            body, link = f"{who} 공사 날짜를 {again}냈어요 · {label}", "schedule?trade=" + d.trade
+        elif r is not None:
+            body, link = f"{who} 새 {label} 날짜를 올렸어요", "plan"
+        else:
+            body, link = f"{who} {label} 날짜를 바꾸자고 했어요", "plan"
         await notify_service.add(
             s,
             user_id=owner,
             kind="dates_proposed",
-            body=f"{i_ga(d.vendor_name)} 공사 날짜를 {again}냈어요 · {LABEL[d.trade]}",
-            link=f"/projects/{d.project_id}/schedule?trade={d.trade}",
+            body=body,
+            link=f"/projects/{d.project_id}/{link}",
             dedup_key=f"date_proposal:{new.id}",
             project_id=d.project_id,
         )

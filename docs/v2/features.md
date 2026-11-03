@@ -25,10 +25,10 @@
 | 19 | feat: 업체 확정 | 0013_v2_deal | WConfirm |
 | 20 | feat: 다시 고르기 · 연락처 가림 | deal · visit 전이 | WCompare · WConfirm 상태 |
 | 21 | feat: 공사 날짜 올림 · 수락 · 다른 날짜 요청 | 0015_v2_dates | WVCalendar, WSchedule |
-| 22 | feat: 확정 공정표 · 날짜 바꾸기 | plans final | WPlanDone, WVCalendar |
-| 23 | feat: 추가 금액 기록 | 0016_v2_extra | WPlanDone · WVCalendar |
+| 22 | feat: 확정 공정표 · 날짜 바꾸기 | plans final · 0016_v2_date_change | WPlanDone, WVCalendar |
+| 23 | feat: 추가 금액 기록 | 0017_v2_extra | WPlanDone · WVCalendar |
 | 24 | feat: 공사 끝냈어요 · 확인 · 연락처 1년 | deal 전이 | WPlanDone · WVCalendar |
-| 25 | feat: 내 공사 지금 할 일 · 목록 · 서류 · 작업함 탭 | 0017_v2_checks | WProjectB, WMy, WDocs, WVInbox |
+| 25 | feat: 내 공사 지금 할 일 · 목록 · 서류 · 작업함 탭 | 0018_v2_checks | WProjectB, WMy, WDocs, WVInbox |
 | 26 | chore: 예시 데이터와 옛 화면 정리 | — | lib/mock, 옛 라우트 |
 
 ## 화면 경로
