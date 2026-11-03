@@ -6,18 +6,30 @@
 import uuid
 from datetime import date
 
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.files import service as files_service
 from app.project import repository as repo
-from app.project.models import Project, ProjectFile, ProjectSpace, ProjectTrade, ProjectTradeSpace
+from app.project.models import (
+    CHECK_KEYS,
+    CHECK_LABELS,
+    Project,
+    ProjectCheck,
+    ProjectFile,
+    ProjectSpace,
+    ProjectTrade,
+    ProjectTradeSpace,
+)
 from app.project.schemas import (
     DobaeOut,
     MokgongOut,
     PhotoOut,
     ProjectBrief,
+    ProjectCheckOut,
     ProjectCreate,
     ProjectListItem,
     ProjectOut,
@@ -283,3 +295,46 @@ async def briefs(s: AsyncSession, project_ids: list[uuid.UUID]) -> dict[uuid.UUI
         )
         for p, name, phone in await repo.with_owners(s, project_ids)
     }
+
+
+# ---- 공사 전에 할 일 체크 ----
+
+
+async def checks(s: AsyncSession, project_id: uuid.UUID) -> list[ProjectCheckOut]:
+    """체크 목록 (권한은 부르는 쪽이 먼저 확인한다)"""
+    rows = {
+        c.key: c
+        for c in (
+            await s.execute(select(ProjectCheck).where(ProjectCheck.project_id == project_id))
+        ).scalars()
+    }
+    return [
+        ProjectCheckOut(
+            key=k,
+            label=CHECK_LABELS[k],
+            done=k in rows,
+            done_at=rows[k].done_at if k in rows else None,
+        )
+        for k in CHECK_KEYS
+    ]
+
+
+async def set_check(
+    s: AsyncSession, user: User, project_id: uuid.UUID, key: str, done: bool
+) -> list[ProjectCheckOut]:
+    """체크 켜기 · 끄기 (만든 고객만). 두 번 켜도 한 줄(PK), 없는 것을 꺼도 그대로."""
+    p = await get_for(s, user, project_id)
+    if user.role != "customer":
+        raise AppError(403, "forbidden", "고객만 체크할 수 있어요.")
+    if done:
+        await s.execute(
+            insert(ProjectCheck)
+            .values(project_id=p.id, key=key, by_id=user.id)
+            .on_conflict_do_nothing(index_elements=["project_id", "key"])
+        )
+    else:
+        await s.execute(
+            delete(ProjectCheck).where(ProjectCheck.project_id == p.id, ProjectCheck.key == key)
+        )
+    await s.commit()
+    return await checks(s, p.id)

@@ -579,3 +579,13 @@ def _brief(r: VendorQuote) -> QuoteBriefOut:
         valid_until=r.valid_until,
         sent_at=r.sent_at,
     )
+
+
+async def standard_versions(s: AsyncSession, project_id: uuid.UUID) -> list[StandardQuote]:
+    """이 집 표준견적서 모든 버전 (공정 · 버전 순). 서류 목록에 쓴다."""
+    q = (
+        select(StandardQuote)
+        .where(StandardQuote.project_id == project_id)
+        .order_by(StandardQuote.trade, StandardQuote.version)
+    )
+    return list((await s.execute(q)).scalars().all())

@@ -14,7 +14,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
-from app.calc.common import FORMULA_VERSION, Money, add_money, from_entered
+from app.calc.common import FORMULA_VERSION, Money, add_money, from_entered, sum_won
+from app.calc.progress import TradeFacts, first_todo, progress, project_phase
+from app.calc.quote_diff import budget_gap
 from app.calc.schedule import (
     JOB_MAX_DAYS,
     WEEKEND,
@@ -39,6 +41,7 @@ from app.notify import service as notify_service
 from app.project import service as project_service
 from app.project.schemas import ProjectOut
 from app.quote import service as quote_service
+from app.quote.schemas import BudgetOut
 from app.refprice.holidays import HOLIDAYS, days_off
 from app.schedule.models import (
     OPEN_DEALS,
@@ -63,6 +66,7 @@ from app.schedule.schemas import (
     DateRequestOut,
     DatesIn,
     DealOut,
+    DocsOut,
     ExtraIn,
     ExtraOut,
     ExtraPhotoOut,
@@ -72,22 +76,36 @@ from app.schedule.schemas import (
     InboxRowOut,
     JobOut,
     MoneyOut,
+    MoneySumOut,
+    MyProjectOut,
     NeedOut,
+    NextOut,
     OtherTradeOut,
+    OverviewOut,
+    PeriodOut,
     PlanBlockOut,
     PlanChangeOut,
     PlanDayOut,
+    PlanDocOut,
     PlanOut,
     PlanRedo,
     PreviewOut,
     ProposalOut,
+    QuoteDocOut,
+    QuoteVersionDocOut,
     ScheduleOut,
+    StandardDocOut,
     StartOptionOut,
     StepNeedOut,
+    StepOut,
+    TodoOut,
     TradeDatesOut,
     TradeExtrasOut,
+    TradeMoneyOut,
+    TradeProgressOut,
+    VendorContactOut,
 )
-from app.shared.clock import now_utc
+from app.shared.clock import SEOUL, now_utc
 from app.shared.errors import AppError
 from app.shared.ids import uuid7
 from app.shared.korean import i_ga
@@ -1708,3 +1726,424 @@ async def _done_tab(
     items = items[:limit]
     more = len(items) == limit
     return InboxPageOut(items=items, next_before=items[-1].closed_at if more else None)
+
+
+# ---- 내 공사 한눈에 · 목록 · 서류: visit · quote · project 공개 함수로 모은다. 단계 판정은 calc ----
+
+STEP_LABEL = {
+    "house": "집 정보 · 공정",
+    "standard": "기준 금액",
+    "pick": "업체 고르기",
+    "visit": "실측",
+    "deal": "업체 확정",
+    "dates": "공사 날짜",
+}
+WEEKDAY = "월화수목금토일"
+
+
+def _md(d: date) -> str:
+    return f"{d:%m.%d}({WEEKDAY[d.weekday()]})"
+
+
+def _mdt(at: datetime) -> str:
+    x = at.astimezone(SEOUL)
+    return f"{_md(x.date())} {x:%H:%M}"
+
+
+def _ymd(d: date) -> str:
+    return f"{d:%Y.%m.%d}({WEEKDAY[d.weekday()]})"
+
+
+def _day(at: datetime | None) -> date | None:
+    return at.astimezone(SEOUL).date() if at else None
+
+
+def _todo_out(pid: uuid.UUID, code: str, trade: str, d: Deal | None, ctx: dict) -> TodoOut:
+    """calc가 고른 할 일 코드 → 판 문구 · 버튼 · 화면"""
+    label = LABEL[trade]
+    who = i_ga(d.vendor_name) if d else ""
+    base = f"/projects/{pid}"
+    x, r, f = ctx.get("proposal"), ctx.get("request"), ctx["facts"]
+    texts = {
+        "check": (
+            f"{who} {label} 공사를 끝냈다고 알렸어요 · 확인해 주세요",
+            "확인하기",
+            f"{base}/plan",
+        ),
+        "dates_received": (
+            f"{who} {label} 공사 날짜를 보냈어요 — {_md(x.start_date)} ~ {_md(x.end_date)}"
+            if x
+            else "",
+            "날짜 확인하기",
+            f"{base}/schedule?trade={trade}",
+        ),
+        "dates_change": (
+            f"{who} {label} 날짜를 {_md(x.start_date)} ~ {_md(x.end_date)}으로 바꾸자고 했어요"
+            if x
+            else "",
+            "확인하기",
+            f"{base}/plan",
+        ),
+        "extra": (f"{who} 추가 금액을 알렸어요 · 확인해 주세요", "확인하기", f"{base}/plan"),
+        "quotes_arrived": (
+            f"실측 견적서 {f.quotes if f else 0}개가 왔어요 · {label}",
+            "비교하기",
+            f"{base}/quotes?trade={trade}",
+        ),
+        "quotes_partial": (
+            f"{' · '.join(f.quoted_names)} 견적서가 왔어요 · "
+            f"{' · '.join(f.waiting_names)} 견적서를 기다리는 중이에요"
+            if f
+            else "",
+            "비교하기",
+            f"{base}/quotes?trade={trade}",
+        ),
+        "dates_overdue": (
+            f"{who} {_mdt(d.dates_due_at)}까지 공사 날짜를 내지 않았어요" if d else "",
+            "확인하기",
+            f"{base}/schedule?trade={trade}",
+        ),
+        "pick": (
+            f"업체를 골라 실측을 요청하세요 · {label}",
+            "업체 고르기",
+            f"{base}/vendors?trade={trade}",
+        ),
+        "visit_requested": (
+            f"업체에 연락해 실측 날짜를 정하세요 · {label}",
+            "연락처 보기",
+            f"{base}/visits?trade={trade}",
+        ),
+        "before_work": (
+            f"{label} 공사는 {_md(d.start_date)}에 시작해요 · 공사 전에 할 일을 확인하세요"
+            if d and d.start_date
+            else "",
+            "공정표 보기",
+            f"{base}/plan",
+        ),
+        "dates_waiting": (
+            f"{who} 공사 날짜를 정하고 있어요 · {_mdt(d.dates_due_at)}까지" if d else "",
+            "공사 날짜 보기",
+            f"{base}/schedule?trade={trade}",
+        ),
+        "dates_requested": (
+            f"다른 날짜를 요청했어요 · {d.vendor_name} 답을 기다려요 · {_mdt(r.due_at)}까지"
+            if d and r
+            else "",
+            "공사 날짜 보기",
+            f"{base}/schedule?trade={trade}",
+        ),
+        "working": (
+            f"{label} 공사 중이에요 · {_md(d.end_date)}까지" if d and d.end_date else "",
+            "공정표 보기",
+            f"{base}/plan",
+        ),
+        "fixing": (f"{who} 남은 일을 하고 있어요 · {label}", "공정표 보기", f"{base}/plan"),
+        "done": (
+            f"공사가 끝났어요 · 하자가 보이면 {d.vendor_name}에 전화해요"
+            + (f" · 연락처는 {_ymd(ctx['until'])}까지 보여요" if ctx.get("until") else "")
+            if d
+            else "",
+            "연락처 보기",
+            base,
+        ),
+    }
+    text, action, link = texts[code]
+    return TodoOut(code=code, trade=trade, text=text, action=action, link=link)
+
+
+def _next(trade: str, d: Deal | None, r: DateRequest | None, x, today: date) -> NextOut | None:
+    if d is None:
+        return None
+    if r is not None:
+        return NextOut(kind="request_due", trade=trade, day=_day(r.due_at), at=r.due_at)
+    if d.status == "confirmed" and x is None:
+        return NextOut(kind="dates_due", trade=trade, day=_day(d.dates_due_at), at=d.dates_due_at)
+    if d.status in ("scheduled", "fixing") and d.start_date and d.end_date:
+        if today < d.start_date:
+            return NextOut(kind="start", trade=trade, day=d.start_date, at=None)
+        return NextOut(kind="end", trade=trade, day=d.end_date, at=None)
+    return None
+
+
+async def _accepted_on(s: AsyncSession, deal_ids: list[uuid.UUID]) -> dict[uuid.UUID, datetime]:
+    """처음 공사 날짜를 수락한 때"""
+    if not deal_ids:
+        return {}
+    q = (
+        select(DealEvent.deal_id, func.min(DealEvent.at))
+        .where(DealEvent.deal_id.in_(deal_ids), DealEvent.to_status == "scheduled")
+        .group_by(DealEvent.deal_id)
+    )
+    return {k: v for k, v in (await s.execute(q)).all()}
+
+
+async def _progress_of(s: AsyncSession, p: ProjectOut, today: date, now: datetime):
+    """공정마다 (calc 판정, 확정, 할 일 문맥). 목공 → 도배 순."""
+    trades = [t for t in ORDER if getattr(p.trades, t) is not None]
+    std = await quote_service.ensure_standard(s, p)
+    facts = await visit_service.trade_facts(s, p.id)
+    q = select(Deal).where(Deal.project_id == p.id, Deal.status != "reselected")
+    deals = {
+        d.trade: d for d in (await s.execute(q.execution_options(populate_existing=True))).scalars()
+    }
+    ids = [d.id for d in deals.values()]
+    pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
+    waiting = await _extras_pending(s, ids)
+    accepted = await _accepted_on(s, ids)
+    visits = await visit_service.visits_by_id(s, [d.visit_id for d in deals.values()])
+    out = []
+    for t in trades:
+        f, d = facts.get(t), deals.get(t)
+        x = pend.get(d.id) if d else None
+        r = reqs.get(d.id) if d else None
+        tf = TradeFacts(
+            trade=t,
+            created_on=_day(p.created_at),
+            standard_on=_day(std[t].created_at) if t in std else None,
+            asked=f.asked if f else 0,
+            asked_on=_day(f.asked_at) if f else None,
+            quotes=f.quotes if f else 0,
+            waiting=f.waiting if f else 0,
+            quoted_on=_day(f.quoted_at) if f else None,
+            deal_status=d.status if d else None,
+            deal_on=_day(d.created_at) if d else None,
+            dates_due_at=d.dates_due_at if d else None,
+            proposed=x is not None,
+            proposed_on=_day(x.created_at) if x else None,
+            request_open=r is not None,
+            accepted_on=_day(accepted.get(d.id)) if d else None,
+            start=d.start_date if d else None,
+            end=d.end_date if d else None,
+            work_done_on=d.work_done_on if d else None,
+            extras_pending=waiting.get(d.id, 0) if d else 0,
+        )
+        until = visits[d.visit_id].contact_until if d and d.visit_id in visits else None
+        ctx = {"proposal": x, "request": r, "facts": f, "until": until}
+        out.append((progress(tf, today, now), d, ctx, f))
+    return out, std, deals
+
+
+def _trade_out(pid: uuid.UUID, pr, d: Deal | None, ctx: dict, today: date) -> TradeProgressOut:
+    x = ctx["proposal"]
+    return TradeProgressOut(
+        trade=pr.trade,
+        vendor_name=d.vendor_name if d else None,
+        deal_id=d.id if d else None,
+        deal_status=d.status if d else None,
+        phase=pr.phase,
+        current=pr.current,
+        steps=[
+            StepOut(key=st.key, label=STEP_LABEL[st.key], state=st.state, on=st.on, count=st.count)
+            for st in pr.steps
+        ],
+        todo=_todo_out(pid, pr.todo, pr.trade, d, ctx),
+        overdue=pr.overdue,
+        start_date=d.start_date if d else None,
+        end_date=d.end_date if d else None,
+        proposed_start=x.start_date if x else None,
+        proposed_end=x.end_date if x else None,
+        next=_next(pr.trade, d, ctx["request"], x, today),
+    )
+
+
+def _soonest(items: list[NextOut | None]) -> NextOut | None:
+    got = [n for n in items if n is not None]
+    return min(got, key=lambda n: n.day) if got else None
+
+
+async def overview_for(
+    s: AsyncSession, user: User, project_id: uuid.UUID, today: date
+) -> OverviewOut:
+    """GET /projects/{id}/overview: 지금 할 일 · 공정별 단계 · 낼 금액 · 공사 기간 · 연락처 · 체크"""
+    p = await project_service.get_for(s, user, project_id)
+    now = now_utc()
+    rows, std, deals = await _progress_of(s, p, today, now)
+    trades = [_trade_out(p.id, pr, d, ctx, today) for pr, d, ctx, _ in rows]
+    top = first_todo([pr for pr, *_ in rows])
+    quotes = await quote_service.briefs_by_id(s, [d.quote_id for d in deals.values()])
+    by_trade = [
+        TradeMoneyOut(trade=t.trade, total=quotes[deals[t.trade].quote_id].total, source="deal")
+        if t.trade in deals
+        else TradeMoneyOut(trade=t.trade, total=std[t.trade].total, source="standard")
+        for t in trades
+        if t.trade in deals or t.trade in std
+    ]
+    total = sum_won(m.total for m in by_trade)
+    budget = None
+    if p.budget:
+        status, over = budget_gap(total, p.budget)
+        budget = BudgetOut(band=p.budget, status=status, over_by=over)
+    final = await _latest(s, p.id, "final")
+    plan = final or await ensure_expected(s, p, today)
+    visits = await visit_service.visits_by_id(s, [d.visit_id for d in deals.values()])
+    shown = {
+        d.trade: d
+        for d in deals.values()
+        if d.vendor_id
+        and d.visit_id in visits
+        and visit_service.contact_visible(
+            visits[d.visit_id].status, visits[d.visit_id].contact_until, today
+        )
+    }
+    contacts = await vendor_service.contacts(s, [d.vendor_id for d in shown.values()])
+    std_any = next(iter(std.values()), None)
+    return OverviewOut(
+        project_id=p.id,
+        code=p.code,
+        region=p.region,
+        sgg=p.sgg,
+        pyeong=std_any.pyeong if std_any else None,
+        phase=project_phase([pr for pr, *_ in rows]),
+        todo=next((t.todo for t in trades if top and t.trade == top.trade), None),
+        next=_soonest([t.next for t in trades]),
+        trades=trades,
+        money=MoneySumOut(
+            total=total,
+            by_trade=by_trade,
+            all_confirmed=bool(by_trade) and all(m.source == "deal" for m in by_trade),
+            budget=budget,
+        ),
+        period=PeriodOut(
+            kind=plan.kind, start=plan.start_date, end=plan.end_date, work_days=plan.work_days
+        ),
+        contacts=[
+            VendorContactOut(
+                trade=t,
+                vendor_name=d.vendor_name,
+                contact=contacts[d.vendor_id],
+                contact_until=visits[d.visit_id].contact_until,
+            )
+            for t, d in sorted(shown.items(), key=lambda kv: ORDER.index(kv[0]))
+            if d.vendor_id in contacts
+        ],
+        checks=await project_service.checks(s, p.id),
+    )
+
+
+async def _updated_at(s: AsyncSession, p: ProjectOut, deals: dict[str, Deal], facts) -> datetime:
+    """바뀐 날: 만든 때 · 요청 상태 · 확정 이력 · 낸 날짜 · 추가 금액 중 가장 늦은 때"""
+    ids = [d.id for d in deals.values()]
+    times = [p.created_at] + [f.last_at for f in facts if f and f.last_at]
+    if ids:
+        for col, model in (
+            (DealEvent.at, DealEvent),
+            (DateProposal.created_at, DateProposal),
+            (ExtraCharge.created_at, ExtraCharge),
+        ):
+            got = await s.scalar(select(func.max(col)).where(model.deal_id.in_(ids)))
+            if got:
+                times.append(got)
+    return max(times)
+
+
+async def my_projects(s: AsyncSession, user: User, today: date) -> list[MyProjectOut]:
+    """GET /projects: 내 공사 목록 · 단계 요약 · 지금 할 일 · 다음 날짜 (바뀐 날 최근 순)"""
+    if user.role != "customer":
+        raise AppError(403, "forbidden", "고객만 볼 수 있어요.")
+    now = now_utc()
+    out = []
+    for item in await project_service.list_mine(s, user):
+        p = await project_service.get_for(s, user, item.id)
+        rows, _, deals = await _progress_of(s, p, today, now)
+        prs = [pr for pr, *_ in rows]
+        top = first_todo(prs)
+        todo = None
+        if top is not None:
+            pr, d, ctx, _ = next(r for r in rows if r[0].trade == top.trade)
+            todo = _todo_out(p.id, pr.todo, pr.trade, d, ctx)
+        nexts = [
+            _next(pr.trade, d, ctx["request"], ctx["proposal"], today) for pr, d, ctx, _ in rows
+        ]
+        out.append(
+            MyProjectOut(
+                **item.model_dump(),
+                phase=project_phase(prs),
+                current=min((pr.current for pr in prs), default=1),
+                todo=todo,
+                next=_soonest(nexts),
+                updated_at=await _updated_at(s, p, deals, [f for *_, f in rows]),
+                grades={t: getattr(getattr(p.trades, t), "grade", None) for t in item.trades},
+            )
+        )
+    out.sort(key=lambda m: m.updated_at, reverse=True)
+    return out
+
+
+async def docs_for(s: AsyncSession, user: User, project_id: uuid.UUID, today: date) -> DocsOut:
+    """GET /projects/{id}/docs: 표준견적서 · 예상 · 확정 공정표 버전, 받은 실측 견적서 버전(닫힌 것도
+    기록으로), 확정한 버전, 추가 금액 기록. 각 줄에 여는 화면 · 파일 주소."""
+    p = await project_service.get_for(s, user, project_id)
+    latest_std = await quote_service.ensure_standard(s, p)
+    await ensure_expected(s, p, today)
+    base = f"/projects/{p.id}"
+    stds = await quote_service.standard_versions(s, p.id)
+    plans = list(
+        (
+            await s.execute(
+                select(Plan).where(Plan.project_id == p.id).order_by(Plan.kind, Plan.version)
+            )
+        ).scalars()
+    )
+    top = {
+        k: max((x.version for x in plans if x.kind == k), default=0) for k in ("expected", "final")
+    }
+    q = select(Deal).where(Deal.project_id == p.id)
+    deals = list((await s.execute(q)).scalars())
+    chosen = {d.quote_id for d in deals if d.status != "reselected"}
+    quotes = []
+    for v in await visit_service.quote_docs(s, p.id):
+        quotes.append(
+            QuoteDocOut(
+                visit_id=v.visit_id,
+                trade=v.trade,
+                vendor_name=v.vendor_name,
+                status=v.status,
+                close_reason=v.close_reason,
+                closed=v.status not in ("quoted", "chosen"),
+                versions=[
+                    QuoteVersionDocOut(
+                        id=q.id,
+                        code=q.code,
+                        version=q.version,
+                        sent_at=q.sent_at,
+                        total=q.total,
+                        confirmed=q.id in chosen,
+                        files=q.files,
+                        file_links=[f"/api{base}/quotes/{q.id}/files/{f.file_id}" for f in q.files],
+                    )
+                    for q in v.versions
+                ],
+            )
+        )
+    live = [d for d in deals if d.status != "reselected"]
+    return DocsOut(
+        project_id=p.id,
+        code=p.code,
+        region=p.region,
+        standard=[
+            StandardDocOut(
+                trade=x.trade,
+                version=x.version,
+                total=x.total,
+                computed_at=x.created_at,
+                latest=latest_std.get(x.trade) is not None and latest_std[x.trade].id == x.id,
+                link=f"{base}/standard?trade={x.trade}",
+            )
+            for x in stds
+        ],
+        standard_total=sum_won(x.total for x in latest_std.values()),
+        plans=[
+            PlanDocOut(
+                kind=x.kind,
+                version=x.version,
+                start=x.start_date,
+                end=x.end_date,
+                created_at=x.created_at,
+                latest=x.version == top[x.kind],
+                link=f"{base}/plan?kind={x.kind}",
+            )
+            for x in plans
+        ],
+        quotes=quotes,
+        extras=list((await _extras(s, live)).values()),
+    )

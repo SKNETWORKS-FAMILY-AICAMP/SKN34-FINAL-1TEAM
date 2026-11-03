@@ -22,9 +22,12 @@ from app.schedule.schemas import (
     DateRequestIn,
     DatesIn,
     DealOut,
+    DocsOut,
     ExtraIn,
     InboxPageOut,
     JobOut,
+    MyProjectOut,
+    OverviewOut,
     PlanOut,
     PlanRedo,
     PreviewOut,
@@ -330,3 +333,43 @@ async def check_work(
     s: AsyncSession = Depends(get_session),
 ) -> DealOut:
     return await service.check_work(s, user, project_id, deal_id, data, today_seoul())
+
+
+# ---- 내 공사 한눈에 · 목록 · 서류 ----
+
+
+@router.get(
+    "/projects",
+    response_model=list[MyProjectOut],
+    summary="내 공사 목록 · 단계 요약 · 지금 할 일 · 다음 날짜 (바뀐 날 최근 순)",
+)
+async def my_projects(
+    user: User = Depends(customer_only), s: AsyncSession = Depends(get_session)
+) -> list[MyProjectOut]:
+    return await service.my_projects(s, user, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/overview",
+    response_model=OverviewOut,
+    summary="한 공사 화면: 지금 할 일 · 공정별 단계 · 낼 금액 · 공사 기간 · 업체 연락처 · 체크",
+)
+async def overview(
+    project_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> OverviewOut:
+    return await service.overview_for(s, user, project_id, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/docs",
+    response_model=DocsOut,
+    summary="서류 모음: 표준견적서 · 공정표 버전 · 받은 실측 견적서 · 확정 견적서 · 추가 금액",
+)
+async def docs(
+    project_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> DocsOut:
+    return await service.docs_for(s, user, project_id, today_seoul())

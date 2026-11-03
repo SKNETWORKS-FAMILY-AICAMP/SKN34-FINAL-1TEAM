@@ -81,7 +81,7 @@ erDiagram
 | date_proposals | 0015_v2_dates · 0016_v2_date_change | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending. change는 이유 또는 답한 요청이 있음(0016) |
 | extra_charges | 0017_v2_extra | deal · title ≤40 · reason ≤300 · vat_mode · entered_amount(0~10억) · supply · vat · total(calc from_entered, total = supply + vat, 면세면 vat 0) · ack(pending · ok · talk) · acked_at(ack ≠ pending일 때만) · by · created_at. 고치지 않고 새로 올린다 |
 | extra_charge_files | 0017_v2_extra | (extra, file) PK, file UQ, sort 0~4(5장까지). files.kind = work_photo |
-| project_checks | 0018_v2_checks | (project, key) PK · done_at · by |
+| project_checks | 0018_v2_checks | (project, key) PK · key(CHECK: office_report 관리사무소 공사 신고, 판에 있는 항목만) · done_at · by(지우면 NULL). 끄면 행을 지운다 |
 
 ## 상태와 허용 전이
 

@@ -5,8 +5,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from app.quote.schemas import QuoteBriefOut
+from app.project.schemas import ProjectCheckOut, ProjectListItem
+from app.quote.schemas import BudgetOut, QuoteBriefOut, QuoteFileOut
 from app.schedule.models import CREW_MAX, EXTRA_AMOUNT_MAX, EXTRA_PHOTOS_MAX, WISH_MAX
+from app.vendor.schemas import ContactOut
 from app.visit.schemas import CompareOut, VendorVisitDetailOut, VendorVisitRow
 
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
@@ -423,3 +425,164 @@ class CheckIn(BaseModel):
 
     result: Literal["done", "fixing"]
     note: Reason | None = Field(default=None, description="남은 일 (fixing일 때 필수)")
+
+
+# ---- 내 공사 한눈에 · 목록 · 서류 ----
+
+
+class StepOut(BaseModel):
+    key: Literal["house", "standard", "pick", "visit", "deal", "dates"]
+    label: str
+    state: Literal["done", "now", "todo"]
+    on: date | None = Field(description="끝난 날 · 지금 단계가 시작된 날 (서울)")
+    count: int | None = Field(description="업체 고르기: 요청한 곳 · 실측: 받은 견적서 수")
+
+
+class TodoOut(BaseModel):
+    """지금 할 일 한 줄과 버튼 (판 문구)"""
+
+    code: str
+    trade: str | None
+    text: str
+    action: str = Field(description="버튼 글자")
+    link: str = Field(description="버튼이 가는 화면")
+
+
+class NextOut(BaseModel):
+    kind: Literal["dates_due", "request_due", "start", "end"] = Field(
+        description="업체가 날짜를 낼 기한 · 다른 날짜 요청 답 기한 · 공사 시작 · 공사 끝"
+    )
+    trade: str
+    day: date
+    at: datetime | None = Field(description="기한이면 그 시각")
+
+
+class TradeProgressOut(BaseModel):
+    trade: str
+    vendor_name: str | None = Field(description="확정한 업체")
+    deal_id: uuid.UUID | None
+    deal_status: str | None
+    phase: Literal["estimate", "progress", "work", "done"]
+    current: int = Field(description="지금 단계 번호 (6단계 중)")
+    steps: list[StepOut]
+    todo: TodoOut
+    overdue: bool
+    start_date: date | None = Field(description="수락한 공사 날짜")
+    end_date: date | None
+    proposed_start: date | None = Field(description="수락 기다리는 날짜")
+    proposed_end: date | None
+    next: NextOut | None
+
+
+class TradeMoneyOut(BaseModel):
+    trade: str
+    total: int = Field(description="부가세 포함")
+    source: Literal["deal", "standard"] = Field(description="확정 견적서 · 표준견적서")
+
+
+class MoneySumOut(BaseModel):
+    """낼 금액: 확정한 공정은 확정 견적서, 아니면 표준견적서 (계산 엔진이 더함, 추가 금액은 빼고)"""
+
+    total: int
+    by_trade: list[TradeMoneyOut]
+    all_confirmed: bool
+    budget: BudgetOut | None = Field(description="넣은 예산과 견줌 (예산을 안 넣었으면 비어 있다)")
+
+
+class PeriodOut(BaseModel):
+    kind: Literal["expected", "final"]
+    start: date
+    end: date
+    work_days: int
+
+
+class VendorContactOut(BaseModel):
+    trade: str
+    vendor_name: str
+    contact: ContactOut
+    contact_until: date | None = Field(description="연락처가 보이는 마지막 날 (공사 끝낸 뒤)")
+
+
+class OverviewOut(BaseModel):
+    """한 공사 화면 (WProjectB)"""
+
+    project_id: uuid.UUID
+    code: str
+    region: str
+    sgg: str
+    pyeong: Decimal | None
+    phase: Literal["estimate", "progress", "work", "done"]
+    todo: TodoOut | None = Field(description="맨 위 지금 할 일 (공정 중 가장 먼저 할 것)")
+    next: NextOut | None = Field(description="가장 가까운 다음 날짜")
+    trades: list[TradeProgressOut] = Field(description="목공 → 도배 순")
+    money: MoneySumOut
+    period: PeriodOut
+    contacts: list[VendorContactOut]
+    checks: list[ProjectCheckOut]
+
+
+class MyProjectOut(ProjectListItem):
+    """내 공사 목록 한 줄 (WMy)"""
+
+    phase: Literal["estimate", "progress", "work", "done"]
+    current: int = Field(description="가장 늦은 공정의 지금 단계 (6단계 중)")
+    todo: TodoOut | None
+    next: NextOut | None
+    updated_at: datetime = Field(description="바뀐 날 (목록은 최근 순)")
+    grades: dict[str, str | None] = Field(description="공정마다 도배 유형")
+
+
+class StandardDocOut(BaseModel):
+    trade: str
+    version: int
+    total: int
+    computed_at: datetime
+    latest: bool
+    link: str
+
+
+class PlanDocOut(BaseModel):
+    kind: Literal["expected", "final"]
+    version: int
+    start: date
+    end: date
+    created_at: datetime
+    latest: bool
+    link: str
+
+
+class QuoteVersionDocOut(BaseModel):
+    id: uuid.UUID
+    code: str
+    version: int
+    sent_at: datetime
+    total: int | None
+    confirmed: bool = Field(description="고객이 확정한 버전")
+    files: list[QuoteFileOut]
+    file_links: list[str] = Field(description="files와 같은 순서의 파일 주소")
+
+
+class QuoteDocOut(BaseModel):
+    visit_id: uuid.UUID
+    trade: str
+    vendor_name: str
+    status: str
+    close_reason: str | None
+    closed: bool = Field(description="닫힘 · 기록 (다시 확정할 수 없다)")
+    versions: list[QuoteVersionDocOut]
+
+
+class DocsOut(BaseModel):
+    """서류 모음 (WDocs)"""
+
+    project_id: uuid.UUID
+    code: str
+    region: str
+    standard: list[StandardDocOut]
+    standard_total: int = Field(description="최신 표준견적서 공정 합계 (부가세 포함)")
+    plans: list[PlanDocOut]
+    quotes: list[QuoteDocOut]
+    extras: list["TradeExtrasOut"]
+
+
+DocsOut.model_rebuild()

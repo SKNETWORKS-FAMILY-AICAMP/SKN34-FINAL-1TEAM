@@ -211,3 +211,16 @@ class ProjectBrief(BaseModel):
     apt_name: str | None
     dong: str | None
     ho: str | None
+
+
+class ProjectCheckOut(BaseModel):
+    """공사 전에 할 일 한 줄"""
+
+    key: str
+    label: str
+    done: bool
+    done_at: datetime | None
+
+
+class ProjectCheckIn(BaseModel):
+    done: bool

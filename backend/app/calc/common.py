@@ -122,3 +122,8 @@ def add_money(items: Iterable[Money]) -> Money:
     """금액 여러 줄의 공급가 · 부가세 · 합계를 각각 더한다 (줄마다 이미 원 단위라 반올림하지 않는다)."""
     rows = list(items)
     return Money(sum(m.supply for m in rows), sum(m.vat for m in rows), sum(m.total for m in rows))
+
+
+def sum_won(values: Iterable[int]) -> int:
+    """원 단위 금액 여러 개를 더한다 (공정별 낼 금액 합계)."""
+    return sum(values)

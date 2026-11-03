@@ -304,3 +304,28 @@ class CompareOut(BaseModel):
     computed_at: datetime
     sent_counts: dict[str, int] = Field(description="공정마다 받은 실측 견적서 수")
     vendors: list[CompareRowOut] = Field(description="받은 것(받은 순) 먼저, 그다음 기다리는 곳")
+
+
+class VisitFactsOut(BaseModel):
+    """한 공정의 실측 요청 요약 (내 공사 단계 판정에 쓴다). 다시 고르기로 닫힌 요청은 뺀다."""
+
+    trade: str
+    asked: int
+    asked_at: datetime | None
+    quotes: int = Field(description="견적서를 받은 요청 수")
+    waiting: int = Field(description="견적서를 기다리는 요청 수")
+    quoted_at: datetime | None = Field(description="마지막으로 견적서를 받은 때")
+    quoted_names: list[str]
+    waiting_names: list[str]
+    last_at: datetime | None = Field(description="요청 상태가 마지막으로 바뀐 때")
+
+
+class VisitQuotesOut(BaseModel):
+    """서류: 한 업체가 보낸 실측 견적서 버전들 (닫힌 요청도 기록으로 남는다)"""
+
+    visit_id: uuid.UUID
+    trade: str
+    vendor_name: str
+    status: str
+    close_reason: str | None
+    versions: list[VendorQuoteOut] = Field(description="최신 먼저")

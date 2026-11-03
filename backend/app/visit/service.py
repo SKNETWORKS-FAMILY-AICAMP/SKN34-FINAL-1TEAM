@@ -56,8 +56,10 @@ from app.visit.schemas import (
     VisitBrief,
     VisitCreateIn,
     VisitCreateOut,
+    VisitFactsOut,
     VisitListOut,
     VisitOut,
+    VisitQuotesOut,
 )
 
 NOT_LISTED = "이 집에서 고를 수 있는 업체가 아니에요."
@@ -992,3 +994,54 @@ async def set_contact_until(s: AsyncSession, visit_id: uuid.UUID, until: date) -
         s, visit_id, allowed_from=("chosen",), values={"contact_until": until}
     ):
         raise AppError(409, "stale", "그사이 상태가 바뀌었어요. 새로 불러올게요.")
+
+
+# ---- 내 공사 한눈에 · 서류에 쓰는 공개 함수 ----
+
+
+async def trade_facts(s: AsyncSession, project_id: uuid.UUID) -> dict[str, VisitFactsOut]:
+    """공정마다 이번 고르기의 요청 · 견적서 수와 때 (권한은 부르는 쪽이 먼저 확인한다)"""
+    every = [
+        v
+        for v in await repo.of_project(s, project_id, None)
+        if not (v.status == "closed" and v.close_reason == "reselected")
+    ]
+    versions = await quote_service.sent_versions(s, [v.id for v in every])
+    last = await repo.last_events(s, [v.id for v in every])
+    out: dict[str, VisitFactsOut] = {}
+    for t in {v.trade for v in every}:
+        mine = sorted((v for v in every if v.trade == t), key=lambda v: v.created_at)
+        sent = [v for v in mine if versions.get(v.id)]
+        live = [v for v in sent if v.status in ("quoted", "chosen")]
+        waiting = [v for v in mine if v.status == "requested"]
+        out[t] = VisitFactsOut(
+            trade=t,
+            asked=len(mine),
+            asked_at=mine[0].created_at if mine else None,
+            quotes=len(sent),
+            waiting=len(waiting),
+            quoted_at=max((versions[v.id][0].sent_at for v in sent), default=None),
+            quoted_names=[v.vendor_name for v in live],
+            waiting_names=[v.vendor_name for v in waiting],
+            last_at=max((last[v.id] for v in mine if v.id in last), default=None),
+        )
+    return out
+
+
+async def quote_docs(s: AsyncSession, project_id: uuid.UUID) -> list[VisitQuotesOut]:
+    """서류: 견적서를 보낸 요청마다 버전들 (닫힌 요청 포함, 처음 받은 순)"""
+    every = await repo.of_project(s, project_id, None)
+    versions = await quote_service.sent_versions(s, [v.id for v in every])
+    rows = [v for v in every if versions.get(v.id)]
+    rows.sort(key=lambda v: versions[v.id][-1].sent_at)
+    return [
+        VisitQuotesOut(
+            visit_id=v.id,
+            trade=v.trade,
+            vendor_name=v.vendor_name,
+            status=v.status,
+            close_reason=v.close_reason,
+            versions=versions[v.id],
+        )
+        for v in rows
+    ]

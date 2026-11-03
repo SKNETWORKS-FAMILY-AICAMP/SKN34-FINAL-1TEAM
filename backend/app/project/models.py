@@ -169,3 +169,22 @@ class ProjectFile(Base):
     )
     role: Mapped[str] = mapped_column(String(10))
     sort: Mapped[int] = mapped_column(SmallInteger)
+
+
+# 공사 전에 할 일 (판 WSchedule · WPlanDone). 항목을 더하면 CHECK · migration도 같이 바꾼다
+CHECK_KEYS = ("office_report",)
+CHECK_LABELS = {"office_report": "관리사무소에 공사 신고를 했어요"}
+
+
+class ProjectCheck(Base):
+    """고객이 켠 공사 전 체크 한 줄 (끄면 행을 지운다)"""
+
+    __tablename__ = "project_checks"
+    __table_args__ = (CheckConstraint("key in ('office_report')", name="key"),)
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(30), primary_key=True)
+    done_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
