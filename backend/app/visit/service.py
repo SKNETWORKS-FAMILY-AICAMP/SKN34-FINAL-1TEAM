@@ -687,7 +687,7 @@ async def save_quote(
     try:
         await quote_service.save_draft(s, v.id, vendor.id, data, today, exempt)
         await s.commit()
-    except IntegrityError as exc:  # 같은 파일을 동시에 두 견적서에 붙이면 UNIQUE가 막는다
+    except IntegrityError as exc:  # 그사이 다른 곳에서 먼저 저장해 DB 제약에 걸렸다
         await s.rollback()
         raise AppError(409, "stale", "다른 곳에서 먼저 바꿨어요. 다시 열어 주세요.") from exc
     return await quote_board(s, vendor, visit_id)
@@ -818,7 +818,7 @@ async def customer_quote_file(
 ) -> Response:
     """그 요청의 고객에게 보낸 버전의 파일만 내준다. 임시 저장본 · 다른 집 파일은 404."""
     p = await project_service.get_for(s, user, project_id)
-    got = await quote_service.quote_file(s, file_id)
+    got = await quote_service.quote_file(s, file_id, quote_id)
     v = await repo.get(s, got[0].visit_id) if got else None
     if (
         got is None

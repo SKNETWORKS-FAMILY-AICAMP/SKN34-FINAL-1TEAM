@@ -148,7 +148,8 @@ class VendorQuote(Base):
 
 
 class VendorQuoteFile(Base):
-    """견적서 버전에 붙인 업체 양식 파일 (files.kind = quote_doc). 파일 하나는 한 버전에만 붙는다."""
+    """견적서 버전에 붙인 업체 양식 파일 (files.kind = quote_doc).
+    같은 요청의 버전끼리는 같은 파일을 다시 붙일 수 있고, 다른 요청의 견적서에는 못 붙인다(service)."""
 
     __tablename__ = "vendor_quote_files"
     __table_args__ = (CheckConstraint("sort between 0 and 9", name="sort"),)
@@ -157,6 +158,6 @@ class VendorQuoteFile(Base):
         ForeignKey("vendor_quotes.id", ondelete="CASCADE"), primary_key=True
     )
     file_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, unique=True
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     sort: Mapped[int] = mapped_column(SmallInteger)

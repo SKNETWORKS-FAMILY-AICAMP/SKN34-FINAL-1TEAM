@@ -399,15 +399,17 @@ async def save_draft(
         raise AppError(422, "measured_on", "실측한 날은 오늘까지만 고를 수 있어요.")
     if data.measured_on and data.valid_until and data.valid_until < data.measured_on:
         raise AppError(422, "valid_until", "유효기간은 실측한 날 뒤로 골라 주세요.")
-    files = await files_service.owned(s, owner_id, data.file_ids)
+    files = await files_service.owned(s, owner_id, data.file_ids, lock=True)
     if any(i not in files or files[i].kind != "quote_doc" for i in data.file_ids):
         raise AppError(422, "file", "올린 견적서 파일을 다시 확인해 주세요.")
     rows = await _versions(s, visit_id)
     draft = next((r for r in rows if r.sent_at is None), None)
-    if data.file_ids:
-        used = select(VendorQuoteFile.file_id).where(VendorQuoteFile.file_id.in_(data.file_ids))
-        if draft is not None:
-            used = used.where(VendorQuoteFile.quote_id != draft.id)
+    if data.file_ids:  # 같은 요청의 앞 버전 파일은 다시 붙일 수 있다
+        used = (
+            select(VendorQuoteFile.file_id)
+            .join(VendorQuote, VendorQuote.id == VendorQuoteFile.quote_id)
+            .where(VendorQuoteFile.file_id.in_(data.file_ids), VendorQuote.visit_id != visit_id)
+        )
         if (await s.execute(used)).first():
             raise AppError(409, "file_used", "다른 견적서에 붙인 파일이에요.")
     if draft is None:
@@ -516,15 +518,20 @@ async def sent_versions(
     return out
 
 
-async def quote_file(s: AsyncSession, file_id: uuid.UUID) -> tuple[VendorQuote, File] | None:
-    """견적서에 붙은 파일과 그 견적서 버전 (내줘도 되는지는 visit.service가 정한다)"""
+async def quote_file(
+    s: AsyncSession, file_id: uuid.UUID, quote_id: uuid.UUID | None = None
+) -> tuple[VendorQuote, File] | None:
+    """견적서에 붙은 파일과 그 견적서 버전 (내줘도 되는지는 visit.service가 정한다).
+    파일은 같은 요청의 여러 버전에 붙을 수 있어서, quote_id를 주면 그 버전으로 찾는다."""
     q = (
         select(VendorQuote, File)
         .join(VendorQuoteFile, VendorQuoteFile.quote_id == VendorQuote.id)
         .join(File, File.id == VendorQuoteFile.file_id)
         .where(VendorQuoteFile.file_id == file_id)
     )
-    row = (await s.execute(q)).first()
+    if quote_id is not None:
+        q = q.where(VendorQuote.id == quote_id)
+    row = (await s.execute(q.limit(1))).first()
     return (row[0], row[1]) if row else None
 
 

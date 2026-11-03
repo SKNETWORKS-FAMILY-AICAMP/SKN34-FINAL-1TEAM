@@ -253,14 +253,13 @@ async def respond(f: File) -> Response:
 
 
 async def owned(
-    s: AsyncSession, owner_id: uuid.UUID, ids: list[uuid.UUID]
+    s: AsyncSession, owner_id: uuid.UUID, ids: list[uuid.UUID], *, lock: bool = False
 ) -> dict[uuid.UUID, File]:
-    rows = (
-        (await s.execute(select(File).where(File.id.in_(ids), File.owner_id == owner_id)))
-        .scalars()
-        .all()
-    )
-    return {r.id: r for r in rows}
+    """그 회원이 올린 파일. lock이면 행을 잠가 같은 파일을 붙이는 요청이 줄 선다."""
+    q = select(File).where(File.id.in_(ids), File.owner_id == owner_id).order_by(File.id)
+    if lock:
+        q = q.with_for_update()
+    return {r.id: r for r in (await s.execute(q)).scalars().all()}
 
 
 async def storage_keys_of(s: AsyncSession, owner_id: uuid.UUID) -> list[str]:

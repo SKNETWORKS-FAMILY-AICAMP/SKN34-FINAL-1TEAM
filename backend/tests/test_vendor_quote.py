@@ -325,14 +325,20 @@ def test_db_constraints(api, sql, error):
             query(part)
 
 
-def test_one_file_one_quote_in_db(api):
+SHARE_FILE = (
+    "insert into vendor_quote_files (quote_id, file_id, sort)"
+    " select d.id, f.file_id, 5 from vendor_quotes d, vendor_quote_files f"
+    " where d.sent_at is null and f.quote_id <> d.id"
+)
+
+
+def test_file_shared_across_versions_in_db(api):
+    """0014부터 같은 파일을 다음 버전에 다시 붙일 수 있다. 한 버전에 두 번은 PK가 막는다."""
     _, _, v = ready(api)
     api.put(url(v), json={"file_ids": [doc(api)], **FULL})
     api.post(f"{url(v)}/send")
     api.put(url(v), json={"file_ids": [doc(api, "b.pdf")]})  # 다음 버전 임시 저장
+    query(SHARE_FILE)
+    assert query("select count(distinct file_id) n from vendor_quote_files")[0]["n"] == 2
     with pytest.raises(asyncpg.exceptions.UniqueViolationError):
-        query(
-            "insert into vendor_quote_files (quote_id, file_id, sort)"
-            " select d.id, f.file_id, 5 from vendor_quotes d, vendor_quote_files f"
-            " where d.sent_at is null and f.quote_id <> d.id"
-        )
+        query(SHARE_FILE)
