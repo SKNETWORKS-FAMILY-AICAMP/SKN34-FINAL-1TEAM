@@ -66,3 +66,17 @@ async def get_project(
     s: AsyncSession = Depends(get_session),
 ) -> ProjectOut:
     return await service.get_for(s, user, project_id)
+
+
+@router.patch(
+    "/projects/{project_id}",
+    response_model=ProjectOut,
+    summary="집 정보 고치기 (실측 요청 전까지, 만든 사람만)",
+)
+async def update_project(
+    project_id: uuid.UUID,
+    data: ProjectCreate,
+    user: User = Depends(require_role("customer")),
+    s: AsyncSession = Depends(get_session),
+) -> ProjectOut:
+    return await service.update(s, user, project_id, data, today_seoul())

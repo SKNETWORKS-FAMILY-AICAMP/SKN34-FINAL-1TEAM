@@ -165,6 +165,9 @@ class PhotoOut(BaseModel):
 
 class ProjectOut(BaseModel):
     id: uuid.UUID
+    code: str
+    rev: int
+    locked: bool  # 실측을 요청해 집 정보를 더 고칠 수 없음
     sido: str
     sgg: str
     region: str
@@ -184,6 +187,7 @@ class ProjectOut(BaseModel):
 
 class ProjectListItem(BaseModel):
     id: uuid.UUID
+    code: str
     region: str
     size: SizeIn
     trades: list[str]

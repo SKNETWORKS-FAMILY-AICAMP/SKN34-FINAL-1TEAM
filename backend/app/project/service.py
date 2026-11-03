@@ -1,6 +1,6 @@
-"""프로젝트 만들기 · 보기.
+"""프로젝트(집 정보) 만들기 · 보기 · 고치기.
 
-예상 공정표 · 표준견적서 · 추천은 다음 단계(계산 엔진 이식 · 워커)에서 이 프로젝트를 읽어 만든다.
+표준견적서는 quote, 공정표는 schedule이 이 프로젝트를 읽어 만든다(rev가 바뀌면 새 버전).
 """
 
 import uuid
@@ -25,11 +25,22 @@ from app.project.schemas import (
     TradesOut,
     WhenIn,
 )
+from app.shared.clock import now_utc
 from app.shared.errors import AppError
 from app.shared.regions import is_region, region_label
 
+LOCKED = "실측을 요청한 뒤에는 집 정보를 고칠 수 없어요."
 
-async def create(s: AsyncSession, owner: User, data: ProjectCreate, today: date) -> ProjectOut:
+
+async def _check(
+    s: AsyncSession,
+    owner: User,
+    data: ProjectCreate,
+    today: date,
+    project_id: uuid.UUID | None = None,
+) -> None:
+    """만들기 · 고치기가 같이 쓰는 검사. 파일은 내가 올린 것, 종류가 맞는 것,
+    다른 프로젝트에 안 붙은 것만(고칠 때는 이 프로젝트에 붙은 것은 괜찮다)."""
     if not is_region(data.sido, data.sgg):
         raise AppError(422, "region", "지역을 다시 골라 주세요.")
     if data.built_year is not None and data.built_year > today.year:
@@ -39,36 +50,39 @@ async def create(s: AsyncSession, owner: User, data: ProjectCreate, today: date)
     latest = date(today.year + 2, today.month, min(today.day, 28))
     if any(d is not None and d > latest for d in (data.when.start, data.when.end)):
         raise AppError(422, "far_date", "2년 안의 날짜를 골라 주세요.")
-
-    # 파일: 내가 올린 것, 종류가 맞는 것, 아직 다른 프로젝트에 안 붙은 것만
     photo_ids = [p.file_id for p in data.photos]
     files = await files_service.owned(s, owner.id, photo_ids + list(data.plans))
     if any(i not in files or files[i].kind != "photo" for i in photo_ids) or any(
         i not in files or files[i].kind != "plan" for i in data.plans
     ):
         raise AppError(422, "file", "올린 사진 · 도면을 다시 확인해 주세요.")
-    if await repo.attached_file_ids(s, photo_ids + list(data.plans)):
+    ids = photo_ids + list(data.plans)
+    used = (
+        await repo.attached_file_ids(s, ids)
+        if project_id is None
+        else await repo.attached_elsewhere(s, ids, project_id)
+    )
+    if used:
         raise AppError(409, "file_used", "이미 다른 프로젝트에 붙인 파일이 있어요.")
 
-    p = Project(
-        owner_id=owner.id,
-        sido=data.sido,
-        sgg=data.sgg,
-        house_type=data.house_type,
-        built_year=data.built_year,
-        size_band=data.size.band,
-        area_basis=data.size.basis,
-        area_m2=data.size.m2,
-        balcony_ext=data.balcony_ext,
-        start_kind=data.when.kind,
-        start_date=data.when.start,
-        end_date=data.when.end,
-        occupied=data.occupied,
-        budget=data.budget,
-    )
-    s.add(p)
-    await s.flush()
 
+def _fill(p: Project, data: ProjectCreate) -> None:
+    p.sido = data.sido
+    p.sgg = data.sgg
+    p.house_type = data.house_type
+    p.built_year = data.built_year
+    p.size_band = data.size.band
+    p.area_basis = data.size.basis
+    p.area_m2 = data.size.m2
+    p.balcony_ext = data.balcony_ext
+    p.start_kind = data.when.kind
+    p.start_date = data.when.start
+    p.end_date = data.when.end
+    p.occupied = data.occupied
+    p.budget = data.budget
+
+
+async def _write_parts(s: AsyncSession, p: Project, data: ProjectCreate) -> None:
     space_id: dict[str, uuid.UUID] = {}
     for i, sp in enumerate(data.spaces):
         row = ProjectSpace(project_id=p.id, name=sp.name, sort=i)
@@ -113,12 +127,56 @@ async def create(s: AsyncSession, owner: User, data: ProjectCreate, today: date)
             for i, fid in enumerate(data.plans)
         ]
     )
+
+
+async def _commit(s: AsyncSession) -> None:
     try:
         await s.commit()
     except IntegrityError as exc:  # 같은 사진으로 동시에 두 번 만들면 파일 PK가 막는다
         await s.rollback()
         raise AppError(409, "file_used", "이미 다른 프로젝트에 붙인 파일이 있어요.") from exc
+
+
+async def create(s: AsyncSession, owner: User, data: ProjectCreate, today: date) -> ProjectOut:
+    await _check(s, owner, data, today)
+    no = await repo.next_code_no(s)
+    p = Project(owner_id=owner.id, code=f"MJ-{today:%y%m}-{no:04d}")
+    _fill(p, data)
+    s.add(p)
+    await s.flush()
+    await _write_parts(s, p, data)
+    await _commit(s)
     return await _out(s, p)
+
+
+async def update(
+    s: AsyncSession, owner: User, project_id: uuid.UUID, data: ProjectCreate, today: date
+) -> ProjectOut:
+    """집 정보 고치기: 실측을 요청하기 전까지만. 공간 · 공정 · 파일은 통째로 바꾸고 rev를 올린다."""
+    p = await repo.get_for_update(s, project_id)
+    if p is None or p.owner_id != owner.id:
+        raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
+    if p.locked_at is not None:
+        raise AppError(409, "locked", LOCKED)
+    await _check(s, owner, data, today, project_id)
+    _fill(p, data)
+    p.rev += 1
+    await repo.clear_parts(s, p.id)
+    await s.flush()
+    await _write_parts(s, p, data)
+    await _commit(s)
+    return await _out(s, p)
+
+
+async def lock_for_visit(s: AsyncSession, project_id: uuid.UUID) -> Project:
+    """실측 요청을 넣기 전에 부른다: 프로젝트 행을 잠그고(같은 프로젝트의 요청이 줄 선다),
+    아직 안 잠겼으면 locked_at을 찍는다. commit은 부르는 쪽이 한다."""
+    p = await repo.get_for_update(s, project_id)
+    if p is None:
+        raise AppError(404, "not_found", "프로젝트를 찾을 수 없어요.")
+    if p.locked_at is None:
+        p.locked_at = now_utc()
+    return p
 
 
 def _size(p: Project) -> SizeIn:
@@ -136,6 +194,9 @@ async def _out(s: AsyncSession, p: Project) -> ProjectOut:
             tr.mokgong = MokgongOut(spaces=ids, items=list(t.items))
     return ProjectOut(
         id=p.id,
+        code=p.code,
+        rev=p.rev,
+        locked=p.locked_at is not None,
         sido=p.sido,
         sgg=p.sgg,
         region=region_label(p.sido, p.sgg),
@@ -169,6 +230,7 @@ async def list_mine(s: AsyncSession, user: User) -> list[ProjectListItem]:
     return [
         ProjectListItem(
             id=p.id,
+            code=p.code,
             region=region_label(p.sido, p.sgg),
             size=_size(p),
             trades=sorted(trades[p.id]),
