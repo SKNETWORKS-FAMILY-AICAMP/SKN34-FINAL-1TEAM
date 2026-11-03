@@ -724,6 +724,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vendor/visits/{visit_id}/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 실측 견적서 올리기 · 임시 저장본 · 보낸 버전 · 칸 한도 */
+        get: operations["quote_board_vendor_visits__visit_id__quote_get"];
+        /** 실측 견적서 임시 저장 (통째로, 요청함 · 견적서 옴일 때만) */
+        put: operations["save_quote_vendor_visits__visit_id__quote_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/visits/{visit_id}/quote/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 실측 견적서 보내기 (빠진 칸은 칸별 422, 이미 보냈으면 409) */
+        post: operations["send_quote_vendor_visits__visit_id__quote_send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -1841,6 +1876,112 @@ export interface components {
             updated_at: string | null;
         };
         /**
+         * QuoteBoardOut
+         * @description 업체 실측 견적서 올리기 화면: 임시 저장본 · 보낸 버전 · 칸 한도
+         */
+        QuoteBoardOut: {
+            /**
+             * Visit Id
+             * Format: uuid
+             */
+            visit_id: string;
+            /** Visit Status */
+            visit_status: string;
+            /**
+             * Tax Kind
+             * @description 면세 업체(exempt)는 부가세 방식이 exempt만 된다
+             */
+            tax_kind: string;
+            /**
+             * Vat Modes
+             * @description 고를 수 있는 부가세 방식
+             */
+            vat_modes: string[];
+            /** Files Max */
+            files_max: number;
+            /** Days Max */
+            days_max: number;
+            /** @description 임시 저장본 (없으면 비어 있다) */
+            draft: components["schemas"]["VendorQuoteOut"] | null;
+            /**
+             * Sent
+             * @description 보낸 버전 (최신 먼저)
+             */
+            sent: components["schemas"]["VendorQuoteOut"][];
+        };
+        /**
+         * QuoteBriefOut
+         * @description 고객 쪽 요청 목록에 붙는 보낸 최신 견적서 요약
+         */
+        QuoteBriefOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Code */
+            code: string;
+            /** Version */
+            version: number;
+            /** Total */
+            total: number;
+            /** Days */
+            days: number | null;
+            /** Valid Until */
+            valid_until: string | null;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
+        };
+        /**
+         * QuoteDraftIn
+         * @description 실측 견적서 임시 저장 (통째로). 파일은 먼저 POST /files (kind=quote_doc)로 올린다.
+         */
+        QuoteDraftIn: {
+            /** File Ids */
+            file_ids?: string[];
+            /**
+             * Measured On
+             * @description 실측한 날
+             */
+            measured_on?: string | null;
+            /**
+             * Entered Amount
+             * @description 견적서에 적은 낼 금액 그대로 (원)
+             */
+            entered_amount?: number | null;
+            /** Vat Mode */
+            vat_mode?: ("included" | "excluded" | "exempt") | null;
+            /**
+             * Days
+             * @description 공사 기간 (일)
+             */
+            days?: number | null;
+            /**
+             * Valid Until
+             * @description 견적 유효기간 (이날까지)
+             */
+            valid_until?: string | null;
+        };
+        /** QuoteFileOut */
+        QuoteFileOut: {
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size */
+            size: number;
+            /** Sort */
+            sort: number;
+        };
+        /**
          * ReapplyIn
          * @description 거절된 업체가 같은 계정 · 같은 사업자등록번호로 다시 신청. 새 등록증은 먼저 POST /files (kind=license).
          */
@@ -2364,6 +2505,57 @@ export interface components {
             vendors: components["schemas"]["VendorRowOut"][];
         };
         /**
+         * VendorQuoteOut
+         * @description 실측 견적서 한 버전. supply · vat · total은 계산 엔진(from_entered)이 만든 값이다.
+         */
+        VendorQuoteOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Code */
+            code: string;
+            /** Version */
+            version: number;
+            /**
+             * Sent At
+             * @description 비면 임시 저장
+             */
+            sent_at: string | null;
+            /** Measured On */
+            measured_on: string | null;
+            /** Entered Amount */
+            entered_amount: number | null;
+            /** Vat Mode */
+            vat_mode: string | null;
+            /** Supply */
+            supply: number | null;
+            /** Vat */
+            vat: number | null;
+            /**
+             * Total
+             * @description 고객이 낼 금액
+             */
+            total: number | null;
+            /** Days */
+            days: number | null;
+            /** Valid Until */
+            valid_until: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Files */
+            files: components["schemas"]["QuoteFileOut"][];
+        };
+        /**
          * VendorRowOut
          * @description 업체 고르기 한 줄. 연락처(휴대폰 · 채널 주소)는 실측 요청 뒤에만 보인다.
          */
@@ -2689,6 +2881,8 @@ export interface components {
              * @description 취소 · 못 받음 · 닫힘이 된 때
              */
             closed_at: string | null;
+            /** @description 업체가 보낸 최신 실측 견적서 요약 */
+            quote: components["schemas"]["QuoteBriefOut"] | null;
         };
         /** WhenIn */
         WhenIn: {
@@ -4134,6 +4328,103 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quote_board_vendor_visits__visit_id__quote_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteBoardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_quote_vendor_visits__visit_id__quote_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuoteDraftIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteBoardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_quote_vendor_visits__visit_id__quote_send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteBoardOut"];
+                };
             };
             /** @description Validation Error */
             422: {
