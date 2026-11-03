@@ -1,16 +1,18 @@
 // 확정 공정표 화면 (시안 WPlanDone). 공사 날짜를 하나라도 수락하면 /projects/[id]/plan이 이 모습이 된다.
 // 칸 상태(수락함 · 수락 전 · 예상 자리) · 업체 · 날짜 · 일하는 날 · 새 날짜 미리 보기는 모두 API(계산 엔진) 값이다.
 // 공사 중 추가 금액은 공정마다 PlanExtras(확인 기다림이면 머리에 한 줄). 업체가 공사를 끝냈다고 올리면 WorkCheck(확인 · 남은 일 · 끝남, plan.deals)를 머리 아래 둔다.
-// 연락처 기한(contact_until)은 plan.deals 값 그대로다. 시안의 '공사 전에 할 일'(저장할 API가 없음) · 상담 묻기는 넣지 않는다.
+// 연락처 기한(contact_until)은 plan.deals 값 그대로다. 공사 전에 할 일은 PreWorkCheck(체크 목록 · 시작일은 한 공사 화면 API 값)로 공사 시작 전에만 둔다. 상담 묻기는 넣지 않는다.
 import Link from "next/link";
 import { Clock } from "@/components/confirm/DealStatus";
 import { day, when } from "@/components/confirm/text";
 import { PlanTabs } from "@/components/project/PlanTabs";
+import { PreWorkCheck } from "@/components/project/PreWorkCheck";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import type { TradeDates } from "@/components/schedule/text";
 import { Warn } from "@/components/vendors/icons";
 import { iGa, telDigits } from "@/components/vendors/text";
-import { dateSeoul, dotDate, md } from "@/lib/format";
+import { dateSeoul, dotDate, md, todaySeoul } from "@/lib/format";
+import type { Schemas } from "@/lib/backend/client";
 import { tradeLabel } from "@/lib/labels";
 import { ChangeArea, type ChangeItem } from "./ChangeArea";
 import { ChangePreview } from "./ChangePreview";
@@ -22,7 +24,11 @@ import { WorkCheck } from "./WorkCheck";
 import { blockRows, stateLine, workEnd, type Plan } from "./text";
 import s from "./plan.module.css";
 
-type Props = { id: string; title: string; plan: Plan; rows: TradeDates[]; contacts: PlanContact[] };
+type Props = {
+  id: string; title: string; plan: Plan; rows: TradeDates[]; contacts: PlanContact[];
+  /** 공사 전에 할 일 (GET overview의 checks) · 공사 시작일 (overview.period가 확정일 때) */
+  checks: Schemas["ProjectCheckOut"][]; start: string | null;
+};
 
 /** 수락한 날짜 바꾸기 요청을 보낸 뒤: 보낸 때 · 업체가 새 날짜를 올릴 기한 (기한 지남이면 그 한 줄) */
 function RequestLine({ t }: { t: TradeDates }) {
@@ -44,7 +50,7 @@ function RequestLine({ t }: { t: TradeDates }) {
   );
 }
 
-export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
+export function FinalPlan({ id, title, plan, rows, contacts, checks, start }: Props) {
   const bars = blockRows(plan.blocks);
   const end = workEnd(plan);
   const byTrade = (t: string) => rows.find((r) => r.deal.trade === t);
@@ -112,6 +118,7 @@ export function FinalPlan({ id, title, plan, rows, contacts }: Props) {
       </section>
 
       <div className={`mj-wrap ${s.foot}`}>
+        {start && start > todaySeoul() ? <PreWorkCheck projectId={id} checks={checks} start={start} /> : null}
         <PlanExtras projectId={id} groups={extraGroups} deals={extraDeals} multi={rows.length > 1} />
         <PlanContacts rows={contactRows} />
       </div>

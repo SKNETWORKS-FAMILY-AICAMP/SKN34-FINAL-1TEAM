@@ -7,7 +7,7 @@ import { PlanTabs } from "@/components/project/PlanTabs";
 import { PlanBars, PlanDays, PlanLegend } from "@/components/project/PlanViews";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { getMyProject } from "@/lib/api/project";
-import { getPlan, getSchedule, type ApiSchedule } from "@/lib/api/schedule";
+import { getOverview, getPlan, getSchedule, type ApiSchedule } from "@/lib/api/schedule";
 import { listProjectVisits } from "@/lib/api/visit";
 import { crewLabel, projectTitle } from "@/lib/labels";
 import { dateSeoul, decText, dotDate, md, todaySeoul } from "@/lib/format";
@@ -35,8 +35,10 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
   if (!p || !plan) notFound();
   const title = projectTitle(p.region, (["dobae", "mokgong"] as const).filter((t) => p.trades[t]));
   if (plan.kind === "final") {
-    const sch = await getSchedule(id);
-    return <FinalPlan id={id} title={title} plan={plan} rows={sch?.trades ?? []} contacts={await contactsOf(id, sch)} />;
+    // 공사 전에 할 일: 체크 목록 · 시작일은 한 공사 화면 API 값 (시작일은 그 공정표가 확정일 때만)
+    const [sch, ov] = await Promise.all([getSchedule(id), getOverview(id)]);
+    const start = ov?.period.kind === "final" ? ov.period.start : null;
+    return <FinalPlan id={id} title={title} plan={plan} rows={sch?.trades ?? []} contacts={await contactsOf(id, sch)} checks={ov?.checks ?? []} start={start} />;
   }
   // 예상 공정표를 골라 봤는데 수락한 날짜가 있으면 확정 공정표로 돌아가는 링크를 둔다
   const hasFinal = want === "expected" && ((await getSchedule(id))?.final_version ?? 0) > 0;

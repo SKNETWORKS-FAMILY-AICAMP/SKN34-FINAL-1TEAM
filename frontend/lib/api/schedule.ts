@@ -1,4 +1,4 @@
-// 서버 쪽 읽기: 예상 공정표 · 업체 확정 · 공사 날짜(실제 API), 확정 공정표(예시 데이터).
+// 서버 쪽 읽기: 공정표 · 업체 확정 · 공사 날짜 · 한 공사 화면 · 서류(실제 API), 확정 공정표(예시 데이터).
 import { serverGet, type Schemas } from "@/lib/backend/server";
 import { FX } from "@/lib/mock/data";
 import { isUuid } from "./project";
@@ -25,6 +25,18 @@ export type ApiJob = Schemas["JobOut"];
 /** 업체: 공사 날짜 내기 화면 값(내 확정만, 아니면 null) */
 export async function getVendorJob(dealId: string) {
   return isUuid(dealId) ? serverGet<ApiJob>(`/vendor/jobs/${dealId}`) : null;
+}
+
+export type ApiOverview = Schemas["OverviewOut"];
+/** 고객: 한 공사 화면(지금 할 일 · 공정별 단계 · 낼 금액 · 공사 기간 · 연락처 · 체크). 남의 공사면 null */
+export async function getOverview(projectId: string) {
+  return isUuid(projectId) ? serverGet<ApiOverview>(`/projects/${projectId}/overview`) : null;
+}
+
+export type ApiDocs = Schemas["DocsOut"];
+/** 고객: 서류 모음(표준견적서 · 공정표 버전 · 실측 견적서 · 추가 금액). 남의 공사면 null */
+export async function getDocs(projectId: string) {
+  return isUuid(projectId) ? serverGet<ApiDocs>(`/projects/${projectId}/docs`) : null;
 }
 
 // 아래는 예시 프로젝트(p1) 화면이 쓰는 예시 데이터

@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { RealProjectHub } from "@/components/project/RealProjectHub";
+import { Overview } from "@/components/project/overview/Overview";
 import { gradeLabel } from "@/lib/labels";
 import { notFound } from "next/navigation";
 import { ProjectTrack } from "@/components/project/ProjectTrack";
-import { demoTradeLines, getMyProject, getProject, isDemoProject, realTradeLines } from "@/lib/api/project";
+import { demoTradeLines, getProject, isDemoProject } from "@/lib/api/project";
 import { getFinalQuote, getQuoteRequests } from "@/lib/api/quote";
-import { getConfirmedSchedule } from "@/lib/api/schedule";
+import { getConfirmedSchedule, getOverview } from "@/lib/api/schedule";
 import { vendorName } from "@/lib/api/vendor";
 import { getVisits } from "@/lib/api/visit";
 import { projectStep } from "@/lib/trade-status";
@@ -17,10 +17,11 @@ const WHEN = { date: "날짜가 정해졌어요", movein: "이사하는 날만 �
 
 export default async function ProjectHub({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // 실제 프로젝트: 한 공사 화면(시안 WProjectB). 아래 예시 프로젝트(p1) 쪽은 정리 전까지 그대로 둔다
   if (!isDemoProject(id)) {
-    const real = await getMyProject(id);
-    if (!real) notFound();
-    return <RealProjectHub p={real} step={projectStep(realTradeLines(TRADES.filter((t) => real.trades[t])))} />;
+    const ov = await getOverview(id);
+    if (!ov) notFound();
+    return <Overview ov={ov} />;
   }
   const p = await getProject(id);
   if (!p) notFound();
