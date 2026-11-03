@@ -1,21 +1,28 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
+from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import require_role
 from app.auth.models import User
 from app.db import get_session
 from app.shared.clock import today_seoul
+from app.vendor.deps import approved_vendor
 from app.visit import service
 from app.visit.schemas import (
+    DeclineIn,
+    InboxSummaryOut,
     VendorDetailOut,
     VendorListOut,
+    VendorVisitDetailOut,
+    VendorVisitPage,
     VisitCreateIn,
     VisitCreateOut,
     VisitListOut,
+    VisitOut,
 )
 
 router = APIRouter(tags=["업체 고르기 · 실측 요청"])
@@ -94,3 +101,78 @@ async def visits(
     s: AsyncSession = Depends(get_session),
 ) -> VisitListOut:
     return await service.visits_for(s, user, project_id, trade, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/visits/{visit_id}/cancel",
+    response_model=VisitOut,
+    summary="실측 요청 취소 (견적서가 오기 전까지)",
+)
+async def cancel_visit(
+    project_id: uuid.UUID,
+    visit_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> VisitOut:
+    return await service.cancel(s, user, project_id, visit_id, today_seoul())
+
+
+@router.get(
+    "/vendor/visits",
+    response_model=VendorVisitPage,
+    summary="업체 작업함 · 할 일 · 기다림 · 끝남 (끝남은 before 커서로 limit씩)",
+)
+async def vendor_inbox(
+    tab: Literal["todo", "waiting", "done"] = "todo",
+    before: AwareDatetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> VendorVisitPage:
+    return await service.inbox(s, vendor, tab, today_seoul(), before, limit)
+
+
+@router.get("/vendor/visits/summary", response_model=InboxSummaryOut, summary="업체 작업함 탭별 수")
+async def vendor_inbox_summary(
+    vendor: User = Depends(approved_vendor), s: AsyncSession = Depends(get_session)
+) -> InboxSummaryOut:
+    return await service.inbox_summary(s, vendor)
+
+
+@router.get(
+    "/vendor/visits/{visit_id}",
+    response_model=VendorVisitDetailOut,
+    summary="받은 실측 요청 자세히 (고객 연락처는 보낸 요청이 열려 있을 때만)",
+)
+async def vendor_visit(
+    visit_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> VendorVisitDetailOut:
+    return await service.vendor_visit(s, vendor, visit_id, today_seoul())
+
+
+@router.post(
+    "/vendor/visits/{visit_id}/decline",
+    response_model=VendorVisitDetailOut,
+    summary="이 요청 못 받아요 (견적서를 보내기 전까지)",
+)
+async def decline_visit(
+    visit_id: uuid.UUID,
+    data: DeclineIn,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> VendorVisitDetailOut:
+    return await service.decline(s, vendor, visit_id, data.code, today_seoul())
+
+
+@router.post(
+    "/vendor/visits/{visit_id}/seen", status_code=204, summary="받은 요청 열어 봄 ('새 요청' 지움)"
+)
+async def seen_visit(
+    visit_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    await service.mark_seen(s, vendor, visit_id)
+    return Response(status_code=204)

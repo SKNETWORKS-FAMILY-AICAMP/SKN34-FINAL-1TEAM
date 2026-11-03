@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.models import User
 from app.project.models import Project, ProjectFile, ProjectSpace, ProjectTrade, ProjectTradeSpace
 
 
@@ -96,3 +97,15 @@ async def trades_of(s: AsyncSession, project_ids: list[uuid.UUID]) -> dict[uuid.
         ).all():
             out[pid].append(t)
     return out
+
+
+async def with_owners(
+    s: AsyncSession, project_ids: list[uuid.UUID]
+) -> list[tuple[Project, str, str | None]]:
+    """프로젝트와 만든 고객의 이름 · 휴대폰 (회원 표는 읽기 조인에만 쓴다)"""
+    q = (
+        select(Project, User.name, User.phone)
+        .join(User, User.id == Project.owner_id)
+        .where(Project.id.in_(project_ids))
+    )
+    return [(p, name, phone) for p, name, phone in (await s.execute(q)).all()]

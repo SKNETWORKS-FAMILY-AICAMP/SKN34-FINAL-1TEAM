@@ -141,6 +141,7 @@ class VisitOut(BaseModel):
     estimate_total: int | None = Field(description="요청 때 가견적 사본 (없으면 비어 있다)")
     contact_visible: bool
     contact: ContactOut | None
+    closed_at: datetime | None = Field(description="취소 · 못 받음 · 닫힘이 된 때")
 
 
 class VisitCreateOut(BaseModel):
@@ -159,3 +160,68 @@ class VisitListOut(BaseModel):
     slots_left: dict[str, int] = Field(description="공정마다 더 담을 수 있는 업체 수")
     request_texts: list[RequestTextOut]
     visits: list[VisitOut] = Field(description="최근 순, 닫힌 것 포함")
+
+
+class DeclineIn(BaseModel):
+    code: Literal["full", "out_of_area", "other"] = Field(
+        description="일정이 꽉 찼어요 · 지역 밖이에요 · 그 밖"
+    )
+
+
+class CustomerContactOut(BaseModel):
+    """고객이 보내기로 고른 연락처 (요청이 닫히면 바로 가려진다)"""
+
+    name: str
+    phone: str | None
+    address: str | None = Field(description="자세히에서만: 서울 노원구 상계주공 101동 1203호")
+
+
+class VendorVisitRow(BaseModel):
+    """업체 작업함 한 줄. 고객 연락처는 고객이 보낸 요청이 열려 있을 때만 들어 있다."""
+
+    id: uuid.UUID
+    received_at: datetime
+    code: str = Field(description="요청 번호 (연락처가 없으면 고객이 이 번호를 말한다)")
+    trade: str
+    grade: str | None = Field(description="도배 유형 (economy · basic)")
+    region: str
+    area_name: str
+    pyeong: Decimal | None = Field(description="표준견적서에 저장한 평 (공급 기준)")
+    status: str
+    new: bool = Field(description="아직 열어 보지 않은 새 요청")
+    share_contact: bool
+    closed_at: datetime | None
+    decline_code: str | None
+    close_reason: str | None
+    waiting_days: int | None = Field(description="견적서를 보낸 뒤 기다린 날 (서울 날짜)")
+    customer: CustomerContactOut | None
+
+
+class VendorVisitPage(BaseModel):
+    items: list[VendorVisitRow]
+    next_before: datetime | None = Field(description="끝남 탭 다음 쪽 커서 (없으면 끝)")
+
+
+class RecentOut(BaseModel):
+    requested: int
+    quoted: int
+    chosen: int
+
+
+class InboxSummaryOut(BaseModel):
+    todo: int
+    waiting: int
+    done: int
+    jobs: int = Field(description="확정된 공사 (19번 뒤에 채운다)")
+    recent: RecentOut = Field(description="최근 30일: 받은 요청 · 보낸 견적서 · 확정")
+
+
+class VendorVisitDetailOut(VendorVisitRow):
+    """업체가 보는 요청 자세히"""
+
+    area_m2: Decimal | None
+    area_basis: str | None
+    occupied: bool
+    home_text: str = Field(description="노원구 · 32평 · 빈 집")
+    when_text: str = Field(description="희망 시기: 11.16(월) ~ 11.23(월)")
+    message: str | None

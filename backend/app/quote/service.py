@@ -194,6 +194,31 @@ async def _lines(s: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, list[
     return out
 
 
+async def latest_of(
+    s: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[tuple[uuid.UUID, str], StandardQuote]:
+    """프로젝트 · 공정마다 저장된 최신 표준견적서 (새로 계산하지 않는다). 평 · 면적 표시에 쓴다."""
+    if not project_ids:
+        return {}
+    sub = (
+        select(
+            StandardQuote.project_id,
+            StandardQuote.trade,
+            func.max(StandardQuote.version).label("v"),
+        )
+        .where(StandardQuote.project_id.in_(project_ids))
+        .group_by(StandardQuote.project_id, StandardQuote.trade)
+        .subquery()
+    )
+    q = select(StandardQuote).join(
+        sub,
+        (StandardQuote.project_id == sub.c.project_id)
+        & (StandardQuote.trade == sub.c.trade)
+        & (StandardQuote.version == sub.c.v),
+    )
+    return {(r.project_id, r.trade): r for r in (await s.scalars(q)).all()}
+
+
 async def standard_trade(
     s: AsyncSession, p: ProjectOut, trade: str
 ) -> tuple[StandardQuote, list[StandardQuoteLine]] | None:

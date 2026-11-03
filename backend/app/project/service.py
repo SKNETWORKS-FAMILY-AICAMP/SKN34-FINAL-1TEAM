@@ -17,6 +17,7 @@ from app.project.schemas import (
     DobaeOut,
     MokgongOut,
     PhotoOut,
+    ProjectBrief,
     ProjectCreate,
     ProjectListItem,
     ProjectOut,
@@ -243,3 +244,27 @@ async def list_mine(s: AsyncSession, user: User) -> list[ProjectListItem]:
         )
         for p in rows
     ]
+
+
+async def briefs(s: AsyncSession, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, ProjectBrief]:
+    """실측 요청을 받은 업체 쪽에 쓰는 집 요약 (권한은 부르는 쪽이 요청으로 확인한다)."""
+    if not project_ids:
+        return {}
+    return {
+        p.id: ProjectBrief(
+            id=p.id,
+            code=p.code,
+            owner_id=p.owner_id,
+            owner_name=name,
+            owner_phone=phone,
+            sido=p.sido,
+            sgg=p.sgg,
+            region=region_label(p.sido, p.sgg),
+            occupied=p.occupied,
+            when=WhenIn(kind=p.start_kind, start=p.start_date, end=p.end_date),
+            apt_name=p.apt_name,
+            dong=p.dong,
+            ho=p.ho,
+        )
+        for p, name, phone in await repo.with_owners(s, project_ids)
+    }

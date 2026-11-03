@@ -192,3 +192,22 @@ class ProjectListItem(BaseModel):
     size: SizeIn
     trades: list[str]
     created_at: datetime
+
+
+class ProjectBrief(BaseModel):
+    """다른 기능(실측 요청)이 업체 쪽 화면에 쓰는 집 요약. 고객 이름 · 휴대폰 · 동 · 호수는
+    보여도 되는지 부르는 쪽(visit.service)이 정한다."""
+
+    id: uuid.UUID
+    code: str
+    owner_id: uuid.UUID
+    owner_name: str
+    owner_phone: str | None
+    sido: str
+    sgg: str
+    region: str
+    occupied: bool
+    when: WhenIn
+    apt_name: str | None
+    dong: str | None
+    ho: str | None

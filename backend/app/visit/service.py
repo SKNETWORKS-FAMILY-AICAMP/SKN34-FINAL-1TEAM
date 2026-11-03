@@ -8,7 +8,7 @@
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.responses import Response
@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import User
 from app.calc.quote_diff import percent_vs
-from app.calc.schedule import years_since
+from app.calc.schedule import days_since, years_since
 from app.files import service as files_service
 from app.notify import service as notify_service
 from app.project import service as project_service
-from app.project.schemas import ProjectOut
+from app.project.schemas import ProjectBrief, ProjectOut, WhenIn
 from app.quote import service as quote_service
 from app.quote.models import StandardQuote, StandardQuoteLine
 from app.shared.clock import SEOUL, now_utc
@@ -32,13 +32,19 @@ from app.vendor.schemas import ContactOut, EstimateOut
 from app.visit import repository as repo
 from app.visit.models import LIVE, SLOTS, Visit, VisitEvent
 from app.visit.schemas import (
+    CustomerContactOut,
     Direction,
     EstimateDetailOut,
     FailedOut,
+    InboxSummaryOut,
+    RecentOut,
     RequestTextOut,
     VendorDetailOut,
     VendorListOut,
     VendorRowOut,
+    VendorVisitDetailOut,
+    VendorVisitPage,
+    VendorVisitRow,
     VisitBrief,
     VisitCreateIn,
     VisitCreateOut,
@@ -59,6 +65,9 @@ MOK_LABEL = {
 }
 BASIS_SHORT = {"supply": "공급", "exclusive": "전용"}
 WEEKDAY = "월화수목금토일"
+DONE = ("cancelled", "declined", "closed")  # 끝남 탭
+TABS = {"todo": ("requested",), "waiting": ("quoted",), "done": DONE}
+RECENT_DAYS = 30
 
 
 def contact_visible(status: str, contact_until: date | None, today: date) -> bool:
@@ -228,8 +237,8 @@ def _number(x: Decimal) -> str:
     return format(x.normalize(), "f")
 
 
-def _when(p: ProjectOut) -> str:
-    w = p.when
+def _when(w: WhenIn) -> str:
+    """희망 시기 문구 (요청 문구 · 업체 쪽 자세히가 같이 쓴다)"""
     if w.kind == "date" and w.start:
         return f"{_md(w.start)} ~ {_md(w.end)}" if w.end else f"{_md(w.start)}부터"
     if w.kind == "movein" and w.start:
@@ -252,11 +261,16 @@ def request_text(p: ProjectOut, std: StandardQuote) -> str:
     occupied = "짐이 있는 집이에요." if p.occupied else "빈 집이에요."
     return (
         f"[믿집] 실측 요청이에요. 요청 번호 {p.code} · {work} · {home}"
-        f" · 희망 시기 {_when(p)} · {occupied}"
+        f" · 희망 시기 {_when(p.when)} · {occupied}"
     )
 
 
-def _visit_out(v: Visit, contacts: dict[uuid.UUID, ContactOut], today: date) -> VisitOut:
+def _visit_out(
+    v: Visit,
+    contacts: dict[uuid.UUID, ContactOut],
+    today: date,
+    closed: dict[uuid.UUID, datetime] | None = None,
+) -> VisitOut:
     visible = contact_visible(v.status, v.contact_until, today)
     return VisitOut(
         id=v.id,
@@ -272,6 +286,7 @@ def _visit_out(v: Visit, contacts: dict[uuid.UUID, ContactOut], today: date) -> 
         estimate_total=v.estimate_total,
         contact_visible=visible,
         contact=contacts.get(v.vendor_id) if visible and v.vendor_id else None,
+        closed_at=(closed or {}).get(v.id) if v.status in DONE else None,
     )
 
 
@@ -371,6 +386,7 @@ async def visits_for(
     every = await repo.of_project(s, p.id, None)
     rows = [v for v in every if trade is None or v.trade == trade]
     contacts = await vendor_service.contacts(s, [v.vendor_id for v in rows if v.vendor_id])
+    closed = await repo.last_events(s, [v.id for v in rows if v.status in DONE])
     texts = []
     for t in [trade] if trade else trades:
         got = await quote_service.standard_trade(s, p, t)
@@ -383,5 +399,228 @@ async def visits_for(
             t: SLOTS - sum(1 for v in every if v.trade == t and v.status in LIVE) for t in trades
         },
         request_texts=texts,
-        visits=[_visit_out(v, contacts, today) for v in rows],
+        visits=[_visit_out(v, contacts, today, closed) for v in rows],
+    )
+
+
+# ---- 상태 바꾸기: 고객 취소 · 업체 못 받아요 (허용 전이 → 조건부 UPDATE → 같은 트랜잭션에 이력 · 알림) ----
+
+
+def _i_ga(name: str) -> str:
+    """받침이 있으면 '이', 없으면 '가' (마루와벽이 · 결도배가)"""
+    last = name[-1:] or " "
+    if "가" <= last <= "힣":
+        return name + ("이" if (ord(last) - 0xAC00) % 28 else "가")
+    return name + "이"
+
+
+async def _move(
+    s: AsyncSession,
+    v: Visit,
+    *,
+    to: str,
+    by: User,
+    values: dict | None = None,
+    code: str | None = None,
+    message: str,
+) -> None:
+    """requested에서만 바꾼다. 1행이 아니면 409(다른 곳에서 먼저 바꿈)."""
+    ok = await repo.set_status(
+        s, v.id, allowed_from=("requested",), values={"status": to, **(values or {})}
+    )
+    if not ok:
+        raise AppError(409, "invalid_state", message)
+    s.add(VisitEvent(visit_id=v.id, from_status="requested", to_status=to, by_id=by.id, code=code))
+
+
+async def cancel(
+    s: AsyncSession, user: User, project_id: uuid.UUID, visit_id: uuid.UUID, today: date
+) -> VisitOut:
+    """고객이 요청 취소 (견적서가 오기 전까지). 칸이 비고 연락처는 바로 가려진다."""
+    p = await project_service.get_for(s, user, project_id)
+    v = await repo.get(s, visit_id)
+    if v is None or v.project_id != p.id:
+        raise AppError(404, "not_found", "실측 요청을 찾을 수 없어요.")
+    if v.status == "quoted":
+        raise AppError(409, "invalid_state", "견적서가 온 뒤에는 취소할 수 없어요.")
+    await _move(s, v, to="cancelled", by=user, message="이미 닫힌 요청이에요.")
+    if v.vendor_id is not None:
+        await notify_service.add(
+            s,
+            user_id=v.vendor_id,
+            kind="visit_cancelled",
+            body=f"고객이 실측 요청을 취소했어요 · {TRADE_LABEL[v.trade]}",
+            link=f"/vendor/requests/{v.id}",
+            dedup_key=f"visit:{v.id}:cancelled",
+        )
+    await s.commit()
+    v = await repo.get(s, visit_id)
+    closed = await repo.last_events(s, [v.id])
+    return _visit_out(v, {}, today, closed)
+
+
+async def _mine(s: AsyncSession, vendor: User, visit_id: uuid.UUID) -> Visit:
+    v = await repo.get(s, visit_id)
+    if v is None or v.vendor_id != vendor.id:  # 다른 업체 요청은 있는지도 알려 주지 않는다
+        raise AppError(404, "not_found", "실측 요청을 찾을 수 없어요.")
+    return v
+
+
+async def decline(
+    s: AsyncSession, vendor: User, visit_id: uuid.UUID, code: str, today: date
+) -> VendorVisitDetailOut:
+    """업체가 이 요청을 못 받아요 (견적서를 보내기 전까지). 고객에게 고른 이유가 보인다."""
+    v = await _mine(s, vendor, visit_id)
+    await _move(
+        s,
+        v,
+        to="declined",
+        by=vendor,
+        values={"decline_code": code},
+        code=code,
+        message="이미 닫혔거나 견적서를 보낸 요청이에요.",
+    )
+    owner = (await project_service.briefs(s, [v.project_id]))[v.project_id].owner_id
+    await notify_service.add(
+        s,
+        user_id=owner,
+        kind="visit_declined",
+        body=f"{_i_ga(v.vendor_name)} 이번 요청을 받지 못해요 · 다른 업체를 담아 주세요",
+        link=f"/projects/{v.project_id}/visits",
+        dedup_key=f"visit:{v.id}:declined",
+        project_id=v.project_id,
+    )
+    await s.commit()
+    return await vendor_visit(s, vendor, visit_id, today)
+
+
+async def mark_seen(s: AsyncSession, vendor: User, visit_id: uuid.UUID) -> None:
+    """'새 요청' 표시 지우기: 처음 열었을 때만 시각을 찍는다 (화면이 요청을 열 때 부른다)."""
+    v = await _mine(s, vendor, visit_id)
+    await repo.mark_seen(s, v.id, now_utc())
+    await s.commit()
+
+
+# ---- 업체 작업함 ----
+
+
+def _home(sgg: str, std: StandardQuote | None, occupied: bool) -> str:
+    """노원구 · 32평 · 빈 집"""
+    parts = [sgg]
+    if std is not None:
+        parts.append(f"{_number(std.pyeong)}평")
+    parts.append("짐 있는 집" if occupied else "빈 집")
+    return " · ".join(parts)
+
+
+def _unit(b: ProjectBrief) -> str | None:
+    """서울 노원구 상계주공 101동 1203호"""
+    if not (b.apt_name and b.dong and b.ho):
+        return None
+    dong = b.dong if b.dong.endswith("동") else f"{b.dong}동"
+    ho = b.ho if b.ho.endswith("호") else f"{b.ho}호"
+    return f"{b.region} {b.apt_name} {dong} {ho}"
+
+
+def _row(
+    v: Visit,
+    b: ProjectBrief,
+    std: StandardQuote | None,
+    last: datetime | None,
+    today: date,
+    *,
+    address: bool = False,
+) -> dict:
+    shown = customer_contact_visible(v, today)
+    return {
+        "id": v.id,
+        "received_at": v.created_at,
+        "code": b.code,
+        "trade": v.trade,
+        "grade": std.grade if std is not None else None,
+        "region": b.region,
+        "area_name": b.sgg,
+        "pyeong": std.pyeong if std is not None else None,
+        "status": v.status,
+        "new": v.status == "requested" and v.vendor_seen_at is None,
+        "share_contact": v.share_contact,
+        "closed_at": last if v.status in DONE else None,
+        "decline_code": v.decline_code,
+        "close_reason": v.close_reason,
+        "waiting_days": days_since(last, today) if v.status == "quoted" and last else None,
+        "customer": CustomerContactOut(
+            name=b.owner_name, phone=b.owner_phone, address=_unit(b) if address else None
+        )
+        if shown
+        else None,
+    }
+
+
+async def _context(
+    s: AsyncSession, visits: list[Visit]
+) -> tuple[dict[uuid.UUID, ProjectBrief], dict[tuple[uuid.UUID, str], StandardQuote]]:
+    ids = list({v.project_id for v in visits})
+    return await project_service.briefs(s, ids), await quote_service.latest_of(s, ids)
+
+
+async def inbox(
+    s: AsyncSession,
+    vendor: User,
+    tab: str,
+    today: date,
+    before: datetime | None = None,
+    limit: int = 20,
+) -> VendorVisitPage:
+    """할 일: 새 요청부터, 그다음 받은 날 순 · 기다림: 오래 기다린 순 · 끝남: 최근 순(limit씩)."""
+    done = tab == "done"
+    pairs = await repo.of_vendor(
+        s, vendor.id, TABS[tab], before if done else None, limit if done else None
+    )
+    if tab == "todo":
+        pairs.sort(key=lambda x: (x[0].vendor_seen_at is not None, x[0].created_at))
+    elif tab == "waiting":
+        pairs.sort(key=lambda x: x[1])
+    briefs, stds = await _context(s, [v for v, _ in pairs])
+    items = [
+        VendorVisitRow(
+            **_row(v, briefs[v.project_id], stds.get((v.project_id, v.trade)), at, today)
+        )
+        for v, at in pairs
+    ]
+    more = done and len(pairs) == limit
+    return VendorVisitPage(items=items, next_before=pairs[-1][1] if more else None)
+
+
+async def inbox_summary(s: AsyncSession, vendor: User) -> InboxSummaryOut:
+    n = await repo.counts_of_vendor(s, vendor.id)
+    recent = await repo.recent_moves(s, vendor.id, now_utc() - timedelta(days=RECENT_DAYS))
+    return InboxSummaryOut(
+        todo=n.get("requested", 0),
+        waiting=n.get("quoted", 0),
+        done=sum(n.get(st, 0) for st in DONE),
+        jobs=0,
+        recent=RecentOut(
+            requested=recent.get("requested", 0),
+            quoted=recent.get("quoted", 0),
+            chosen=recent.get("chosen", 0),
+        ),
+    )
+
+
+async def vendor_visit(
+    s: AsyncSession, vendor: User, visit_id: uuid.UUID, today: date
+) -> VendorVisitDetailOut:
+    """업체가 보는 요청 자세히: 집 · 희망 시기 · 남긴 말, 고객이 보낸 연락처(열려 있을 때만)."""
+    v = await _mine(s, vendor, visit_id)
+    briefs, stds = await _context(s, [v])
+    b, std = briefs[v.project_id], stds.get((v.project_id, v.trade))
+    last = (await repo.last_events(s, [v.id])).get(v.id)
+    return VendorVisitDetailOut(
+        **_row(v, b, std, last, today, address=True),
+        area_m2=std.area_m2 if std is not None else None,
+        area_basis=std.area_basis if std is not None else None,
+        occupied=b.occupied,
+        home_text=_home(b.sgg, std, b.occupied),
+        when_text=_when(b.when),
+        message=v.message,
     )
