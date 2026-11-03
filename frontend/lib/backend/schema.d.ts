@@ -484,6 +484,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vendor/jobs/{deal_id}/extras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 추가 금액 알리기 (공사 날짜 수락 뒤 공사하는 동안, 고치지 않고 새로 올린다) */
+        post: operations["add_extra_vendor_jobs__deal_id__extras_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vendor/jobs/{deal_id}/extras/{extra_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 추가 금액 공사 사진 (내 공사만) */
+        get: operations["vendor_extra_photo_vendor_jobs__deal_id__extras__extra_id__files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/deals/{deal_id}/extras/{extra_id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 추가 금액에 답하기: 확인했어요 · 업체와 이야기할게요 (한 번만) */
+        post: operations["ack_extra_projects__project_id__deals__deal_id__extras__extra_id__ack_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/deals/{deal_id}/extras/{extra_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 추가 금액 공사 사진 (내 집만) */
+        get: operations["customer_extra_photo_projects__project_id__deals__deal_id__extras__extra_id__files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/vendor-signup": {
         parameters: {
             query?: never;
@@ -1031,6 +1099,15 @@ export interface components {
              * @description 화면이 본 확정 공정표 버전 (없으면 0). 그사이 바뀌었으면 409
              */
             seen_version: number;
+        };
+        /** AckIn */
+        AckIn: {
+            /**
+             * Ack
+             * @description 확인했어요 · 업체와 이야기할게요
+             * @enum {string}
+             */
+            ack: "ok" | "talk";
         };
         /**
          * ApplicationOut
@@ -1599,6 +1676,94 @@ export interface components {
              */
             left_out: string[];
         };
+        /**
+         * ExtraIn
+         * @description 업체가 추가 금액 알리기. 한 번 올리면 고치지 않는다(잘못 올렸으면 새로 올린다).
+         */
+        ExtraIn: {
+            /**
+             * Title
+             * @description 한 일
+             */
+            title: string;
+            /**
+             * Reason
+             * @description 이유 (고객에게 보여요)
+             */
+            reason: string;
+            /**
+             * Entered Amount
+             * @description 업체가 적은 금액 (원)
+             */
+            entered_amount: number;
+            /**
+             * Vat Mode
+             * @description 부가세 빼고 적은 금액이 기본 (면세 업체는 면세만)
+             * @default excluded
+             * @enum {string}
+             */
+            vat_mode: "included" | "excluded" | "exempt";
+            /**
+             * File Ids
+             * @description 공사 사진 (POST /files kind=work_photo)
+             * @default []
+             */
+            file_ids: string[];
+        };
+        /** ExtraOut */
+        ExtraOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /** Reason */
+            reason: string;
+            /** Vat Mode */
+            vat_mode: string;
+            /** Entered Amount */
+            entered_amount: number;
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /**
+             * Total
+             * @description 고객에게 보이는 금액 (부가세 포함, 믿집 계산)
+             */
+            total: number;
+            /**
+             * Ack
+             * @description 확인 기다림 · 확인했어요 · 업체와 이야기 중
+             * @enum {string}
+             */
+            ack: "pending" | "ok" | "talk";
+            /** Acked At */
+            acked_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Photos */
+            photos: components["schemas"]["ExtraPhotoOut"][];
+        };
+        /** ExtraPhotoOut */
+        ExtraPhotoOut: {
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size */
+            size: number;
+        };
         /** FailedOut */
         FailedOut: {
             /**
@@ -1781,6 +1946,12 @@ export interface components {
              * @description 다른 날짜 요청에 답할 기한
              */
             request_due_at?: string | null;
+            /**
+             * Extras Pending
+             * @description 고객 확인을 기다리는 추가 금액 수
+             * @default 0
+             */
+            extras_pending: number;
         };
         /** InboxSummaryOut */
         InboxSummaryOut: {
@@ -1869,6 +2040,7 @@ export interface components {
              * @description 수락한 날짜 바꾸기 요청: 고객이 고른 시작일마다 같은 기간으로 끝나는 날
              */
             request_options: components["schemas"]["StartOptionOut"][];
+            extras: components["schemas"]["TradeExtrasOut"];
         };
         /** LicenseOut */
         LicenseOut: {
@@ -1950,6 +2122,18 @@ export interface components {
             spaces: string[];
             /** Items */
             items: ("molding" | "base" | "door" | "flatten")[];
+        };
+        /** MoneyOut */
+        MoneyOut: {
+            /** Supply */
+            supply: number;
+            /** Vat */
+            vat: number;
+            /**
+             * Total
+             * @description 부가세 포함
+             */
+            total: number;
         };
         /**
          * NeedOut
@@ -2190,6 +2374,12 @@ export interface components {
              * @default []
              */
             changes: components["schemas"]["PlanChangeOut"][];
+            /**
+             * Extras
+             * @description 확정 공정표: 공정마다 업체가 알린 추가 금액 (확정 금액과 따로)
+             * @default []
+             */
+            extras: components["schemas"]["TradeExtrasOut"][];
         };
         /**
          * PlanRedo
@@ -3238,6 +3428,33 @@ export interface components {
              * @description 다른 날짜 요청 후보: 겹치지 않는 첫날부터, 같은 기간으로 끝나는 날
              */
             start_options: components["schemas"]["StartOptionOut"][];
+            extras: components["schemas"]["TradeExtrasOut"];
+        };
+        /**
+         * TradeExtrasOut
+         * @description 한 공정의 추가 금액. 합계는 계산 엔진이 더한다 (확정 금액에 넣지 않는다).
+         */
+        TradeExtrasOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Deal Id
+             * Format: uuid
+             */
+            deal_id: string;
+            /** Vendor Name */
+            vendor_name: string;
+            /**
+             * Items
+             * @description 올린 순
+             */
+            items: components["schemas"]["ExtraOut"][];
+            /** @description 고객이 확인한 것 */
+            ok: components["schemas"]["MoneyOut"];
+            /** @description 확인을 기다리는 것 */
+            pending: components["schemas"]["MoneyOut"];
+            /** @description 업체와 이야기 중인 것 */
+            talk: components["schemas"]["MoneyOut"];
         };
         /** TradesIn */
         TradesIn: {
@@ -4805,6 +5022,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_extra_vendor_jobs__deal_id__extras_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtraIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vendor_extra_photo_vendor_jobs__deal_id__extras__extra_id__files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deal_id: string;
+                extra_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ack_extra_projects__project_id__deals__deal_id__extras__extra_id__ack_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+                extra_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AckIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradeExtrasOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    customer_extra_photo_projects__project_id__deals__deal_id__extras__extra_id__files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+                extra_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
