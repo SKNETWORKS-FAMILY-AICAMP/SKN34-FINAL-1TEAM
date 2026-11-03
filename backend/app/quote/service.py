@@ -411,13 +411,12 @@ async def save_draft(
         if (await s.execute(used)).first():
             raise AppError(409, "file_used", "다른 견적서에 붙인 파일이에요.")
     if draft is None:
-        no = int(await s.scalar(text("select nextval('vendor_quote_code_seq')")))
-        draft = VendorQuote(
-            id=uuid7(),
-            visit_id=visit_id,
-            code=f"Q-{today:%y%m}-{no:04d}",
-            version=(rows[0].version + 1) if rows else 1,
-        )
+        if rows:  # 다시 올리기: 같은 번호에 버전만 올린다
+            code, version = rows[0].code, rows[0].version + 1
+        else:
+            no = int(await s.scalar(text("select nextval('vendor_quote_code_seq')")))
+            code, version = f"Q-{today:%y%m}-{no:04d}", 1
+        draft = VendorQuote(id=uuid7(), visit_id=visit_id, code=code, version=version)
         s.add(draft)
     money = (
         from_entered(data.entered_amount, data.vat_mode)
@@ -496,3 +495,41 @@ async def sent_briefs(
         )
         for r in (await s.execute(q)).scalars()
     }
+
+
+async def sent_versions(
+    s: AsyncSession, visit_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[VendorQuoteOut]]:
+    """요청마다 보낸 버전들 (최신 먼저, 파일 포함). 임시 저장본은 넣지 않는다."""
+    out: dict[uuid.UUID, list[VendorQuoteOut]] = {i: [] for i in visit_ids}
+    if not visit_ids:
+        return out
+    q = (
+        select(VendorQuote)
+        .where(VendorQuote.visit_id.in_(visit_ids), VendorQuote.sent_at.is_not(None))
+        .order_by(VendorQuote.visit_id, VendorQuote.version.desc())
+    )
+    rows = list((await s.execute(q)).scalars().all())
+    files = await _quote_files(s, [r.id for r in rows])
+    for r in rows:
+        out[r.visit_id].append(_quote_out(r, files[r.id]))
+    return out
+
+
+async def quote_file(s: AsyncSession, file_id: uuid.UUID) -> tuple[VendorQuote, File] | None:
+    """견적서에 붙은 파일과 그 견적서 버전 (내줘도 되는지는 visit.service가 정한다)"""
+    q = (
+        select(VendorQuote, File)
+        .join(VendorQuoteFile, VendorQuoteFile.quote_id == VendorQuote.id)
+        .join(File, File.id == VendorQuoteFile.file_id)
+        .where(VendorQuoteFile.file_id == file_id)
+    )
+    row = (await s.execute(q)).first()
+    return (row[0], row[1]) if row else None
+
+
+async def has_draft(s: AsyncSession, visit_id: uuid.UUID) -> bool:
+    q = select(VendorQuote.id).where(
+        VendorQuote.visit_id == visit_id, VendorQuote.sent_at.is_(None)
+    )
+    return (await s.execute(q)).first() is not None

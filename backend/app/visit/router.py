@@ -14,6 +14,7 @@ from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
 from app.visit import service
 from app.visit.schemas import (
+    CompareOut,
     DeclineIn,
     InboxSummaryOut,
     QuoteBoardOut,
@@ -218,3 +219,44 @@ async def send_quote(
     s: AsyncSession = Depends(get_session),
 ) -> QuoteBoardOut:
     return await service.send_quote(s, vendor, visit_id, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/quotes",
+    response_model=CompareOut,
+    summary="실측 견적 비교 · 표준견적서와 업체가 보낸 견적서 (한 공정)",
+)
+async def compare_quotes(
+    project_id: uuid.UUID,
+    trade: Trade,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> CompareOut:
+    return await service.compare(s, user, project_id, trade, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/quotes/{quote_id}/files/{file_id}",
+    summary="받은 실측 견적서 파일 보기 (그 요청의 고객 · 보낸 버전만)",
+)
+async def customer_quote_file(
+    project_id: uuid.UUID,
+    quote_id: uuid.UUID,
+    file_id: uuid.UUID,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    return await service.customer_quote_file(s, user, project_id, quote_id, file_id)
+
+
+@router.get(
+    "/vendor/visits/{visit_id}/quote/files/{file_id}",
+    summary="내 실측 견적서 파일 보기 (임시 저장본 포함)",
+)
+async def vendor_quote_file(
+    visit_id: uuid.UUID,
+    file_id: uuid.UUID,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> Response:
+    return await service.vendor_quote_file(s, vendor, visit_id, file_id)

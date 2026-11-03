@@ -129,3 +129,21 @@ async def lock(s: AsyncSession, visit_id: uuid.UUID) -> Visit | None:
     """같은 요청의 견적서 저장 · 보내기가 줄 서게 요청 행을 잠그고 다시 읽는다."""
     q = select(Visit).where(Visit.id == visit_id).with_for_update()
     return (await s.execute(q.execution_options(populate_existing=True))).scalar_one_or_none()
+
+
+async def set_quote_ver(
+    s: AsyncSession, visit_id: uuid.UUID, *, again: bool, seen: int | None, new: int
+) -> bool:
+    """첫 보내기: requested → quoted. 다시 올리기: quoted이고 quote_ver가 본 버전일 때만 새 버전으로."""
+    cond = (
+        [Visit.status == "quoted", Visit.quote_ver == seen]
+        if again
+        else [Visit.status == "requested"]
+    )
+    res = await s.execute(
+        update(Visit)
+        .where(Visit.id == visit_id, *cond)
+        .values(status="quoted", quote_ver=new)
+        .execution_options(synchronize_session=False)
+    )
+    return res.rowcount == 1

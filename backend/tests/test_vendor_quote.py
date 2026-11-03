@@ -253,14 +253,9 @@ def test_state_rules_and_two_sends_at_once(api):
     assert query("select count(*) n from vendor_quotes where sent_at is not null")[0]["n"] == 1
     assert len(query("select id from notifications where kind = 'quote_sent'")) == 1  # 알림 한 번
 
-    nxt = api.put(
-        url(v), json={"file_ids": [doc(api, "고침.pdf")], **FULL}
-    )  # 견적서 옴: 다음 버전 임시 저장
+    nxt = api.put(url(v), json={"file_ids": [doc(api, "고침.pdf")], **FULL})  # 다음 버전 임시 저장
     assert nxt.status_code == 200 and nxt.json()["draft"]["version"] == 2
-    assert nxt.json()["draft"]["code"] != nxt.json()["sent"][0]["code"]
-    assert (
-        api.post(f"{url(v)}/send").json()["error"]["code"] == "already_sent"
-    )  # 다시 올리기는 18번
+    assert nxt.json()["draft"]["code"] == nxt.json()["sent"][0]["code"]  # 같은 번호에 버전만 올린다
 
     b = listed(api, "b@mitjip.test", "나")
     use(api, customer)

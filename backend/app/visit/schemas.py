@@ -240,3 +240,47 @@ class QuoteBoardOut(BaseModel):
     days_max: int
     draft: VendorQuoteOut | None = Field(description="임시 저장본 (없으면 비어 있다)")
     sent: list[VendorQuoteOut] = Field(description="보낸 버전 (최신 먼저)")
+
+
+class QuoteVersionBrief(BaseModel):
+    """예전에 보낸 버전 요약 (다시 올리기 기록)"""
+
+    version: int
+    sent_at: datetime
+    total: int
+    days: int | None
+    valid_until: date | None
+    file_count: int
+
+
+class CompareRowOut(BaseModel):
+    """견적서 비교 화면의 업체 한 곳"""
+
+    visit_id: uuid.UUID
+    vendor_id: uuid.UUID | None
+    vendor_name: str
+    status: str = Field(description="requested(견적서 기다림) · quoted · chosen")
+    requested_at: datetime
+    seen_ver: int | None = Field(description="이 화면을 연 때의 본 버전. 확정할 때 그대로 보낸다")
+    latest: VendorQuoteOut | None = Field(description="보낸 최신 버전 (기다림이면 비어 있다)")
+    history: list[QuoteVersionBrief] = Field(description="그 전에 보낸 버전 (최신 먼저)")
+    changed: list[str] = Field(
+        description="바로 앞 버전과 달라진 칸: total · days · valid_until · files(파일 수)"
+    )
+    estimate_total: int | None = Field(description="요청 때 가견적 사본")
+    vs_standard: Decimal | None = Field(description="표준견적서 대비 % (믿집 계산)")
+    vs_direction: Direction | None
+    expired: bool = Field(description="유효기간이 오늘(서울)보다 앞")
+
+
+class CompareOut(BaseModel):
+    """한 공정의 실측 견적 비교: 표준견적서와 업체가 보낸 견적서"""
+
+    project_id: uuid.UUID
+    trade: str
+    standard_total: int = Field(description="표준견적서 합계 (부가세 포함)")
+    formula_ver: str
+    price_ver: str
+    computed_at: datetime
+    sent_counts: dict[str, int] = Field(description="공정마다 받은 실측 견적서 수")
+    vendors: list[CompareRowOut] = Field(description="받은 것(받은 순) 먼저, 그다음 기다리는 곳")

@@ -99,6 +99,7 @@ class VendorQuote(Base):
     __tablename__ = "vendor_quotes"
     __table_args__ = (
         UniqueConstraint("visit_id", "version", name="uq_vendor_quotes_version"),
+        UniqueConstraint("code", "version", name="uq_vendor_quotes_code_version"),
         Index(
             "uq_vendor_quotes_draft",
             "visit_id",
@@ -130,7 +131,8 @@ class VendorQuote(Base):
     visit_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("visits.id", ondelete="CASCADE"), index=True
     )
-    code: Mapped[str] = mapped_column(String(16), unique=True)  # Q-2611-0041
+    # Q-2611-0041. 요청마다 번호 하나, 다시 올리면 같은 번호에 버전만 올린다
+    code: Mapped[str] = mapped_column(String(16))
     version: Mapped[int] = mapped_column(SmallInteger)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     measured_on: Mapped[date | None] = mapped_column(Date)

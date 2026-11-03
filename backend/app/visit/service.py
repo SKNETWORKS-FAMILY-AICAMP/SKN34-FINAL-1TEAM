@@ -33,12 +33,15 @@ from app.vendor.schemas import ContactOut, EstimateOut
 from app.visit import repository as repo
 from app.visit.models import LIVE, SLOTS, Visit, VisitEvent
 from app.visit.schemas import (
+    CompareOut,
+    CompareRowOut,
     CustomerContactOut,
     Direction,
     EstimateDetailOut,
     FailedOut,
     InboxSummaryOut,
     QuoteBoardOut,
+    QuoteVersionBrief,
     RecentOut,
     RequestTextOut,
     VendorDetailOut,
@@ -684,27 +687,147 @@ async def save_quote(
 async def send_quote(
     s: AsyncSession, vendor: User, visit_id: uuid.UUID, today: date
 ) -> QuoteBoardOut:
-    """첫 견적서 보내기: 임시 저장본을 굳히고 요청을 requested → quoted로 바꾼다(다시 올리기는 18번)."""
+    """견적서 보내기. 처음이면 requested → quoted, 견적서 옴이면 다시 올리기(quoted → quoted).
+    다시 올리기는 visits.quote_ver가 지금 본 버전일 때만 새 버전으로 바꾼다(확정 뒤에는 409)."""
     v = await _locked_mine(s, vendor, visit_id)
-    if v.status == "quoted":
-        raise AppError(409, "already_sent", "이미 견적서를 보냈어요.")
-    if v.status != "requested":
+    if v.status not in ("requested", "quoted"):
         raise AppError(409, "invalid_state", CLOSED_FOR_QUOTE[v.status])
+    again = v.status == "quoted"
+    if again and not await quote_service.has_draft(s, v.id):
+        raise AppError(
+            409, "already_sent", "이미 보낸 견적서예요. 고쳐서 임시 저장한 뒤 다시 올려 주세요."
+        )
     q = await quote_service.seal_draft(s, v.id, today)
-    ok = await repo.set_status(
-        s, v.id, allowed_from=("requested",), values={"status": "quoted", "quote_ver": q.version}
-    )
+    ok = await repo.set_quote_ver(s, v.id, again=again, seen=v.quote_ver, new=q.version)
     if not ok:
-        raise AppError(409, "invalid_state", "이미 견적서를 보냈어요.")
-    s.add(VisitEvent(visit_id=v.id, from_status="requested", to_status="quoted", by_id=vendor.id))
+        raise AppError(409, "invalid_state", "다른 곳에서 먼저 바꿨어요. 다시 열어 주세요.")
+    s.add(
+        VisitEvent(
+            visit_id=v.id,
+            from_status=v.status,
+            to_status="quoted",
+            by_id=vendor.id,
+            code="resent" if again else None,
+        )
+    )
+    verb = "다시 올렸어요" if again else "보냈어요"
     await notify_service.add(
         s,
         user_id=(await project_service.briefs(s, [v.project_id]))[v.project_id].owner_id,
-        kind="quote_sent",
-        body=f"{_i_ga(v.vendor_name)} 실측 견적서를 보냈어요 · {TRADE_LABEL[v.trade]}",
+        kind="quote_resent" if again else "quote_sent",
+        body=f"{_i_ga(v.vendor_name)} 실측 견적서를 {verb} · {TRADE_LABEL[v.trade]}",
         link=f"/projects/{v.project_id}/quotes?trade={v.trade}",
         dedup_key=f"quote:{q.id}",
         project_id=v.project_id,
     )
     await s.commit()
     return await quote_board(s, vendor, visit_id)
+
+
+# ---- 고객 견적서 비교 · 견적서 파일 내주기 ----
+
+COMPARED = (
+    "requested",
+    "quoted",
+    "chosen",
+)  # 기다림 · 받음 · 확정 (닫힌 요청은 비교에 넣지 않는다)
+
+
+def _changed(latest, before) -> list[str]:
+    if before is None:
+        return []
+    out = [k for k in ("total", "days", "valid_until") if getattr(latest, k) != getattr(before, k)]
+    return out + (["files"] if len(latest.files) != len(before.files) else [])
+
+
+async def compare(
+    s: AsyncSession, user: User, project_id: uuid.UUID, trade: str, today: date
+) -> CompareOut:
+    """한 공정의 실측 견적 비교. 받은 견적서는 처음 받은 순, 그다음 견적서를 기다리는 곳."""
+    p, std, _ = await _standard(s, user, project_id, trade)
+    every = await repo.of_project(s, p.id, None)
+    rows = [v for v in every if v.trade == trade and v.status in COMPARED]
+    versions = await quote_service.sent_versions(s, [v.id for v in every])
+    out: list[CompareRowOut] = []
+    for v in rows:
+        sent = versions.get(v.id, [])
+        latest = sent[0] if sent else None
+        pct, way = _vs(latest.total, std.total) if latest else (None, None)
+        out.append(
+            CompareRowOut(
+                visit_id=v.id,
+                vendor_id=v.vendor_id,
+                vendor_name=v.vendor_name,
+                status=v.status,
+                requested_at=v.created_at,
+                seen_ver=v.quote_ver,
+                latest=latest,
+                history=[
+                    QuoteVersionBrief(
+                        version=q.version,
+                        sent_at=q.sent_at,
+                        total=q.total,
+                        days=q.days,
+                        valid_until=q.valid_until,
+                        file_count=len(q.files),
+                    )
+                    for q in sent[1:]
+                ],
+                changed=_changed(latest, sent[1]) if len(sent) > 1 else [],
+                estimate_total=v.estimate_total,
+                vs_standard=pct,
+                vs_direction=way,
+                expired=bool(latest and latest.valid_until and latest.valid_until < today),
+            )
+        )
+    first_sent = {v.id: versions[v.id][-1].sent_at for v in rows if versions.get(v.id)}
+    out.sort(
+        key=lambda r: (
+            r.latest is None,
+            first_sent.get(r.visit_id) or r.requested_at,
+            r.requested_at,
+        )
+    )
+    trades = [t for t in ("mokgong", "dobae") if getattr(p.trades, t) is not None]
+    return CompareOut(
+        project_id=p.id,
+        trade=trade,
+        standard_total=std.total,
+        formula_ver=std.formula_ver,
+        price_ver=std.price_ver,
+        computed_at=std.created_at,
+        sent_counts={
+            t: sum(1 for v in every if v.trade == t and v.status in COMPARED and versions[v.id])
+            for t in trades
+        },
+        vendors=out,
+    )
+
+
+async def customer_quote_file(
+    s: AsyncSession, user: User, project_id: uuid.UUID, quote_id: uuid.UUID, file_id: uuid.UUID
+) -> Response:
+    """그 요청의 고객에게 보낸 버전의 파일만 내준다. 임시 저장본 · 다른 집 파일은 404."""
+    p = await project_service.get_for(s, user, project_id)
+    got = await quote_service.quote_file(s, file_id)
+    v = await repo.get(s, got[0].visit_id) if got else None
+    if (
+        got is None
+        or got[0].id != quote_id
+        or got[0].sent_at is None
+        or v is None
+        or v.project_id != p.id
+    ):
+        raise AppError(404, "not_found", "파일을 찾을 수 없어요.")
+    return await files_service.respond(got[1])
+
+
+async def vendor_quote_file(
+    s: AsyncSession, vendor: User, visit_id: uuid.UUID, file_id: uuid.UUID
+) -> Response:
+    """업체 본인의 견적서 파일 (임시 저장본 포함). 다른 요청 · 다른 업체 파일은 404."""
+    v = await _mine(s, vendor, visit_id)
+    got = await quote_service.quote_file(s, file_id)
+    if got is None or got[0].visit_id != v.id:
+        raise AppError(404, "not_found", "파일을 찾을 수 없어요.")
+    return await files_service.respond(got[1])
