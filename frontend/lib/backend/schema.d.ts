@@ -297,6 +297,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/deals/{deal_id}/reselect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 다시 고르기 (공사 날짜 수락 전만): 확정을 풀고 이 공정의 요청을 모두 닫는다 */
+        post: operations["reselect_projects__project_id__deals__deal_id__reselect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/deals": {
         parameters: {
             query?: never;
@@ -718,6 +735,23 @@ export interface paths {
         put?: never;
         /** 실측 요청 취소 (견적서가 오기 전까지) */
         post: operations["cancel_visit_projects__project_id__visits__visit_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/visits/reselect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 다시 고르기 (확정 전): 이 공정의 실측 요청을 모두 닫고 칸 3개를 비운다 */
+        post: operations["reselect_visits_projects__project_id__visits_reselect_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2388,6 +2422,35 @@ export interface components {
             text: string;
         };
         /**
+         * ReselectIn
+         * @description 견적 비교에서 다시 고르기 (확정 전): 이 공정의 요청을 모두 닫는다
+         */
+        ReselectIn: {
+            /**
+             * Trade
+             * @enum {string}
+             */
+            trade: "dobae" | "mokgong";
+        };
+        /**
+         * ReselectOut
+         * @description 다시 고르기 결과: 닫은 요청과 다시 빈 칸 수
+         */
+        ReselectOut: {
+            /** Trade */
+            trade: string;
+            /**
+             * Closed
+             * @description 닫은 실측 요청 (연락처는 바로 가려진다)
+             */
+            closed: string[];
+            /**
+             * Slots Left
+             * @description 다시 담을 수 있는 업체 수
+             */
+            slots_left: number;
+        };
+        /**
          * ResubmitIn
          * @description 보완 요청에 다시 보내기. 관리자가 고른 사유에 맞게 열린 칸만 받는다(열리지 않은 칸은 422).
          */
@@ -3057,6 +3120,11 @@ export interface components {
             status: string;
             /** Decline Code */
             decline_code: string | null;
+            /**
+             * Close Reason
+             * @description 닫힌 까닭: other_chosen(다른 업체 확정) · reselected(다시 고르기)
+             */
+            close_reason: string | null;
         };
         /**
          * VisitCreateIn
@@ -3160,6 +3228,11 @@ export interface components {
             message: string | null;
             /** Decline Code */
             decline_code: string | null;
+            /**
+             * Close Reason
+             * @description 닫힌 까닭: other_chosen(다른 업체 확정) · reselected(다시 고르기)
+             */
+            close_reason: string | null;
             /**
              * Estimate Total
              * @description 요청 때 가견적 사본 (없으면 비어 있다)
@@ -3795,6 +3868,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfirmOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reselect_projects__project_id__deals__deal_id__reselect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                deal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReselectOut"];
                 };
             };
             /** @description Validation Error */
@@ -4626,6 +4731,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VisitOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reselect_visits_projects__project_id__visits_reselect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReselectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReselectOut"];
                 };
             };
             /** @description Validation Error */
