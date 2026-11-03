@@ -1,6 +1,6 @@
 // 작업함 (시안 WVInbox): 탭(할 일 · 기다림 · 공사 · 끝남) + 고른 탭의 표 + 오른쪽 카드 3개.
 // 탭은 주소(?tab=)로 바꾼다. 수는 GET /vendor/visits/summary, 줄은 GET /vendor/visits?tab=.
-// 공사 탭은 업체 확정이 생기는 뒤에 채운다(지금은 늘 0). 견적서 올리기 · 보낸 견적서 보기는 실측 견적서 기능에서 붙인다.
+// 공사 탭은 업체 확정이 생기는 뒤에 채운다(지금은 늘 0). 할 일에서 본 요청은 '견적서 올리기'로 실측 견적서 화면에 간다(기다림의 '보낸 견적서 보기'는 아직 없다).
 import Link from "next/link";
 import type { InboxPage, InboxSummary } from "@/lib/api/visit";
 import type { VendorPrices, VendorProfile } from "@/lib/api/vendor";
@@ -42,6 +42,8 @@ function TodoRow({ v, vendorName }: { v: Row; vendorName: string }) {
         <div className={s.acts}>
           {call ? (
             <Link className={`mj-btn mj-btn-pri mj-btn-sm ${s.go} ${s.goPri}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보고 연락하기`}>연락하기</Link>
+          ) : !v.new ? (
+            <Link className={`mj-btn mj-btn-sec mj-btn-sm ${s.go}`} href={`/vendor/requests/${v.id}/quote`} aria-label={`${whoOf(v)} 실측 견적서 올리기`}>견적서 올리기</Link>
           ) : (
             <Link className={`mj-btn mj-btn-sec mj-btn-sm ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link>
           )}

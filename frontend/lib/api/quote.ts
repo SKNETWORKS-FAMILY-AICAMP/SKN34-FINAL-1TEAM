@@ -10,6 +10,12 @@ export async function getStandard(projectId: string) {
   return isUuid(projectId) ? serverGet<ApiStandard>(`/projects/${projectId}/standard`) : null;
 }
 
+export type VendorQuoteBoard = Schemas["QuoteBoardOut"];
+/** 업체: 이 요청의 실측 견적서(임시 저장본 · 보낸 버전 · 칸 한도). 내 요청이 아니면 null */
+export async function getMyQuoteBoard(visitId: string) {
+  return isUuid(visitId) ? serverGet<VendorQuoteBoard>(`/vendor/visits/${visitId}/quote`) : null;
+}
+
 // 아래는 예시 프로젝트(p1) 화면이 쓰는 예시 데이터
 
 export async function getStandardQuote(_projectId: string) { return { ...FX.standard, createdAt: "2026-10-20" }; }
