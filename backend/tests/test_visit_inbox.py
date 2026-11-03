@@ -270,7 +270,7 @@ def test_inbox_tabs_order_and_seen(api):
     assert (
         api.get(INBOX, params={"tab": "done", "before": "2026-11-01T00:00:00"}).status_code == 422
     )
-    assert api.get(INBOX, params={"tab": "jobs"}).status_code == 422
+    assert api.get(INBOX, params={"tab": "work"}).status_code == 422
     assert api.get(f"{INBOX}/summary").json() == {
         "todo": 0,
         "waiting": 1,

@@ -831,3 +831,92 @@ async def vendor_quote_file(
     if got is None or got[0].visit_id != v.id:
         raise AppError(404, "not_found", "파일을 찾을 수 없어요.")
     return await files_service.respond(got[1])
+
+
+# ---- 업체 확정에 쓰는 공개 함수 (deal은 schedule.service가 만든다) ----
+
+QUOTE_CHANGED = "업체가 견적서를 다시 올렸어요. 새 견적서를 보고 다시 확정해 주세요."
+NOT_CHOOSABLE = {
+    "requested": "아직 견적서가 오지 않았어요.",
+    "cancelled": "취소된 실측의 견적서라 고를 수 없어요.",
+    "declined": "업체가 받지 못한 요청이라 고를 수 없어요.",
+    "closed": "닫힌 실측의 견적서라 고를 수 없어요.",
+    "chosen": "이미 업체를 확정했어요.",
+}
+
+
+async def in_project(s: AsyncSession, project_id: uuid.UUID, visit_id: uuid.UUID) -> Visit:
+    """그 집의 요청 (아니면 404). 권한은 부르는 쪽이 프로젝트로 먼저 확인한다."""
+    v = await repo.get(s, visit_id)
+    if v is None or v.project_id != project_id:
+        raise AppError(404, "not_found", "실측 요청을 찾을 수 없어요.")
+    return v
+
+
+async def choose(s: AsyncSession, user: User, v: Visit, seen_ver: int) -> None:
+    """견적서 옴 → 확정. 고객이 본 버전(seen_ver)이 지금 버전일 때만 (다시 올렸으면 409)."""
+    if v.status != "quoted":
+        code = "already_chosen" if v.status == "chosen" else "not_choosable"
+        raise AppError(409, code, NOT_CHOOSABLE[v.status])
+    if v.quote_ver != seen_ver or not await repo.choose(s, v.id, seen_ver):
+        raise AppError(409, "quote_changed", QUOTE_CHANGED)
+    s.add(VisitEvent(visit_id=v.id, from_status="quoted", to_status="chosen", by_id=user.id))
+
+
+async def close_others(
+    s: AsyncSession, project_id: uuid.UUID, trade: str, keep: uuid.UUID, by: User
+) -> list[uuid.UUID]:
+    """다른 업체를 확정하면 같은 공정의 살아 있는 요청을 닫는다(other_chosen). 연락처는 바로 가려진다."""
+    closed = []
+    for v in await repo.live(s, project_id, trade):
+        if v.id == keep or v.status not in ("requested", "quoted"):
+            continue
+        ok = await repo.set_status(
+            s,
+            v.id,
+            allowed_from=("requested", "quoted"),
+            values={"status": "closed", "close_reason": "other_chosen"},
+        )
+        if not ok:
+            raise AppError(409, "stale", "그사이 상태가 바뀌었어요. 새로 불러올게요.")
+        s.add(
+            VisitEvent(
+                visit_id=v.id,
+                from_status=v.status,
+                to_status="closed",
+                by_id=by.id,
+                code="other_chosen",
+            )
+        )
+        if v.vendor_id is not None:
+            await notify_service.add(
+                s,
+                user_id=v.vendor_id,
+                kind="visit_closed",
+                body="고객이 다른 업체로 정했어요",
+                link=f"/vendor/requests/{v.id}",
+                dedup_key=f"visit:{v.id}:closed",
+            )
+        closed.append(v.id)
+    return closed
+
+
+async def visits_by_id(s: AsyncSession, visit_ids: list[uuid.UUID]) -> dict[uuid.UUID, Visit]:
+    return await repo.by_ids(s, visit_ids)
+
+
+async def rows_for(
+    s: AsyncSession, visit_ids: list[uuid.UUID], today: date
+) -> dict[uuid.UUID, VendorVisitRow]:
+    """업체 작업함 줄 (공사 탭이 확정 정보를 붙여 쓴다). 고객 연락처 규칙은 그대로."""
+    visits = list((await repo.by_ids(s, visit_ids)).values())
+    briefs, stds = await _context(s, visits)
+    last = await repo.last_events(s, [v.id for v in visits])
+    return {
+        v.id: VendorVisitRow(
+            **_row(
+                v, briefs[v.project_id], stds.get((v.project_id, v.trade)), last.get(v.id), today
+            )
+        )
+        for v in visits
+    }

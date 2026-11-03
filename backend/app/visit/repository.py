@@ -147,3 +147,21 @@ async def set_quote_ver(
         .execution_options(synchronize_session=False)
     )
     return res.rowcount == 1
+
+
+async def choose(s: AsyncSession, visit_id: uuid.UUID, seen: int) -> bool:
+    """견적서 옴이고 고객이 본 버전이 지금 버전일 때만 확정으로 바꾼다."""
+    res = await s.execute(
+        update(Visit)
+        .where(Visit.id == visit_id, Visit.status == "quoted", Visit.quote_ver == seen)
+        .values(status="chosen")
+        .execution_options(synchronize_session=False)
+    )
+    return res.rowcount == 1
+
+
+async def by_ids(s: AsyncSession, visit_ids: list[uuid.UUID]) -> dict[uuid.UUID, Visit]:
+    if not visit_ids:
+        return {}
+    q = select(Visit).where(Visit.id.in_(visit_ids)).execution_options(populate_existing=True)
+    return {v.id: v for v in (await s.execute(q)).scalars()}

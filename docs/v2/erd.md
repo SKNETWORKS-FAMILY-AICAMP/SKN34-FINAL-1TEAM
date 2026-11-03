@@ -62,7 +62,7 @@ erDiagram
 | standard_quotes | 0005_v2_standard | project · trade · `version` · `project_rev` · `formula_ver` · `price_ver` · grade · area · pyeong · supply · vat · total · `man_day numeric(4,1)` · crew · notes(가정). UQ(project, trade, version) |
 | standard_quote_lines | 0005_v2_standard | (quote, key) PK, name · qty · unit · unit_price · amount · state(포함 상태 6종) · note · sort |
 | plans | 0006_v2_plan | project · kind(expected · final) · version · project_rev · formula_ver · start · end · work_days · weekend_work. UQ(project, kind, version) |
-| plan_steps | 0006_v2_plan | plan · trade(건조 · 청소는 비움) · kind(work · dry · clean) · label · start · end · days · crew · man_day · sort. `deal_id`는 0012에 더함 |
+| plan_steps | 0006_v2_plan | plan · trade(건조 · 청소는 비움) · kind(work · dry · clean) · label · start · end · days · crew · man_day · sort. `deal_id`(지우면 NULL)는 0013에 더함 |
 | plan_days | 0006_v2_plan | (plan, day) PK · trade · kind(work · dry · clean · off) · names(날짜별 할 일) |
 | vendor_faqs | 0007_v2_vendor_profile | (vendor, key) PK. key 5종(process · pricing · extra_cost · duration · as_refund), answer ≤200 |
 | vendor_links | 0007_v2_vendor_profile | vendor · label · url · sort. 5개까지(service) |
@@ -74,12 +74,12 @@ erDiagram
 | visit_events | 0010_v2_visit | visit · `from_status`(만들 때 NULL) · `to_status` · by(지우면 NULL) · code · at |
 | vendor_quotes | 0011_v2_vendor_quote · 0012_v2_quote_code | visit · `code`(Q-2611-0041, 시퀀스. 요청마다 하나, 다시 올려도 같은 번호. 0012에서 UQ(code) → UQ(code, version)) · version · `sent_at`(비면 임시 저장) · measured_on · entered_amount · vat_mode(included · excluded · exempt) · supply · vat · total(계산 엔진 from_entered) · days(1~120) · valid_until(≥ measured_on) · created_at · updated_at. 보낸 것은 낼 금액 · 부가세 방식이 있음(CHECK. 파일 1개 이상은 service, 실측한 날 · 공사 기간 · 유효기간은 선택). UQ(visit, version), 부분 UQ(visit) where sent_at is null |
 | vendor_quote_files | 0011_v2_vendor_quote | (quote, file) PK, file UQ, sort 0~9(버전마다 10개까지). files.kind = quote_doc |
-| deals | 0012_v2_deal | project · trade · vendor(지우면 NULL) · vendor_name · visit · `quote_id`(확정한 버전, 지우기 막음) · status · `dates_due_at` · start · end · work_done_on · `date_request_count ≤2`. 부분 UQ(project, trade) where status ≠ reselected |
-| deal_events | 0012_v2_deal | deal · from · to · by · note ≤300 · at |
-| date_requests | 0013_v2_dates | deal · reason · `wish_dates date[]`(1~3) · due_at · status(open · answered · withdrawn). 부분 UQ(deal) where open |
-| date_proposals | 0013_v2_dates | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending |
-| extra_charges | 0014_v2_extra | deal · title · reason · vat_mode · entered_amount · supply · vat · total · ack(pending · ok · talk) · acked_at |
-| project_checks | 0015_v2_checks | (project, key) PK · done_at · by |
+| deals | 0013_v2_deal | project · trade · vendor(지우면 NULL) · vendor_name 사본 · visit(UQ) · `quote_id`(확정한 버전, 지우기 막음) · status(confirmed · scheduled · checking · fixing · done · reselected) · `dates_due_at`(calc due_at: 확정 + 2일 18:00) · start · end(함께, end ≥ start, scheduled부터 있음) · work_done_on(checking · fixing · done일 때만) · `date_request_count 0~2` · created_at. 부분 UQ(project, trade) where status ≠ reselected |
+| deal_events | 0013_v2_deal | deal · `from_status`(만들 때 NULL) · `to_status` · by(지우면 NULL) · note ≤300 · at |
+| date_requests | 0014_v2_dates | deal · reason · `wish_dates date[]`(1~3) · due_at · status(open · answered · withdrawn). 부분 UQ(deal) where open |
+| date_proposals | 0014_v2_dates | deal · start · end · crew · method(app · call) · call_on · request · kind(initial · change) · reason · `plan_version` · status(pending · accepted · superseded · withdrawn). 부분 UQ(deal) where pending |
+| extra_charges | 0015_v2_extra | deal · title · reason · vat_mode · entered_amount · supply · vat · total · ack(pending · ok · talk) · acked_at |
+| project_checks | 0016_v2_checks | (project, key) PK · done_at · by |
 
 ## 상태와 허용 전이
 

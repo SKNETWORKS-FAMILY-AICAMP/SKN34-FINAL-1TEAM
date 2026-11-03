@@ -1,16 +1,30 @@
 import uuid
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import current_user
+from app.auth.deps import current_user, require_role
 from app.auth.models import User
 from app.db import get_session
 from app.schedule import service
-from app.schedule.schemas import PlanOut, PlanRedo
+from app.schedule.schemas import (
+    CompareDealOut,
+    ConfirmIn,
+    ConfirmOut,
+    DealOut,
+    InboxPageOut,
+    PlanOut,
+    PlanRedo,
+)
 from app.shared.clock import today_seoul
+from app.vendor.deps import approved_vendor
+from app.visit.schemas import InboxSummaryOut
 
-router = APIRouter(tags=["공정표"])
+router = APIRouter(tags=["공정표 · 업체 확정"])
+customer_only = require_role("customer")
+Trade = Literal["dobae", "mokgong"]
 
 
 @router.get(
@@ -38,3 +52,68 @@ async def redo_plan(
     s: AsyncSession = Depends(get_session),
 ) -> PlanOut:
     return await service.redo(s, user, project_id, data, today_seoul())
+
+
+@router.post(
+    "/projects/{project_id}/quotes/{visit_id}/confirm",
+    response_model=ConfirmOut,
+    summary="업체 확정 (본 버전 seen_ver일 때만, 같은 공정의 다른 요청은 닫힘)",
+)
+async def confirm(
+    project_id: uuid.UUID,
+    visit_id: uuid.UUID,
+    data: ConfirmIn,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> ConfirmOut:
+    return await service.confirm(s, user, project_id, visit_id, data, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/deals",
+    response_model=list[DealOut],
+    summary="이 집 업체 확정 (공정마다, 다시 고르기 한 것은 빼고)",
+)
+async def deals(
+    project_id: uuid.UUID,
+    trade: Trade | None = None,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> list[DealOut]:
+    return await service.deals_for(s, user, project_id, trade, today_seoul())
+
+
+@router.get(
+    "/projects/{project_id}/quotes",
+    response_model=CompareDealOut,
+    summary="실측 견적 비교 · 표준견적서와 업체가 보낸 견적서 · 확정 (한 공정)",
+)
+async def compare_quotes(
+    project_id: uuid.UUID,
+    trade: Trade,
+    user: User = Depends(customer_only),
+    s: AsyncSession = Depends(get_session),
+) -> CompareDealOut:
+    return await service.compare(s, user, project_id, trade, today_seoul())
+
+
+@router.get(
+    "/vendor/visits",
+    response_model=InboxPageOut,
+    summary="업체 작업함 · 할 일 · 기다림 · 공사 · 끝남 (끝남은 before 커서로 limit씩)",
+)
+async def vendor_inbox(
+    tab: Literal["todo", "waiting", "jobs", "done"] = "todo",
+    before: AwareDatetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> InboxPageOut:
+    return await service.vendor_inbox(s, vendor, tab, today_seoul(), before, limit)
+
+
+@router.get("/vendor/visits/summary", response_model=InboxSummaryOut, summary="업체 작업함 탭별 수")
+async def vendor_inbox_summary(
+    vendor: User = Depends(approved_vendor), s: AsyncSession = Depends(get_session)
+) -> InboxSummaryOut:
+    return await service.vendor_summary(s, vendor)

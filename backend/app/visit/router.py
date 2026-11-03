@@ -1,9 +1,8 @@
 import uuid
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import require_role
@@ -14,14 +13,11 @@ from app.shared.clock import today_seoul
 from app.vendor.deps import approved_vendor
 from app.visit import service
 from app.visit.schemas import (
-    CompareOut,
     DeclineIn,
-    InboxSummaryOut,
     QuoteBoardOut,
     VendorDetailOut,
     VendorListOut,
     VendorVisitDetailOut,
-    VendorVisitPage,
     VisitCreateIn,
     VisitCreateOut,
     VisitListOut,
@@ -121,28 +117,6 @@ async def cancel_visit(
 
 
 @router.get(
-    "/vendor/visits",
-    response_model=VendorVisitPage,
-    summary="업체 작업함 · 할 일 · 기다림 · 끝남 (끝남은 before 커서로 limit씩)",
-)
-async def vendor_inbox(
-    tab: Literal["todo", "waiting", "done"] = "todo",
-    before: AwareDatetime | None = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
-    vendor: User = Depends(approved_vendor),
-    s: AsyncSession = Depends(get_session),
-) -> VendorVisitPage:
-    return await service.inbox(s, vendor, tab, today_seoul(), before, limit)
-
-
-@router.get("/vendor/visits/summary", response_model=InboxSummaryOut, summary="업체 작업함 탭별 수")
-async def vendor_inbox_summary(
-    vendor: User = Depends(approved_vendor), s: AsyncSession = Depends(get_session)
-) -> InboxSummaryOut:
-    return await service.inbox_summary(s, vendor)
-
-
-@router.get(
     "/vendor/visits/{visit_id}",
     response_model=VendorVisitDetailOut,
     summary="받은 실측 요청 자세히 (고객 연락처는 보낸 요청이 열려 있을 때만)",
@@ -219,20 +193,6 @@ async def send_quote(
     s: AsyncSession = Depends(get_session),
 ) -> QuoteBoardOut:
     return await service.send_quote(s, vendor, visit_id, today_seoul())
-
-
-@router.get(
-    "/projects/{project_id}/quotes",
-    response_model=CompareOut,
-    summary="실측 견적 비교 · 표준견적서와 업체가 보낸 견적서 (한 공정)",
-)
-async def compare_quotes(
-    project_id: uuid.UUID,
-    trade: Trade,
-    user: User = Depends(customer_only),
-    s: AsyncSession = Depends(get_session),
-) -> CompareOut:
-    return await service.compare(s, user, project_id, trade, today_seoul())
 
 
 @router.get(

@@ -533,3 +533,37 @@ async def has_draft(s: AsyncSession, visit_id: uuid.UUID) -> bool:
         VendorQuote.visit_id == visit_id, VendorQuote.sent_at.is_(None)
     )
     return (await s.execute(q)).first() is not None
+
+
+async def sent_by_version(
+    s: AsyncSession, visit_id: uuid.UUID, version: int
+) -> QuoteBriefOut | None:
+    """그 요청의 보낸 버전 하나 (업체 확정이 그 버전을 고정한다)"""
+    q = select(VendorQuote).where(
+        VendorQuote.visit_id == visit_id,
+        VendorQuote.version == version,
+        VendorQuote.sent_at.is_not(None),
+    )
+    r = (await s.execute(q)).scalar_one_or_none()
+    return _brief(r) if r else None
+
+
+async def briefs_by_id(
+    s: AsyncSession, quote_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, QuoteBriefOut]:
+    if not quote_ids:
+        return {}
+    rows = (await s.execute(select(VendorQuote).where(VendorQuote.id.in_(quote_ids)))).scalars()
+    return {r.id: _brief(r) for r in rows}
+
+
+def _brief(r: VendorQuote) -> QuoteBriefOut:
+    return QuoteBriefOut(
+        id=r.id,
+        code=r.code,
+        version=r.version,
+        total=r.total,
+        days=r.days,
+        valid_until=r.valid_until,
+        sent_at=r.sent_at,
+    )

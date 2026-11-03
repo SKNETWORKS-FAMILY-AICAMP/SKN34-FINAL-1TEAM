@@ -21,14 +21,14 @@
 | 15 | feat: 실측 요청 · 연락처 동의 · 요청 문구 | 0010_v2_visit | WVendors 확인 창, WVisit |
 | 16 | feat: 실측 요청 취소 · 업체 못 받아요 · 작업함 할 일 | visit 전이 | WVisit 상태, WVInbox 할 일 |
 | 17 | feat: 실측 견적서 임시 저장 · 보내기 | 0011_v2_vendor_quote | WVQuote |
-| 18 | feat: 실측 견적서 다시 올리기 · 비교 화면 | 버전 · 파일 내주기 | WCompare |
-| 19 | feat: 업체 확정 | 0012_v2_deal | WConfirm |
+| 18 | feat: 실측 견적서 다시 올리기 · 비교 화면 | 0012_v2_quote_code · 버전 · 파일 내주기 | WCompare |
+| 19 | feat: 업체 확정 | 0013_v2_deal | WConfirm |
 | 20 | feat: 다시 고르기 · 연락처 가림 | deal · visit 전이 | WCompare · WConfirm 상태 |
-| 21 | feat: 공사 날짜 올림 · 수락 · 다른 날짜 요청 | 0013_v2_dates | WVCalendar, WSchedule |
+| 21 | feat: 공사 날짜 올림 · 수락 · 다른 날짜 요청 | 0014_v2_dates | WVCalendar, WSchedule |
 | 22 | feat: 확정 공정표 · 날짜 바꾸기 | plans final | WPlanDone, WVCalendar |
-| 23 | feat: 추가 금액 기록 | 0014_v2_extra | WPlanDone · WVCalendar |
+| 23 | feat: 추가 금액 기록 | 0015_v2_extra | WPlanDone · WVCalendar |
 | 24 | feat: 공사 끝냈어요 · 확인 · 연락처 1년 | deal 전이 | WPlanDone · WVCalendar |
-| 25 | feat: 내 공사 지금 할 일 · 목록 · 서류 · 작업함 탭 | 0015_v2_checks | WProjectB, WMy, WDocs, WVInbox |
+| 25 | feat: 내 공사 지금 할 일 · 목록 · 서류 · 작업함 탭 | 0016_v2_checks | WProjectB, WMy, WDocs, WVInbox |
 | 26 | chore: 예시 데이터와 옛 화면 정리 | — | lib/mock, 옛 라우트 |
 
 ## 화면 경로
