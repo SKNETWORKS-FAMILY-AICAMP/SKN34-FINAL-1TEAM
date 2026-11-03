@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.calc.common import Money, from_entered, with_vat
-from app.calc.quote_diff import percent_vs
+from app.calc.quote_diff import budget_gap, percent_vs
 from app.calc.standard_quote import house_area, house_pyeong
 from app.refprice.holidays import HOLIDAYS, LAST_YEAR, days_off
 from app.refprice.house import HOUSE_2026H2 as H
@@ -70,3 +70,11 @@ def test_holidays_cover_through_last_year_and_skip_weekends_only_by_calc():
         date(2026, 9, 25),
         date(2026, 9, 26),
     }
+
+
+def test_budget_gap():
+    assert budget_gap(4_505_262, "300-500") == ("within", None)
+    assert budget_gap(5_200_000, "300-500") == ("over", 200_000)
+    assert budget_gap(5_200_000, "o1000") == ("open", None)
+    with pytest.raises(ValueError):
+        budget_gap(1, "x")
