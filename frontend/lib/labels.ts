@@ -115,3 +115,12 @@ export function phoneText(v: string | null | undefined): string {
   if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
   return v ?? "";
 }
+
+// 실측 · 연락 (업체 고르기 · 실측 요청 · 작업함이 같이 쓴다)
+export type ContactMethod = "phone" | "sms" | "kakao" | "web";
+/** 연락 방법 이름 */
+export const CONTACT_LABEL: Record<ContactMethod, string> = { phone: "전화", sms: "문자", kakao: "카카오톡 채널", web: "홈페이지 상담" };
+/** 업체가 정한 연락 방식 한 줄 */
+export const CONTACT_WAY: Record<ContactMethod, string> = { phone: "전화로 연락해요", sms: "문자 주시면 연락드려요", kakao: "카카오톡 채널로 상담해요", web: "홈페이지에서 상담해요" };
+/** 업체가 실측 요청을 못 받는 이유 */
+export const DECLINE_LABEL: Record<"full" | "out_of_area" | "other", string> = { full: "일정이 꽉 찼어요", out_of_area: "지역 밖이에요", other: "그 밖" };

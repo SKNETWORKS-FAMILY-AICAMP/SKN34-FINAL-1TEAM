@@ -1,5 +1,5 @@
 // 승인 첫날 작업함 (시안 WVFirst): 맨 위 띠 · 처음 할 일 3개 · 빈 요청 안내 · 휴대폰.
-// 받은 요청 목록은 실측 요청 기능에서 붙는다. 지금은 늘 이 모습이다.
+// 받은 요청이 아직 없을 때의 승인 첫날 모습. 요청이 생기면 /vendor는 작업함(components/pro/inbox)을 보여 준다.
 // 마친 일은 부르는 쪽(app/vendor/page.tsx)이 지금 있는 읽기로 정해 넘긴다.
 import Link from "next/link";
 import type { VendorApplicationMine } from "@/lib/api/vendor";
