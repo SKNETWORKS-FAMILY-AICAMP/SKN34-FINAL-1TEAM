@@ -1,7 +1,7 @@
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { DraftCard } from "@/components/my/DraftCard";
 import { ProjectCard } from "@/components/my/ProjectCard";
-import { QuoteButton } from "@/components/start/QuoteDialog";
+import Link from "next/link";
 import { demoProjectEnd, demoTradeLines, listDemoProjects, listMyProjects, realTradeLines } from "@/lib/api/project";
 import { requireRole } from "@/lib/session";
 import { sizeLabel } from "@/lib/labels";
@@ -35,7 +35,7 @@ export default async function MyPage() {
         <section aria-labelledby="now-h" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h2 id="now-h" className="mj-h2">진행 중</h2>
           {now.length ? <ul className="mj-pcards">{now.map((c) => <li key={c.key}>{c.node}</li>)}</ul> : <p className="mj-sub">진행 중인 프로젝트가 없어요.</p>}
-          <QuoteButton label="새 견적 받기" className="mj-btn mj-btn-sec" style={{ alignSelf: "flex-start" }} />
+          <Link href="/start" className="mj-btn mj-btn-sec" style={{ alignSelf: "flex-start" }}>새 견적 받기</Link>
         </section>
         {past.length ? (
           <details className="mj-past">
