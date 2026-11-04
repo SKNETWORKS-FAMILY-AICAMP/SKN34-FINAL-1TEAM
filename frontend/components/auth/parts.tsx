@@ -46,11 +46,6 @@ export function KakaoMark() {
   );
 }
 
-/** 카카오로 로그인 · 가입. 카카오 연결은 나중 작업이라 지금은 휴대폰 번호 화면(/signup/phone)으로만 간다. */
-export function KakaoLink({ label, next }: { label: string; next?: string | null }) {
-  return <Link className={s.kakao} href={withNext("/signup/phone", next)}><KakaoMark />{label}</Link>;
-}
-
 export function VendorJoin() {
   return <p className={`mj-small ${s.foot}`}>인테리어 업체이신가요? <Link className={`mj-lnk ${s.lnk}`} href="/signup/vendor">업체로 가입 신청</Link></p>;
 }

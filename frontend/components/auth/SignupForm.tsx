@@ -6,9 +6,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ApiError, call, errorText } from "@/lib/backend/client";
 import { readDraft } from "@/components/start/draft";
-import { FieldError, KakaoMark, OrEmail, PHONE_MSG, Req, phoneOk } from "./parts";
+import { FieldError, OrEmail, PHONE_MSG, Req, phoneOk } from "./parts";
+import { KakaoButton } from "./KakaoButton";
 import { PasswordInput } from "./PasswordInput";
-import { safeNext, withNext } from "./next";
+import { safeNext } from "./next";
 import s from "./auth.module.css";
 
 type Key = "terms" | "name" | "phone" | "email" | "password";
@@ -56,10 +57,13 @@ export function SignupForm({ next }: { next?: string }) {
     if (errors.terms) setErrors((e) => ({ ...e, terms: undefined }));
   }
 
-  // 카카오 연결은 나중 작업. 지금은 필수 동의를 확인한 뒤 휴대폰 번호 화면으로만 간다.
-  function kakao() {
-    if (!needOk) { const err = { terms: "필수 약관 두 가지에 동의해 주세요." }; setErrors(err); focusFirst(err); return; }
-    router.push(withNext("/signup/phone", next));
+  // 카카오로 시작하기: 필수 동의를 먼저 확인한다. 카카오에서 휴대폰 번호를 받는다고 보고 휴대폰 번호 화면으로 보내지 않는다.
+  function kakaoOk() {
+    if (needOk) return true;
+    const err = { terms: "필수 약관 두 가지에 동의해 주세요." };
+    setErrors(err);
+    focusFirst(err);
+    return false;
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -129,7 +133,7 @@ export function SignupForm({ next }: { next?: string }) {
         {errors.terms ? <FieldError id="su-tos-e">{errors.terms}</FieldError> : null}
       </fieldset>
 
-      <button type="button" className={s.kakao} onClick={kakao}><KakaoMark />카카오로 시작하기</button>
+      <KakaoButton label="카카오로 시작하기" soon="카카오 가입은 준비 중이에요. 지금은 아래 칸을 채워 이메일로 가입해 주세요." onBefore={kakaoOk} />
       <OrEmail />
 
       <div className="mj-field">

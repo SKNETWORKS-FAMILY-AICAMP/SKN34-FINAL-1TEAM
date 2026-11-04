@@ -1,4 +1,4 @@
-// 이메일 가입(시안 WSignup). '카카오로 시작하기'는 휴대폰 번호 화면(/signup/phone)으로만 간다(카카오 연결은 나중 작업).
+// 이메일 가입(시안 WSignup). '카카오로 시작하기'는 카카오에서 휴대폰 번호를 받는다고 보고, 연결 전까지는 준비 중 안내만 보인다.
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { SignupForm } from "@/components/auth/SignupForm";
 import { DraftAside } from "@/components/auth/DraftAside";

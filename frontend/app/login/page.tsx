@@ -2,7 +2,8 @@
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { DraftAside } from "@/components/auth/DraftAside";
-import { AuthTabs, KakaoLink, OrEmail, VendorJoin } from "@/components/auth/parts";
+import { AuthTabs, OrEmail, VendorJoin } from "@/components/auth/parts";
+import { KakaoButton } from "@/components/auth/KakaoButton";
 import s from "@/components/auth/auth.module.css";
 
 export const metadata = { title: "로그인" };
@@ -18,7 +19,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <div className={s.col}>
             <h1 className="mj-sr">로그인</h1>
             <AuthTabs current="login" next={next} />
-            <KakaoLink label="카카오로 로그인" next={next} />
+            <KakaoButton label="카카오로 로그인" soon="카카오 로그인은 준비 중이에요. 지금은 아래 이메일로 로그인해 주세요." />
             <OrEmail />
             <LoginForm next={next} />
             <VendorJoin />
