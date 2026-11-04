@@ -40,7 +40,7 @@ export function ContactFacts({ d }: { d: D }) {
   const hours = callHours(pr.call_start, pr.call_end);
   return (
     <dl className={s.kv}>
-      <dt>실측 비용</dt><dd className={s.strong}>{feeText(pr.visit_fee)}{pr.visit_fee && pr.visit_fee_refund ? " · 계약하면 빼 줘요" : ""}</dd>
+      <dt>실측 비용</dt><dd className={s.strong}>{feeText(pr.visit_fee)}</dd>
       <dt>출장 지역</dt><dd>{eunNeun(d.area_name)} 출장 지역 {d.in_area ? "안" : "밖"}이에요</dd>
       {m ? <><dt>연락 방법</dt><dd>{CONTACT_LABEL[m]}</dd></> : null}
       {hours ? <><dt>연락 받는 시간</dt><dd className="mj-num">{hours}</dd></> : null}

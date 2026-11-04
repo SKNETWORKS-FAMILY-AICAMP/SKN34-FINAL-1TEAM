@@ -58,7 +58,7 @@ export function contactLine(c: { contact_method: string | null; call_start: stri
   if (m) parts.push(CONTACT_WAY[m]);
   const h = callHours(c.call_start, c.call_end);
   if (h && (m === "phone" || m === "sms")) parts.push(`통화 ${h}`);
-  parts.push(feeText(c.visit_fee) + (c.visit_fee && c.visit_fee_refund ? "(계약하면 빼 줘요)" : ""));
+  parts.push(feeText(c.visit_fee));
   return parts.join(" · ");
 }
 

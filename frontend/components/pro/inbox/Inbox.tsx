@@ -211,7 +211,7 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
   const owner = profile?.owner_name ?? fallback.owner;
   const phone = profile?.phone ?? fallback.phone;
   const way = profile?.contact_method
-    ? contactLine(profile.contact_method as Method, profile.call_start?.slice(0, 5) ?? "", profile.call_end?.slice(0, 5) ?? "", profile.visit_fee ?? 0, profile.visit_fee_refund)
+    ? contactLine(profile.contact_method as Method, profile.call_start?.slice(0, 5) ?? "", profile.call_end?.slice(0, 5) ?? "", profile.visit_fee ?? 0)
     : "실측 방식을 아직 정하지 않았어요.";
   const r = summary.recent;
 

@@ -148,7 +148,6 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                   <div className={s.c3}>
                     <p className={s.mlab}>실측 · 연락</p>
                     <p>{feeText(v.visit_fee)}{m ? ` · ${CONTACT_LABEL[m]}` : ""}</p>
-                    {v.visit_fee && v.visit_fee_refund ? <p className="mj-small">계약하면 빼 줘요</p> : null}
                   </div>
                   <div className={s.c4}>
                     <p className={s.mlab}>가견적</p>

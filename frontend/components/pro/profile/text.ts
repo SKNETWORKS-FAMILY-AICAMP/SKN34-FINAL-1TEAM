@@ -39,10 +39,10 @@ export const CALL_START = ["07:00", "08:00", "09:00", "10:00", "11:00", "12:00",
 export const CALL_END = ["15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00"];
 
 /** 고객에게 보이는 실측 방식 한 줄: "전화로 연락해요 · 통화 09:00~18:00 · 실측 무료" */
-export function contactLine(m: Method, start: string, end: string, fee: number, refund: boolean) {
+export function contactLine(m: Method, start: string, end: string, fee: number) {
   const parts = [WAY[m]];
   if (start && end) parts.push(`통화 ${start}~${end}`);
-  parts.push(fee > 0 ? `출장비 ${won(fee)}${refund ? "(계약하면 빼 줘요)" : ""}` : "실측 무료");
+  parts.push(fee > 0 ? `출장비 ${won(fee)}` : "실측 무료");
   return parts.join(" · ");
 }
 

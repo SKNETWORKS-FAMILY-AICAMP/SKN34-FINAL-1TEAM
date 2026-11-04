@@ -268,7 +268,7 @@ export function ProfileForm({ profile, regions, prices }: Props) {
   }
 
   const feeN = f.fee === "paid" ? Number(f.feeWon) : 0;
-  const preview = f.method && f.fee && !(f.fee === "paid" && !feeN) ? contactLine(f.method, f.callStart, f.callEnd, feeN, f.fee === "paid" && f.refund) : "";
+  const preview = f.method && f.fee && !(f.fee === "paid" && !feeN) ? contactLine(f.method, f.callStart, f.callEnd, feeN) : "";
   const startOpts = f.callStart && !CALL_START.includes(f.callStart) ? [f.callStart, ...CALL_START] : CALL_START;
   const endOpts = f.callEnd && !CALL_END.includes(f.callEnd) ? [...CALL_END, f.callEnd] : CALL_END;
 
@@ -464,7 +464,6 @@ export function ProfileForm({ profile, regions, prices }: Props) {
                         <span aria-hidden="true">원</span>
                       </div>
                     </div>
-                    <label className={s.ck} style={{ flex: "0 1 auto" }}><input type="checkbox" checked={f.fee === "paid" && f.refund} disabled={f.fee !== "paid"} onChange={(e) => set({ refund: e.target.checked })} />계약하면 빼 줘요</label>
                   </div>
                   <p id="vp-fee-h" className="mj-hint">출장비는 고객이 낼 금액 그대로(부가세 포함) 적어요. 무료면 비워 둬요.</p>
                 </div>
