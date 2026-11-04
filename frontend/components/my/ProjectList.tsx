@@ -1,102 +1,68 @@
-// 내 공사 목록 표 (시안 WMy). 단계 · 다음 할 일 · 바뀐 날은 서버 값을 그대로 보여 준다.
-// 폰 너비에서는 줄마다 카드처럼 쌓고, 칸 이름을 앞에 붙인다.
+// 내 공사 목록 (시안 WMy · 3안). 공사마다 카드 하나: 이름(지역 · 공정) · 집 정보, 지금 할 일 버튼, 6단계 진행 표시.
+// 단계 · 할 일은 서버 값을 그대로 쓰고, 화면 말만 붙인다(./text.ts).
 import Link from "next/link";
 import type { ApiProjectItem } from "@/lib/api/project";
 import { dateSeoul, md } from "@/lib/format";
 import { gradeLabel, projectTitle, sizeLabel, tradeLabel } from "@/lib/labels";
-import { PHASE_TEXT, PHASE_TONE, stepText, type Phase } from "./text";
+import { STEP_NAMES, stepNote } from "./text";
 import s from "./my.module.css";
 
 const TRADES = ["dobae", "mokgong"];
 
-function PhaseMark({ phase }: { phase: Phase }) {
-  if (phase === "done") {
-    return (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M3 8.5l3.2 3.2L13 4.5" />
-      </svg>
-    );
-  }
+function Check() {
+  return <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M2.5 6.3l2.3 2.3L9.5 3.8" /></svg>;
+}
+
+function Steps({ p }: { p: ApiProjectItem }) {
+  // 공사 날짜를 수락한 뒤(공사 · 끝남)는 여섯 단계를 다 마친 것이다
+  const allDone = p.phase === "work" || p.phase === "done";
+  const note = stepNote(p, allDone);
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.3" stroke="currentColor" strokeWidth="1.7" />
-      {phase === "estimate" ? null : <circle cx="8" cy="8" r="3" fill="currentColor" />}
-    </svg>
+    <ol className={s.stp}>
+      {STEP_NAMES.map((name, i) => {
+        const n = i + 1;
+        const state = allDone || n < p.current ? "dn" : n === p.current ? "cu" : "";
+        const last = n === STEP_NAMES.length;
+        return (
+          <li key={name} className={`${s.sp} ${state ? s[state] : ""}`}>
+            <span className={`${s.dt} ${state ? s[state] : ""}`}>{state === "dn" ? <Check /> : null}</span>
+            <span className={s.spL}>{name}<span className="mj-sr">, {state === "dn" ? "끝남" : state === "cu" ? "지금" : "아직"}</span></span>
+            {note && (state === "cu" || (allDone && last)) ? <span className="mj-small">{note}</span> : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
-/** 폰 너비에서만 보이는 칸 이름 (표 머리는 화면 읽기 프로그램이 읽는다) */
-function Lab({ children }: { children: string }) {
-  return <span className={s.lab} aria-hidden="true">{children}</span>;
-}
-
-function Row({ p }: { p: ApiProjectItem }) {
+function Card({ p }: { p: ApiProjectItem }) {
   const title = projectTitle(p.region, p.trades);
-  const trades = TRADES.filter((t) => p.trades.includes(t));
+  const trades = TRADES.filter((t) => p.trades.includes(t)).map((t) => {
+    const grade = t === "dobae" ? p.grades[t] : null;
+    return grade ? `${tradeLabel(t)} ${gradeLabel(grade)}` : tradeLabel(t);
+  });
+  const home = `/projects/${p.id}`;
   return (
-    <tr>
-      <th scope="row">
-        <Link className={s.name} href={`/projects/${p.id}`}>{title}</Link>
-        <span className={`mj-code ${s.blk}`}>{p.code}</span>
-      </th>
-      <td>
-        <Lab>집</Lab>
-        <div>{p.region}<span className={`mj-small ${s.blk}`}>아파트 {sizeLabel(p.size)}</span></div>
-      </td>
-      <td>
-        <Lab>공정</Lab>
-        <div>
-          {trades.map((t) => {
-            const grade = t === "dobae" ? p.grades[t] : null;
-            return <span key={t} className={s.blk}>{grade ? `${tradeLabel(t)} ${gradeLabel(grade)}` : tradeLabel(t)}</span>;
-          })}
+    <li className={s.pj}>
+      <div className={s.pjH}>
+        <div className={s.pjT}>
+          <h2 className="mj-h2"><Link className={s.tl} href={home}>{title}</Link></h2>
+          <p className="mj-sub">{[`아파트 ${sizeLabel(p.size)}`, ...trades].join(" · ")} · <span className="mj-num">{md(dateSeoul(p.updated_at))}</span>에 바뀜</p>
         </div>
-      </td>
-      <td>
-        <Lab>지금 단계</Lab>
-        <div>
-          <span className={`mj-st ${PHASE_TONE[p.phase]}`}><PhaseMark phase={p.phase} />{PHASE_TEXT[p.phase]}</span>
-          <span className={`mj-small ${s.blk}`}>{stepText(p.current)}</span>
+        <div className={s.acts}>
+          {p.todo ? <Link className="mj-btn mj-btn-pri" href={p.todo.link}>{p.todo.action}<span className="mj-sr"> · {title}</span></Link> : null}
+          <Link className="mj-btn mj-btn-sec" href={home}>공사 화면<span className="mj-sr"> · {title}</span></Link>
         </div>
-      </td>
-      <td className={s.todo}>
-        <Lab>다음 할 일</Lab>
-        <div>
-          {p.todo ? (
-            <>
-              <Link className="mj-lnk" href={p.todo.link}>{p.todo.action}<span className="mj-sr"> · {title}</span></Link>
-              <span className={`mj-small ${s.blk}`}>{p.todo.text}</span>
-            </>
-          ) : <span className="mj-small">지금 할 일이 없어요</span>}
-        </div>
-      </td>
-      <td className={s.when}>
-        <Lab>바뀐 날</Lab>
-        <div>{md(dateSeoul(p.updated_at))}</div>
-      </td>
-    </tr>
+      </div>
+      <Steps p={p} />
+    </li>
   );
 }
 
-export function ProjectTable({ items }: { items: ApiProjectItem[] }) {
+export function ProjectList({ items }: { items: ApiProjectItem[] }) {
   return (
-    <div className="mj-table-box" tabIndex={0} role="region" aria-label="공사 목록 표">
-      <table className={`mj-table mj-num ${s.tbl}`}>
-        <caption className="mj-sr">내 공사 {items.length}건: 공사 · 집 · 공정 · 지금 단계 · 다음 할 일 · 바뀐 날</caption>
-        <thead>
-          <tr>
-            <th scope="col">공사</th>
-            <th scope="col">집</th>
-            <th scope="col">공정</th>
-            <th scope="col">지금 단계</th>
-            <th scope="col">다음 할 일</th>
-            <th scope="col" className={s.when}>바뀐 날</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((p) => <Row key={p.id} p={p} />)}
-        </tbody>
-      </table>
-    </div>
+    <ul className={s.pjs}>
+      {items.map((p) => <Card key={p.id} p={p} />)}
+    </ul>
   );
 }

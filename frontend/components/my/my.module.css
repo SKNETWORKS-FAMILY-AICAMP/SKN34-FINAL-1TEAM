@@ -8,27 +8,29 @@
 /* 공사가 없을 때 */
 .empty { display: flex; flex-direction: column; gap: 8px; max-width: 560px; padding-top: 20px; border-top: 2px solid var(--ink); }
 .emptyT { font-size: var(--fs-md); font-weight: 700; }
+.emptyA { padding-top: 8px; }
 
-/* 표 */
-.tbl { border-top: 2px solid var(--ink); }
-.tbl thead th:first-child { padding-left: 0; }
-.tbl thead th:last-child, .tbl tbody td:last-child { padding-right: 0; }
-.tbl tbody th { min-width: 220px; padding: 18px 12px 18px 0; }
-.tbl tbody td { min-width: 120px; padding-block: 18px; }
-.tbl .todo { min-width: 240px; }
-.tbl .when { text-align: right; white-space: nowrap; }
-.name { display: inline-flex; align-items: center; min-height: 40px; font-size: var(--fs-lg); font-weight: 700; }
-.blk { display: block; }
-.lab { display: none; }
+/* 공사 카드 (3안) */
+.pjs { display: flex; flex-direction: column; gap: 20px; margin: 0; padding: 0; list-style: none; }
+.pj { display: flex; flex-direction: column; gap: 22px; padding: 24px clamp(16px, 2.5vw, 28px); border: 1px solid var(--line); border-radius: 8px; }
+.pjH { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; }
+.pjT { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tl { display: inline-flex; align-items: center; min-height: 40px; color: var(--ink); text-decoration: none; }
+.tl:hover, .tl:focus-visible { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+.acts { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* 폰 너비: 줄마다 카드처럼 쌓는다 */
-@media (max-width: 760px) {
-  .tbl, .tbl tbody, .tbl tr, .tbl tbody th, .tbl tbody td { display: block; }
-  .tbl thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .tbl tr { padding-block: 14px 18px; border-bottom: 1px solid var(--line-soft); }
-  .tbl tbody th, .tbl tbody td { min-width: 0; padding: 0; border-bottom: 0; }
-  .tbl .todo { min-width: 0; }
-  .tbl tbody td { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px; padding-top: 10px; }
-  .tbl .when { text-align: left; white-space: normal; }
-  .lab { display: block; padding-top: 1px; font-size: var(--fs-sm); color: var(--ink-sub); }
+/* 6단계 진행 표시: 끝남(체크) · 지금(파란 점) · 아직 */
+.stp { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+.sp { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-right: 8px; }
+.sp::before { content: ""; position: absolute; left: 22px; right: 0; top: 10px; height: 2px; background: var(--line-soft); }
+.sp:last-child::before { display: none; }
+.sp.dn::before { background: var(--line-strong); }
+.dt { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 2px solid var(--line-paper); border-radius: 50%; background: var(--bg); color: #fff; }
+.dt.dn { border-color: var(--ink-sub); background: var(--ink-sub); }
+.dt.cu { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 4px var(--bg); }
+.spL { font-size: var(--fs-sm); font-weight: 500; color: var(--ink-sub); }
+.sp.dn .spL { color: var(--ink); }
+.sp.cu .spL { color: var(--accent-ink); font-weight: 700; }
+@media (max-width: 700px) {
+  .stp { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 16px; }
 }
