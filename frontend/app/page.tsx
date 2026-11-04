@@ -1,10 +1,10 @@
 // 첫 화면(시안 WHome · 정적). 견본 숫자는 시안의 계산 엔진 결과(상계동 32평 · 단가 2026 하반기)를 그대로 옮긴 것이다.
-// 02 구역은 업체 견적을 표준 줄로 바꾸지 않는 결정에 맞춰 표준견적서 줄 설명으로 바꿨다.
-// 03 구역은 상담 챗이 보류라 자주 묻는 질문 미리 보기로 바꿨다.
+// 02 구역은 표준견적서 줄이 합계에 들어가는지 · 실측 뒤 업체가 정하는지를 보여 준다.
+// 03 구역은 자주 묻는 질문 미리 보기다. 질문을 누르면 그 자리에서 답이 펼쳐진다(details).
 import Link from "next/link";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { VendorBand } from "@/components/site/VendorBand";
-import { FAQ_PREVIEW, findFaq } from "@/components/site/faq";
+import { FAQ, FAQ_PREVIEW, findFaq, type Faq } from "@/components/site/faq";
 import s from "./page.module.css";
 
 function DocIcon() {
@@ -18,6 +18,27 @@ function OkIcon() {
 }
 function Dash({ sr }: { sr: string }) {
   return <><span aria-hidden="true">—</span><span className="mj-sr">{sr}</span></>;
+}
+function ChevDown() {
+  return <svg className={s.chev} width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6" /></svg>;
+}
+function ChevRight() {
+  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 3.5l4.5 4.5L6 12.5" /></svg>;
+}
+
+/** 미리 보기 답: 근거 번호([n])는 빼고 글만, 그 아래 근거 한 줄 또는 업체에 물어볼 문장 */
+function PreviewAnswer({ it }: { it: Faq }) {
+  const ref = it.refs?.[0];
+  return (
+    <div className={s.an}>
+      <p>{it.body.filter((b) => typeof b === "string").join("")}</p>
+      {ref ? (
+        <p className="mj-small"><b className={s.ink}>근거 · {ref.src}</b> {ref.quote ? `“${ref.text}”` : ref.text}</p>
+      ) : it.ask ? (
+        <p className="mj-small"><b className={s.ink}>업체에 물어볼 문장</b> “{it.ask}”</p>
+      ) : null}
+    </div>
+  );
 }
 
 const STEPS: { t: string; d?: string; get?: string[] }[] = [
@@ -35,6 +56,7 @@ const OFF = new Set([5, 6]); // 21 · 22일 휴일
 export default async function Home({ searchParams }: { searchParams: Promise<{ bye?: string }> }) {
   const { bye } = await searchParams;
   const preview = FAQ_PREVIEW.map(findFaq).filter((it) => it !== undefined);
+  const faqCount = FAQ.reduce((n, g) => n + g.items.length, 0);
   return (
     <>
       <SiteHeader />
@@ -140,31 +162,29 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
           <div className="mj-sec">
             <div className="mj-sec-l">
               <p className="mj-code">02</p>
-              <h2 id="s2" className="mj-h2">표준견적서는 줄마다 단가 근거와 합계에 들어가는지 보여 줘요</h2>
-              <Link className="mj-lnk" href="/legal#prices">기준 단가 출처</Link>
+              <h2 id="s2" className="mj-h2">비용이 어디에 얼마가 드는지 미리 보여 줘요</h2>
             </div>
             <div className="mj-sec-c">
               <figure className={`mj-paper ${s.ex}`} aria-labelledby="ex-t">
                 <p id="ex-t" className={s.exHead}><span>표준견적서 · 도배</span><span className="mj-sub">견본 · 세 줄만</span></p>
                 <ul className={`${s.exList} mj-num`}>
                   <li>
-                    <span className={s.exN}>벽 도배 시공 (풀 포함) <span className="mj-small">198.4㎡ · 표준시장단가</span></span>
+                    <span className={s.exN}>벽 도배 시공 <span className="mj-small">198.4㎡</span></span>
                     <span className={s.exA}>1,189,011원</span>
                     <span className={`mj-st mj-st-ok ${s.exS}`}><OkIcon />합계에 들어가요</span>
                   </li>
                   <li>
-                    <span className={s.exN}>기존 벽지 철거 <span className="mj-small">264.5㎡ · 보통인부 노임</span></span>
-                    <span className={s.exA}>참고 456,792원</span>
-                    <span className={`mj-st mj-st-wait ${s.exS}`}><WaitIcon />실측 후 · 합계 밖</span>
+                    <span className={s.exN}>기존 벽지 철거</span>
+                    <span className={s.exA}><Dash sr="금액은 실측 뒤" /></span>
+                    <span className={`mj-st mj-st-wait ${s.exS}`}><WaitIcon />실측 뒤 업체가 정해요</span>
                   </li>
                   <li>
-                    <span className={s.exN}>폐기물 처리 <span className="mj-small">공공 단가 없음</span></span>
-                    <span className={s.exA}><Dash sr="금액 없음" /></span>
-                    <span className={`mj-st mj-st-wait ${s.exS}`}><WaitIcon />실측 후 · 합계 밖</span>
+                    <span className={s.exN}>폐기물 처리</span>
+                    <span className={s.exA}><Dash sr="금액은 실측 뒤" /></span>
+                    <span className={`mj-st mj-st-wait ${s.exS}`}><WaitIcon />실측 뒤 업체가 정해요</span>
                   </li>
                 </ul>
               </figure>
-              <p className="mj-small">실측 후 줄은 합계에 넣지 않았어요.</p>
             </div>
           </div>
         </section>
@@ -174,16 +194,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
             <div className="mj-sec-l">
               <p className="mj-code">03</p>
               <h2 id="s3" className="mj-h2">공사 전에 많이 묻는 질문</h2>
-              <Link className="mj-lnk" href="/faq">자주 묻는 질문 모두 보기</Link>
             </div>
             <div className="mj-sec-c">
-              <ul className={s.qs}>
-                {preview.map((it) => (
-                  <li key={it.id}>
-                    <Link href={`/faq#${it.id}`}><span>{it.q}</span><span className="mj-small">{it.tag}</span></Link>
-                  </li>
+              <div className={s.fq}>
+                {preview.map((it, i) => (
+                  <details key={it.id} open={i === 0}>
+                    <summary><span>{it.q}</span><span className={s.tg}><span className={s.chip}>{it.tag}</span><ChevDown /></span></summary>
+                    <PreviewAnswer it={it} />
+                  </details>
                 ))}
-              </ul>
+                <Link className={s.fqMore} href="/faq">
+                  <span>질문 {faqCount}개 모두 보기</span>
+                  <span className={s.tg}>{faqCount > preview.length ? <span className="mj-small">{faqCount - preview.length}개 더 있어요</span> : null}<ChevRight /></span>
+                </Link>
+              </div>
             </div>
           </div>
         </section>

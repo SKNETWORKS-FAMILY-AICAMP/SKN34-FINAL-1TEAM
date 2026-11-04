@@ -70,9 +70,18 @@
 .exA { flex: none; min-width: 6.5em; text-align: right; }
 .exS { flex: 0 1 232px; white-space: normal; }
 
-/* 03 자주 묻는 질문 미리 보기 */
-.qs { max-width: 720px; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
-.qs > li { border-bottom: 1px solid var(--line); }
-.qs a { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 52px; color: var(--ink); text-decoration: none; }
-.qs a:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
-.qs a > :last-child { flex: none; }
+/* 03 자주 묻는 질문 미리 보기: 누르면 그 자리에서 답이 펼쳐진다 */
+.fq { max-width: 720px; border-top: 1px solid var(--line); }
+.fq details { border-bottom: 1px solid var(--line); }
+.fq summary { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 56px; padding: 8px 4px; color: var(--ink); font-weight: 500; list-style: none; cursor: pointer; }
+.fq summary::-webkit-details-marker { display: none; }
+.fq summary:hover { background: var(--surface); }
+.fq details[open] summary { font-weight: 700; }
+.fq details[open] .chev { transform: rotate(180deg); }
+.tg { display: inline-flex; flex: none; align-items: center; gap: 8px; color: var(--ink-sub); }
+.chip { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-s); font-size: var(--fs-xs); font-weight: 500; color: var(--ink-sub); white-space: nowrap; }
+.an { display: flex; flex-direction: column; gap: 8px; max-width: 40em; padding: 2px 4px 20px; }
+.an p { margin: 0; }
+.ink { color: var(--ink); font-weight: 700; }
+.fqMore { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 56px; padding: 8px 4px; border-bottom: 1px solid var(--line); color: var(--ink); font-weight: 700; text-decoration: none; }
+.fqMore:hover { background: var(--surface); color: var(--ink); }
