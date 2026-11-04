@@ -303,6 +303,34 @@ def test_vendor_change_needs_reason_and_overlap_blocks_accept(api):
     assert query("select start_date from deals where trade = 'dobae'")[0][0] == DOB[0]
 
 
+def test_mokgong_choices_end_before_accepted_dobae(api):
+    customer, pid, dm, dd = two(api)
+    w = workdays(TODAY + timedelta(days=1), 6, OFF)  # 내일부터 일하는 날 6개
+    dob = run(w[5])  # 도배를 6번째 일하는 날부터 먼저 수락한다
+    xd = proposal_of(api, "maru@mitjip.test", dd, dob)
+    use(api, customer)
+    assert accept(api, pid, dd, xd, 0).status_code == 200
+    mok = after(dob[1])  # 목공은 도배 뒤로 냈다 (낼 수는 있고 수락은 못 한다)
+    proposal_of(api, "barum@mitjip.test", dm, mok)
+    use(api, customer)
+    t = api.get(f"/projects/{pid}/schedule").json()["trades"][0]
+    assert t["deal"]["trade"] == "mokgong" and [c["trade"] for c in t["fit"]["conflicts"]] == [
+        "dobae"
+    ]
+    # 3일짜리 목공 후보는 도배 시작 전날까지 끝나는 것만 (5개를 채우지 않는다)
+    assert [(o["start"], o["end"]) for o in t["start_options"]] == [
+        (w[0].isoformat(), w[2].isoformat()),
+        (w[1].isoformat(), w[3].isoformat()),
+        (w[2].isoformat(), w[4].isoformat()),
+    ]
+    url = f"/projects/{pid}/deals/{dm}/date-requests"
+    bad = api.post(url, json={"wish_dates": [w[3].isoformat()]})  # 끝나는 날이 도배 첫날
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "wish_dates"
+    assert query("select count(*) from date_requests")[0][0] == 0
+    ok = api.post(url, json={"wish_dates": [w[0].isoformat(), w[2].isoformat()]})
+    assert ok.status_code == 201, ok.text
+
+
 def test_requests_are_two_in_total_and_closed_after_work_done(api):
     customer, pid, dm, dd = both_accepted(api)
     url = f"/projects/{pid}/deals/{dd}/date-requests"

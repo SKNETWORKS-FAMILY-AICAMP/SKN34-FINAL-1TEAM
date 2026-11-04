@@ -252,16 +252,21 @@ def start_choices(
     skip: Collection[date] = (),
     days_off: Collection[date] = (),
     weekend: Collection[int] = WEEKEND,
+    end_by: date | None = None,
 ) -> list[tuple[date, date]]:
-    """first부터 일하는 날 n개를 시작일 후보로 (skip은 빼고), 각각 일하는 날 days개면 끝나는 날."""
+    """first부터 일하는 날 n개를 시작일 후보로 (skip은 빼고), 각각 일하는 날 days개면 끝나는 날.
+    end_by가 있으면 그날까지 끝나는 후보만 (뒤 공정과 겹치지 않게). 모자라면 n개보다 적다."""
     if days < 1 or n < 0:
         raise ValueError("일하는 날 수와 후보 수를 다시 확인해 주세요")
     out: list[tuple[date, date]] = []
     d = first
     while len(out) < n:
         (start,) = workdays(d, 1, days_off, weekend)
+        end = workdays(start, days, days_off, weekend)[-1]
+        if end_by is not None and end > end_by:
+            break  # 뒤로 갈수록 끝나는 날도 늦어진다
         if start not in skip:
-            out.append((start, workdays(start, days, days_off, weekend)[-1]))
+            out.append((start, end))
         d = start + timedelta(days=1)
     return out
 

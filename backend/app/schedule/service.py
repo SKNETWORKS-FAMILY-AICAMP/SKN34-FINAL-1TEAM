@@ -763,6 +763,32 @@ async def _set(s: AsyncSession, model, row_id: uuid.UUID, frm: str, values: dict
         raise AppError(409, "stale", STALE)
 
 
+def _base(d: Deal, x: DateProposal | None) -> tuple[date, date] | None:
+    """다른 날짜 요청의 기준 날짜: 수락 전이면 낸 날짜, 수락 뒤면 지금 날짜 (그와 같은 기간으로 고른다)"""
+    if d.status == "scheduled" and d.start_date and d.end_date:
+        return d.start_date, d.end_date
+    if d.status == "confirmed" and x is not None:
+        return x.start_date, x.end_date
+    return None
+
+
+def _start_options(
+    trade: str, base: tuple[date, date], others: list[Deal], weekend: tuple[int, ...], today: date
+) -> list[StartOptionOut]:
+    """요청 후보: 기준과 같은 일하는 날 수, 다른 공정과 겹치지 않는 자리(앞 공정 다음 날부터 뒤 공정
+    전날까지) 안에서 내일부터. 기준 시작일은 뺀다."""
+    tomorrow = today + timedelta(days=1)
+    room = _fit(trade, *base, others, weekend, today)
+    first = max(tomorrow, room.start_from or tomorrow)
+    n = count_workdays(*base, _off(base[0]), weekend)
+    return [
+        StartOptionOut(start=a, end=b)
+        for a, b in start_choices(
+            first, max(n, 1), OPTIONS, {base[0]}, _off(first), weekend, room.end_by
+        )
+    ]
+
+
 async def schedule_for(
     s: AsyncSession, user: User, project_id: uuid.UUID, today: date
 ) -> ScheduleOut:
@@ -790,22 +816,8 @@ async def schedule_for(
         x, r = pend.get(d.id), reqs.get(d.id)
         others = [o for o in accepted if o.trade != d.trade]
         fit = _fit(d.trade, x.start_date, x.end_date, others, weekend, today) if x else None
-        # 요청 후보: 수락 전이면 낸 날짜, 수락 뒤면 지금 날짜와 같은 기간으로
-        base = (x.start_date, x.end_date) if x and d.status == "confirmed" else None
-        if d.status == "scheduled":
-            base = (d.start_date, d.end_date)
-        options = []
-        if base is not None:
-            tomorrow = today + timedelta(days=1)
-            room = _fit(d.trade, *base, others, weekend, today)
-            first = max(tomorrow, room.start_from or tomorrow)
-            n = count_workdays(*base, _off(base[0]), weekend)
-            options = [
-                StartOptionOut(start=a, end=b)
-                for a, b in start_choices(
-                    first, max(n, 1), OPTIONS, {base[0]}, _off(first), weekend
-                )
-            ]
+        base = _base(d, x)
+        options = _start_options(d.trade, base, others, weekend, today) if base else []
         trades.append(
             TradeDatesOut(
                 deal=out,
@@ -1118,8 +1130,22 @@ async def request_dates(
     change = d.status == "scheduled"
     if change and data.reason is None:
         raise AppError(422, "reason", "날짜를 바꾸고 싶은 이유를 적어 주세요.")
-    if not change and (await _pending(s, [d.id])).get(d.id) is None:
+    x = (await _pending(s, [d.id])).get(d.id)
+    if not change and x is None:
         raise AppError(409, "no_dates", "업체가 공사 날짜를 낸 뒤에 요청할 수 있어요.")
+    base = _base(d, x)
+    # 고른 날에 같은 기간으로 하면 수락한 다른 공정과 겹치는지 (겹치면 수락할 수 없다)
+    if base is not None:
+        others = await _others(s, p.id, d.trade)
+        n = max(count_workdays(*base, _off(base[0]), weekend), 1)
+        for w in data.wish_dates:
+            end = workdays(w, n, _off(w), weekend)[-1]
+            if _fit(d.trade, w, end, others, weekend, today).conflicts:
+                raise AppError(
+                    422,
+                    "wish_dates",
+                    "다른 공정과 겹치는 날이 있어요. 고를 수 있는 날 중에서 골라 주세요.",
+                )
     if (await _open_requests(s, [d.id])).get(d.id) is not None:
         raise AppError(
             409, "already_requested", "이미 다른 날짜를 요청했어요. 업체 답을 기다려 주세요."

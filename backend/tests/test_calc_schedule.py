@@ -204,6 +204,18 @@ def test_start_choices_skip_days_off_and_keep_the_length():
         start_choices(date(2026, 11, 19), 0, 1)
 
 
+def test_start_choices_stop_before_the_next_trade():
+    off = days_off(date(2026, 11, 1), date(2026, 12, 31))
+    # 도배가 11.26(목)에 시작하면 3일짜리 목공은 11.25(수)까지 끝나는 시작일만
+    got = start_choices(date(2026, 11, 19), 3, 5, (), off, end_by=date(2026, 11, 25))
+    assert got == [
+        (date(2026, 11, 19), date(2026, 11, 23)),
+        (date(2026, 11, 20), date(2026, 11, 24)),
+        (date(2026, 11, 23), date(2026, 11, 25)),
+    ]
+    assert start_choices(date(2026, 11, 24), 3, 5, (), off, end_by=date(2026, 11, 25)) == []
+
+
 def test_due_at_is_calendar_days_at_18_seoul():
     # 11.08(일) 10:12 서울에 확정 → 11.10(화) 18:00
     base = datetime(2026, 11, 8, 1, 12, tzinfo=UTC)
