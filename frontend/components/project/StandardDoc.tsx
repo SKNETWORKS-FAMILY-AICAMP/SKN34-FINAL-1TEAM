@@ -148,7 +148,7 @@ export function StandardDoc({ p, q, title }: { p: ApiProject; q: ApiStandard; ti
             <dt className={s.tt}>낼 금액 <span className="mj-small">부가세 포함</span></dt><dd className={s.tt}>{numText(q.total)}</dd>
           </dl>
           <p className="mj-small">&lsquo;실측 후&rsquo; 줄은 합계에 들어가지 않아요.</p>
-          <p><Link className={s.src} href="/legal#prices">기준 단가 출처</Link></p>
+          <p className="mj-small">공공 기준: 표준시장단가 · 시중노임단가 · 조달청 가격정보</p>
         </div>
       </section>
 

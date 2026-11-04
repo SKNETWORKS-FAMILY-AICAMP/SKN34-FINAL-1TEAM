@@ -42,6 +42,4 @@
 .tot dd { text-align: right; }
 .tot .tt { padding-top: 14px; border-top: 2px solid var(--ink); border-bottom: 0; font-size: var(--fs-h2); font-weight: 700; }
 .tot .tt > span { font-weight: 400; }
-.src { display: inline-flex; align-items: center; min-height: 40px; font-size: var(--fs-sm); font-weight: 500; color: var(--ink-sub); text-decoration: none; }
-.src:hover, .src:focus-visible { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .disc { padding-top: 20px; border-top: 1px solid var(--line); font-size: var(--fs-sm); font-weight: 700; }

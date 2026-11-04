@@ -11,7 +11,6 @@ export function SiteFooter() {
           <Link href="/legal#terms">이용약관</Link>
           <Link href="/legal#privacy" className={s.strong}>개인정보처리방침</Link>
           <Link href="/signup/vendor">업체 입점 안내</Link>
-          <Link href="/legal#prices">기준 단가 출처</Link>
           <Link href="/legal#contact">고객센터</Link>
         </nav>
         <p>믿집 · 상호 [상호] · 대표 [대표자] · 주소 [사업장 주소] · 사업자등록번호 [000-00-00000] <Link href="/legal#biz">사업자정보 확인</Link> · 통신판매업 신고 [번호] · 이메일 [이메일 주소] · 고객센터 [전화번호] (평일 10:00–18:00) · 호스팅 제공자 [호스팅 사업자]</p>

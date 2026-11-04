@@ -1,4 +1,4 @@
-// 약관 · 개인정보처리방침 · 고객센터 · 사업자 정보 · 기준 단가 출처(시안 WLegal).
+// 약관 · 개인정보처리방침 · 고객센터 · 사업자 정보(시안 WLegal).
 // [내용 자리] · [대괄호]는 아직 정하지 않은 글 자리다. 판에 없는 법적 문구는 짓지 않는다.
 import Link from "next/link";
 import { SiteHeader } from "@/components/site/SiteHeader";
@@ -73,7 +73,6 @@ export default function LegalPage() {
               <li><a href="#privacy">개인정보처리방침</a></li>
               <li><a href="#contact">고객센터</a></li>
               <li><a href="#biz">사업자 정보</a></li>
-              <li><a href="#prices">기준 단가 출처</a></li>
             </ol>
           </nav>
 
@@ -233,25 +232,6 @@ export default function LegalPage() {
               </table>
               <p className={s.strong}>믿집은 고객과 업체를 이어 주는 중개 서비스예요. 공사 계약의 당사자는 고객과 업체예요.</p>
               <div><a className="mj-lnk" href="https://www.ftc.go.kr/" target="_blank" rel="noopener noreferrer">공정거래위원회 사업자정보 확인 <span className={s.normal}>(새 창)</span></a></div>
-            </section>
-
-            <section id="prices" className={s.doc} aria-labelledby="prices-t">
-              <div className={s.dh}><h2 id="prices-t">기준 단가 출처</h2></div>
-              <p>표준견적서는 아래 공공 기준으로 계산해요. 견적서마다 계산한 때의 계산 방법 · 단가 버전을 함께 남겨요.</p>
-              <div className="mj-table-box" tabIndex={0} role="region" aria-label="기준 단가 출처 표, 옆으로 넘겨 볼 수 있어요">
-                <table className={`mj-table ${s.narrow}`}>
-                  <caption className="mj-sr">표준견적서 계산에 쓰는 기준 단가 출처와 적용일</caption>
-                  <thead><tr><th scope="col">출처</th><th scope="col">쓰는 곳</th><th scope="col">적용일 · 조회</th></tr></thead>
-                  <tbody>
-                    <tr><th scope="row">표준시장단가 2026 하반기</th><td>도배 · 목공 시공비</td><td className="mj-num">2026.07.01</td></tr>
-                    <tr><th scope="row">시중노임단가 2026 하반기</th><td>철거 같은 일손 단가(보통인부)</td><td className="mj-num">2026.09.01</td></tr>
-                    <tr><th scope="row">조달청 가격정보</th><td>도배지 · 초배지 자재</td><td className="mj-num">2026.10 조회</td></tr>
-                    <tr><th scope="row">건설공사 표준품셈</th><td>일의 양(품) · 자재 소요량</td><td><span aria-hidden="true">—</span><span className="mj-sr">없음</span></td></tr>
-                    <tr><th scope="row">믿집이 정한 값</th><td>공공 단가가 없는 몰딩 · 걸레받이 자재</td><td><span aria-hidden="true">—</span><span className="mj-sr">없음</span></td></tr>
-                  </tbody>
-                </table>
-              </div>
-              <p className="mj-small">공공 단가가 없는 줄(폐기물 처리 등)은 실측한 뒤 업체가 금액을 적어요.</p>
             </section>
           </div>
         </div>
