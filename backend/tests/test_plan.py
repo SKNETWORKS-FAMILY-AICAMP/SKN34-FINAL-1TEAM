@@ -58,6 +58,22 @@ def test_redo_with_weekend_work_makes_a_new_version(api):
     assert past.status_code == 422
 
 
+def test_redo_is_closed_after_a_vendor_is_confirmed(api):
+    from tests.conftest import query
+    from tests.test_deal import confirm, setup
+
+    _customer, pid, va, _, _ = setup(api)
+    start = {"start": _next_monday().isoformat(), "weekend_work": True}
+    assert api.post(f"/projects/{pid}/plan", json=start).status_code == 200  # 확정 전엔 된다
+    assert confirm(api, pid, va).status_code == 200
+    before = query("select count(*) from plans where kind = 'expected'")[0][0]
+    r = api.post(f"/projects/{pid}/plan", json={**start, "weekend_work": False})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "dates_locked"
+    assert query("select count(*) from plans where kind = 'expected'")[0][0] == before
+    query("update deals set status = 'reselected'")  # 다시 고르면 다시 열린다
+    assert api.post(f"/projects/{pid}/plan", json=start).status_code == 200
+
+
 def test_plan_is_owner_only(api):
     signup(api)
     p = api.post("/projects", json=body()).json()

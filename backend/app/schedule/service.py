@@ -114,6 +114,9 @@ from app.visit import service as visit_service
 from app.visit.schemas import InboxSummaryOut, ReselectOut
 
 LEAD_DAYS = 14  # 공사 시기를 아직 모를 때: 오늘부터 2주 뒤 첫 일하는 날에 시작한다고 잡는다
+REDO_LOCKED = (
+    "업체를 확정한 뒤에는 날짜를 바꿔 볼 수 없어요. 공사 날짜 화면에서 다른 날짜를 요청해 주세요."
+)
 LABEL = {"mokgong": "목공", "dobae": "도배"}
 
 
@@ -287,12 +290,17 @@ async def plan_for(
 async def redo(
     s: AsyncSession, user: User, project_id: uuid.UUID, data: PlanRedo, today: date
 ) -> PlanOut:
-    """날짜 바꿔 보기: 시작일 · 주말 공사를 바꿔 예상 공정표 새 버전을 만든다."""
+    """날짜 바꿔 보기: 시작일 · 주말 공사를 바꿔 예상 공정표 새 버전을 만든다.
+    업체를 확정한 뒤에는 막는다. 최신 예상 공정표의 시작일 · 주말 공사가 업체가 낼 날짜의 규칙과
+    확정 공정표의 예상 자리에 쓰여서, 그 뒤 날짜는 공사 날짜 요청으로만 바꾼다."""
     p = await project_service.get_for(s, user, project_id)
     if user.role != "customer":
         raise AppError(403, "forbidden", "고객만 공정표를 다시 계산할 수 있어요.")
     if data.start <= today or data.start > today + timedelta(days=730):
         raise AppError(422, "start", "내일부터 2년 안의 날짜를 골라 주세요.")
+    dealt = select(Deal.id).where(Deal.project_id == p.id, Deal.status != "reselected").limit(1)
+    if await s.scalar(dealt) is not None:
+        raise AppError(409, "dates_locked", REDO_LOCKED)
     prev = await _latest(s, p.id, "expected")
     await _save(s, p, data.start, data.weekend_work, prev)
     got = await _latest(s, p.id, "expected")

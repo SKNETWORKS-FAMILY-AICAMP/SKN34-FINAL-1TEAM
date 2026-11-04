@@ -40,8 +40,11 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
     const start = ov?.period.kind === "final" ? ov.period.start : null;
     return <FinalPlan id={id} title={title} plan={plan} rows={sch?.trades ?? []} contacts={await contactsOf(id, sch)} checks={ov?.checks ?? []} start={start} />;
   }
-  // 예상 공정표를 골라 봤는데 수락한 날짜가 있으면 확정 공정표로 돌아가는 링크를 둔다
-  const hasFinal = want === "expected" && ((await getSchedule(id))?.final_version ?? 0) > 0;
+  // 예상 공정표를 골라 봤는데 수락한 날짜가 있으면 확정 공정표로 돌아가는 링크를 둔다.
+  // 업체를 확정한 공정이 있으면(다시 고른 것 빼고) 날짜 바꿔 보기를 막는다(서버도 409로 막는다).
+  const sch = await getSchedule(id);
+  const hasFinal = want === "expected" && (sch?.final_version ?? 0) > 0;
+  const dealt = (sch?.trades.length ?? 0) > 0;
   const works = plan.blocks.filter((b) => b.kind === "work");
   const workEnd = works.at(-1)?.end ?? plan.end;
   const dry = plan.blocks.find((b) => b.kind === "dry");
@@ -101,7 +104,7 @@ export default async function PlanPage({ params, searchParams }: { params: Promi
           <p className="mj-small">예상 일정이에요. 업체를 확정하고 업체가 공사 날짜를 올리면 확정 공정표로 바뀌어요.</p>
         </div>
         <div className={s.right}>
-          <PlanRedo id={id} start={plan.start} weekend={plan.weekend_work} today={todaySeoul()} />
+          <PlanRedo id={id} start={plan.start} weekend={plan.weekend_work} today={todaySeoul()} locked={dealt} />
         </div>
       </div>
     </main>
