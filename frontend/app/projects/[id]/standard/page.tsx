@@ -4,7 +4,7 @@ import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { StandardDoc } from "@/components/project/StandardDoc";
 import { getMyProject } from "@/lib/api/project";
 import { getStandard } from "@/lib/api/quote";
-import { priceVerLabel, projectTitle } from "@/lib/labels";
+import { priceVerLabel, projectTitle, tradeLabel } from "@/lib/labels";
 import s from "./page.module.css";
 
 export const metadata = { title: "표준견적서" };
@@ -17,12 +17,14 @@ const DONE: Record<string, string> = {
   economy: "도배 저가형으로 다시 계산했어요.",
 };
 
-export default async function StandardPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ done?: string }> }) {
+export default async function StandardPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ done?: string; trade?: string }> }) {
   const { id } = await params;
-  const { done } = await searchParams;
+  const { done, trade } = await searchParams;
   const [p, q] = await Promise.all([getMyProject(id), getStandard(id)]);
   if (!p || !q) notFound();
   const title = projectTitle(p.region, (["dobae", "mokgong"] as const).filter((t) => p.trades[t]));
+  // 업체 고르기의 '표준견적서 보기'로 왔으면(?trade=) 그 공정 업체 고르기로 돌아가는 버튼을 둔다
+  const back = (trade === "dobae" || trade === "mokgong") && p.trades[trade] ? trade : null;
   const notice = done === "new" ? DONE[p.photos.length || p.plans.length ? "newPhoto" : "new"] : done === "edit" || done === "economy" ? DONE[done] : undefined;
 
   return (
@@ -33,8 +35,14 @@ export default async function StandardPage({ params, searchParams }: { params: P
         <StandardDoc p={p} q={q} title={title} />
         <aside className={s.side} aria-label="다음 할 일">
           <div className={s.next}>
-            <h2 className="mj-h3">다음은 업체 고르기예요</h2>
-            <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors`}>업체 고르기</Link>
+            {back ? (
+              <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors?trade=${back}`}>{tradeLabel(back)} 업체 고르기로 돌아가기</Link>
+            ) : (
+              <>
+                <h2 className="mj-h3">다음은 업체 고르기예요</h2>
+                <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors`}>업체 고르기</Link>
+              </>
+            )}
             <p><Link className="mj-lnk" href={`/projects/${id}/plan`}>예상 공정표 보기</Link></p>
           </div>
           <div className={s.change}>

@@ -44,7 +44,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
       <VTabs base={`/projects/${id}/vendors`} trades={trades} current={trade} counts={counts} />
       <div className={s.std}>
         <p>{tName} 표준견적서 <strong className="mj-num">{won(cur.standard_total)}</strong></p>
-        <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard`}>표준견적서 보기</Link>
+        <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard?trade=${trade}#t-${trade}`}>표준견적서 보기</Link>
       </div>
       {deal ? <div className={s.deal}><DealNote d={deal} projectId={id} /></div> : null}
       {again ? <div className={s.deal}><ReselectNote trade={trade} again={!mine.some((v) => isLive(v.status))} /></div> : null}
@@ -76,7 +76,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
             {head}
             <div className={s.empty}>
               <p>{cur.area_name}에서 {eulReul(tName)} 하는 믿집 업체가 아직 없어요.</p>
-              <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard`}>표준견적서 보기</Link>
+              <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard?trade=${trade}#t-${trade}`}>표준견적서 보기</Link>
             </div>
           </div>
         )}
