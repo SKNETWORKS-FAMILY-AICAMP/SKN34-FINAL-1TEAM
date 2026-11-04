@@ -1,4 +1,5 @@
 // 업체 고르기 (시안 WVendors): 이 집 공정의 업체 · 가견적(업체가 확인한 단가 × 표준견적서 수량, 믿집 계산) · 실측 요청에 담기.
+// 업체 이름을 누르면 업체 자세히가 오른쪽 창으로 열린다(./@panel/(.)[vid]).
 // 목록 · 남은 칸 · 동의 문구 버전은 GET /projects/{id}/vendors, 못 받은 시각은 GET /projects/{id}/visits에서 읽는다.
 // 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고 담기 · 요청을 막는다.
 // 확정 없이 다시 고르기로 닫힌 요청(close_reason reselected)이 있으면 '다시 고르는 중' 안내를 둔다.
@@ -42,7 +43,7 @@ export default async function VendorsPage({ params, searchParams }: { params: Pr
     <>
       <VTabs base={`/projects/${id}/vendors`} trades={trades} current={trade} counts={counts} />
       <div className={s.std}>
-        <p>{tName} 표준견적서 <strong className="mj-num">{won(cur.standard_total)}</strong> <span className="mj-small">부가세 포함</span></p>
+        <p>{tName} 표준견적서 <strong className="mj-num">{won(cur.standard_total)}</strong></p>
         <Link className={`mj-lnk ${s.sm}`} href={`/projects/${id}/standard`}>표준견적서 보기</Link>
       </div>
       {deal ? <div className={s.deal}><DealNote d={deal} projectId={id} /></div> : null}

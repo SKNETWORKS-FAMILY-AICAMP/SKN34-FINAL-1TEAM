@@ -1,15 +1,16 @@
 "use client";
-// 업체 고르기 목록 + 실측 요청에 담기 (시안 WVendors). 담은 업체 · 남길 말은 이 기기 sessionStorage에 프로젝트 · 공정마다 둔다.
-// 금액 · 퍼센트는 API 값을 그대로 보인다. 담을 수 있는 수(slotsLeft)는 서버가 정한다(공정마다 3곳까지).
+// 업체 고르기 목록 + 실측 요청에 담기 (시안 WVendors · WVendorsPanel). 담은 업체 · 남길 말은 이 기기 sessionStorage에 프로젝트 · 공정마다 둔다.
+// 업체 이름을 누르면 같은 주소(/vendors/[vid])가 오른쪽 창으로 열린다. 창에서 담아도 이 목록에 바로 보인다(pick.ts).
+// 금액 · 퍼센트는 API 값을 그대로 보인다. 금액은 부가세 포함이라 따로 적지 않는다. 담을 수 있는 수(slotsLeft)는 서버가 정한다(공정마다 3곳까지).
 // 이 공정을 확정했으면(locked) 담기 · 요청 칸을 두지 않는다. 확정 · 다시 고르는 중 안내는 목록 위(head)에 화면이 그린다.
 // 닫힌 줄은 shutKind로 나눈다: 확정이 살아 있을 때 다른 업체 확정은 '다른 업체로 정했어요', 그 밖은 '지난 실측 닫힘'(확정이 없으면 '다시 담기').
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { CONTACT_LABEL, tradeLabel } from "@/lib/labels";
 import { dotDate, won } from "@/lib/format";
 import { Check, Chev, Close, Picked, Plus, VisitState } from "./icons";
-import { readPick, writePick } from "./pick";
+import { PICK_EVENT, markFromList, readPick, writePick } from "./pick";
 import { RequestDialog } from "./RequestDialog";
 import { FAILED_TEXT, areasText, asMethod, declineText, feeText, isLive, shutKind, vsText, when, type Created, type VendorRow, type VTrade } from "./text";
 import s from "./VendorBoard.module.css";
@@ -38,8 +39,7 @@ function Estimate({ v }: { v: VendorRow }) {
   const vs = vsText(v.vs_standard, v.vs_direction);
   return (
     <>
-      <p className={`mj-num ${s.money}`}><span className={s.total}>{won(v.estimate_total)}</span><span className="mj-small">부가세 포함</span></p>
-      <p className="mj-small">업체가 확인한 단가로 믿집이 계산했어요</p>
+      <p className={`mj-num ${s.total}`}>{won(v.estimate_total)}</p>
       {vs ? <p className={`mj-num ${s.vs}`}>{vs} {v.vs_direction === "same" ? null : <span aria-hidden="true">{v.vs_direction === "less" ? "▼" : "▲"}</span>}</p> : null}
     </>
   );
@@ -47,6 +47,7 @@ function Estimate({ v }: { v: VendorRow }) {
 
 export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, consentVer, vendors, closedAt, locked = false }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [ids, setIds] = useState<string[]>([]);
   const [msg, setMsg] = useState("");
   const [onlyEst, setOnlyEst] = useState(false);
@@ -62,6 +63,19 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
     setMsg(p.msg);
   }, [projectId, trade]);
   useEffect(() => { if (sent) sentRef.current?.focus(); }, [sent]);
+  // 오른쪽 창에서 담거나 뺐을 때
+  useEffect(() => {
+    const read = () => setIds(readPick(projectId, trade).ids);
+    window.addEventListener(PICK_EVENT, read);
+    return () => window.removeEventListener(PICK_EVENT, read);
+  }, [projectId, trade]);
+  // 오른쪽 창으로 보고 있는 업체 (주소 /vendors/[vid]). 창을 닫으면 눌렀던 업체 이름으로 돌아간다
+  const viewing = pathname.match(/\/vendors\/([^/]+)$/)?.[1] ?? null;
+  const lastView = useRef<string | null>(null);
+  useEffect(() => {
+    if (!viewing && lastView.current) document.getElementById(`vn-${lastView.current}`)?.focus();
+    lastView.current = viewing;
+  }, [viewing]);
 
   const byId = new Map(vendors.map((v) => [v.vendor_id, v]));
   const live = vendors.filter((v) => v.visit && isLive(v.visit.status));
@@ -118,12 +132,15 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
               const kind = vis ? shutKind(vis, locked) : null;
               const on = picked.includes(v.vendor_id);
               const full = !on && room === 0;
+              const looking = viewing === v.vendor_id;
               return (
-                <li key={v.vendor_id} className={s.vr}>
+                <li key={v.vendor_id} className={`${s.vr} ${looking ? s.on : ""}`}>
                   <div className={s.c1}>
-                    <h3 className="mj-h3">{name}</h3>
+                    <h3 className={`mj-h3 ${s.vnH}`}>
+                      <Link id={`vn-${v.vendor_id}`} className={s.vn} href={`${base}/vendors/${v.vendor_id}?trade=${trade}`} scroll={false} aria-current={looking || undefined} onClick={() => markFromList(backTo)}>{name}<span className="mj-sr"> 자세히 보기</span></Link>
+                      {looking ? <span className={s.seeing}>보는 중</span> : null}
+                    </h3>
                     <p className="mj-small">{[...v.trades.map(tradeLabel), areasText(v.areas, areaName)].join(" · ")}</p>
-                    <Link className={`mj-lnk ${s.sm}`} href={`${base}/vendors/${v.vendor_id}?trade=${trade}`}>업체 자세히<span className="mj-sr">, {name}</span></Link>
                   </div>
                   <ul className={`${s.c2} ${s.facts}`} aria-label="믿집 확인">
                     <li><span className={s.okIcon}><Check /></span><span>사업자 확인함{v.verified_on ? <> <span className="mj-small mj-num">{dotDate(v.verified_on)}</span></> : null}</span></li>
@@ -199,7 +216,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                   <li key={id}>
                     <div className={s.bName}>
                       <p className={s.strong}>{name}</p>
-                      <p className="mj-small mj-num">{v.estimate_total != null ? `가견적 ${won(v.estimate_total)} · 부가세 포함` : "가견적 없음 · 실측 뒤 금액"}</p>
+                      <p className="mj-small mj-num">{v.estimate_total != null ? `가견적 ${won(v.estimate_total)}` : "가견적 없음 · 실측 뒤 금액"}</p>
                     </div>
                     <button type="button" className={s.rmv} aria-label={`${name} 빼기`} onClick={() => toggle(id)}><Close /></button>
                   </li>
@@ -220,7 +237,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
             <summary><Chev className={s.chev} />가견적은 어떻게 계산해요?</summary>
             <div className={s.dtlBody}>
               <p>업체가 직접 넣고 확인한 단가만 써요. 이 집 수량(표준견적서와 같아요)에 업체 단가를 곱하고 부가세를 더해요. 실측 뒤 금액인 줄은 빠져 있어요.</p>
-              <p>줄마다 어떻게 계산했는지는 &lsquo;업체 자세히&rsquo;에서 볼 수 있어요.</p>
+              <p>업체 이름을 누르면 줄마다 어떻게 계산했는지 볼 수 있어요.</p>
               <p className="mj-sub">단가를 확인하지 않은 업체는 &lsquo;가견적 없음&rsquo;이에요.</p>
             </div>
           </details>
