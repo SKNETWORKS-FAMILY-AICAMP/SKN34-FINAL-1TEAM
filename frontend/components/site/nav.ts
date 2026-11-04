@@ -5,7 +5,9 @@ import type { Role, Session } from "@/lib/types";
 export type HeaderKind = "guest" | Role;
 export type NavItem = { id: string; href: string; label: string };
 
-// '시공 상담'(챗)은 보류라 넣지 않는다. 업체 찾기는 내 공사에서 프로젝트를 고른 뒤 업체를 고른다.
+// '시공 상담'(챗)은 보류라 넣지 않는다.
+// '업체 찾기'는 지금 숨겨 둔다(내 공사와 같은 화면으로 가서 헷갈림). 업체는 내 공사에서 공사를 고른 뒤 고른다.
+// 다시 보이려면 customer에 { id: "find", href: "/my", label: "업체 찾기" }를 '내 공사' 뒤에 넣는다(isCurrent의 "find"는 그대로 둠).
 export const NAV: Record<HeaderKind, NavItem[]> = {
   guest: [
     { id: "start", href: "/start", label: "견적 받기" },
@@ -14,7 +16,6 @@ export const NAV: Record<HeaderKind, NavItem[]> = {
   customer: [
     { id: "start", href: "/start", label: "견적 받기" },
     { id: "my", href: "/my", label: "내 공사" },
-    { id: "find", href: "/my", label: "업체 찾기" },
   ],
   vendor: [
     { id: "inbox", href: "/vendor", label: "작업함" },
@@ -60,8 +61,8 @@ const VENDOR_PICK = /^\/projects\/[^/]+\/vendors(\/|$)/;
 /** 지금 보는 화면이 이 메뉴인지 (aria-current="page") */
 export function isCurrent(item: NavItem, path: string): boolean {
   switch (item.id) {
-    case "my":
-      return path === "/my" || (path.startsWith("/projects/") && !VENDOR_PICK.test(path));
+    case "my": // '업체 찾기'를 숨긴 동안은 업체 고르기 화면도 '내 공사'로 본다
+      return path === "/my" || path.startsWith("/projects/");
     case "find":
       return VENDOR_PICK.test(path);
     case "inbox":
