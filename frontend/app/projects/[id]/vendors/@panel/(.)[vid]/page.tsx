@@ -20,7 +20,9 @@ export const metadata = { title: "업체 고르기" };
 const PHOTOS = 3;
 
 export default async function VendorPanelPage({ params, searchParams }: { params: Promise<{ id: string; vid: string }>; searchParams: Promise<{ trade?: string }> }) {
-  const { id, vid } = await params;
+  const { id, vid: raw } = await params;
+  // 가로채는 경로는 개발 서버에서 업체 번호 앞에 '(.)' 표시가 붙어 올 때가 있어 떼고 쓴다
+  const vid = decodeURIComponent(raw).replace(/^(?:\(\.{1,3}\))+/, "");
   const { trade: asked } = await searchParams;
   const p = await getMyProject(id);
   if (!p) return null;
