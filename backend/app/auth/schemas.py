@@ -1,5 +1,6 @@
 import re
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -77,6 +78,7 @@ class MeOut(BaseModel):
     name: str
     phone: str | None = None
     role: str
+    created_at: datetime  # 가입한 때 (내 정보 화면)
     # 업체 회원만: pending(심사 중) · needs_info(보완 요청) · approved · rejected. 승인 전에는 업체 기능이 잠긴다
     vendor_status: str | None = None
     vendor_review_code: str | None = None  # 보완 요청 · 거절 사유 코드

@@ -2260,6 +2260,11 @@ export interface components {
             phone?: string | null;
             /** Role */
             role: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Vendor Status */
             vendor_status?: string | null;
             /** Vendor Review Code */

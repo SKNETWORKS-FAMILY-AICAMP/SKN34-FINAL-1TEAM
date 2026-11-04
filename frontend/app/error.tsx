@@ -14,7 +14,7 @@ const CLOCK = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", hour: "
 
 function toSession(me: Schemas["MeOut"]): Session | null {
   if (!ROLES.includes(me.role as Role)) return null;
-  return { id: me.id, email: me.email, name: me.name, role: me.role as Role, vendorStatus: me.vendor_status ?? null, vendorRejectReason: me.vendor_reject_reason ?? null };
+  return { id: me.id, email: me.email, name: me.name, role: me.role as Role, vendorStatus: me.vendor_status ?? null, vendorRejectReason: me.vendor_reject_reason ?? null, phone: me.phone ?? null, joinedAt: me.created_at };
 }
 
 export default function ErrorPage({ retry }: { error: unknown; retry: () => void }) {

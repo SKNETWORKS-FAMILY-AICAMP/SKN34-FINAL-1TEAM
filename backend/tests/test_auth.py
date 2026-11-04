@@ -84,6 +84,7 @@ def test_change_my_name(api):
     signup(api, "rename@mitjip.test")
     r = api.patch("/me", json={"name": "새 이름"})
     assert r.status_code == 200 and r.json()["name"] == "새 이름"
+    assert r.json()["created_at"]  # 내 정보 화면의 가입일
     assert api.patch("/me", json={"name": "   "}).status_code == 422
 
 

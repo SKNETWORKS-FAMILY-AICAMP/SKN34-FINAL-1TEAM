@@ -186,6 +186,7 @@ async def me(s: AsyncSession, user: User) -> MeOut:
         name=user.name,
         phone=user.phone,
         role=user.role,
+        created_at=user.created_at,
         vendor_status=status,
         vendor_review_code=code,
         vendor_review_note=note,
