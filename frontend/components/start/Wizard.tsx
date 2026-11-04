@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { FieldError } from "@/components/auth/parts";
 import type { ApiProject, Region } from "@/lib/api/project";
 import { ApiError, call, errorText, type Schemas } from "@/lib/backend/client";
-import { BUDGETS, DOBAE_GRADES, MOK_ITEMS, WHEN_LABEL, gradeLabel, mokLabel, type Budget, type DobaeGrade, type MokItem } from "@/lib/labels";
+import { BUDGETS, DOBAE_GRADES, MOK_ITEMS, WHEN_LABEL, type Budget, type DobaeGrade, type MokItem } from "@/lib/labels";
 import { eulReul, md, stampSeoul } from "@/lib/format";
 import type { Role } from "@/lib/types";
 import { DateCalendar } from "./DateCalendar";
@@ -119,14 +119,6 @@ function nextName(base: string, names: string[]) {
   let k = family.length + 1;
   while (names.includes(`${root} ${k}`)) k++;
   return `${root} ${k}`;
-}
-
-function regionText(regions: Region[], sido?: string, sgg?: string) {
-  const r = regions.find((x) => x.id === sido);
-  if (!r) return "";
-  if (!sgg) return r.name;
-  const g = r.groups.find((x) => x.items.includes(sgg));
-  return g?.prefix ? `${g.prefix} ${sgg}` : sgg;
 }
 
 /** 저장된 프로젝트 → 폼 값 · 올려 둔 사진 */
@@ -349,20 +341,6 @@ export function Wizard({ regions, today, role, project = null }: Props) {
   const done = (id: (typeof SECTIONS)[number]["id"]) =>
     id === "s-photo" ? chosen.some((sp) => photos[sp.id]?.length) || plan.length > 0 : SECTION_KEYS[id].every((k) => !found[k]);
   const curNo = SECTIONS.find((x) => x.id === cur)?.no ?? 1;
-  const sizeText = a.bandMode ? BANDS.find((b) => b.v === a.size)?.t ?? "" : a.manualM2 ? `${a.manualBasis === "jeon" ? "전용" : a.manualBasis === "supply" ? "공급" : ""} ${a.manualM2}㎡`.trim() : "";
-  const whenText = a.when ? `${WHEN_LABEL[a.when]}${a.when === "date" && a.whenDate ? ` · ${md(a.whenDate)}${a.whenEnd && a.whenEnd !== a.whenDate ? ` ~ ${md(a.whenEnd)}` : ""}` : a.when === "movein" && a.whenDate ? ` · ${md(a.whenDate)}` : ""}` : "";
-  const tradeText = [a.trades.dobae && `도배${a.grade ? ` ${gradeLabel(a.grade)}` : ""}`, a.trades.mokgong && `목공${a.items.length ? `(${a.items.map(mokLabel).join(" · ")})` : ""}`].filter(Boolean).join(" · ");
-  const photoCount = chosen.reduce((n, sp) => n + (photos[sp.id]?.length ?? 0), 0);
-  const summary: [string, string][] = [
-    ["지역", regionText(regions, a.sido, a.sgg)],
-    ["면적", `${sizeText}${sizeText && a.balconyExt ? " · 발코니 확장" : ""}`],
-    ["집", [a.occupied === "yes" ? "살면서 공사" : a.occupied === "no" ? "빈 집" : "", a.builtYear ? `${a.builtYear}년 준공` : ""].filter(Boolean).join(" · ")],
-    ["공정", tradeText],
-    ["공간", chosen.map((sp) => sp.name).join(" · ")],
-    ["시기", whenText],
-    ["예산", BUDGETS.find((b) => b.key === a.budget)?.label ?? ""],
-    ["사진 · 도면", [photoCount && `사진 ${photoCount}장`, plan.length && `도면 ${plan.length}개`].filter(Boolean).join(" · ")],
-  ];
   const goLabel = edit ? "고친 내용으로 다시 계산하기" : role ? "계산하기" : "가입하고 계산하기";
   const check20 = (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3.5 8.4l3 3 6-6.6" /></svg>
@@ -627,16 +605,9 @@ export function Wizard({ regions, today, role, project = null }: Props) {
           <p className="mj-small mj-num" role="status">{sending ?? savedAt}</p>
           <div className={s.full}>{err("form")}</div>
           {!edit && !role ? <p className={`mj-small ${s.full}`}>가입해도 넣은 집 정보 · 사진은 그대로 이어져요.</p> : null}
+          {edit ? <p className={`mj-small ${s.full}`}>다시 계산하면 표준견적서와 예상 공정표가 새 버전으로 바뀌어요.</p> : null}
         </div>
       </form>
-
-      <aside className={s.sum} aria-labelledby="wz-sum-t">
-        <h2 id="wz-sum-t" className="mj-h3">넣은 내용</h2>
-        <dl className={s.sumDl}>
-          {summary.map(([k, v]) => <div key={k}><dt>{k}</dt><dd className={v ? undefined : s.empty}>{v || "아직 안 넣었어요"}</dd></div>)}
-        </dl>
-        <p className="mj-small">{edit ? "다시 계산하면 표준견적서와 예상 공정표가 새 버전으로 바뀌어요." : "계산하면 표준견적서와 예상 공정표를 바로 보여 드려요."}</p>
-      </aside>
     </main>
   );
 }
