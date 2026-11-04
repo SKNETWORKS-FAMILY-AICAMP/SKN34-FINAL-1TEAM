@@ -46,7 +46,7 @@ export function VendorPanel({ vendorId, titleId, listHref, fullHref, prevHref, n
   });
 
   return (
-    <aside className={s.vd} aria-labelledby={titleId}>
+    <aside className={s.vd} aria-labelledby={titleId} data-vendor-panel="">
       <div className={s.bar}>
         <div className={s.nav}>
           {prevHref ? <Link className="mj-btn mj-btn-sec mj-btn-sm" href={prevHref} replace scroll={false}><Arrow left />이전<span className={s.wide}> 업체</span></Link> : <span className="mj-btn mj-btn-sec mj-btn-sm" aria-disabled="true"><Arrow left />이전<span className={s.wide}> 업체</span></span>}
