@@ -18,5 +18,7 @@
 
 @media (max-width: 600px) {
   .launch { right: 16px; bottom: 16px; }
+  /* 업체 고르기 아래 막대(담은 업체 · 실측 요청 보내기)가 있으면 그 위로 올린다 */
+  :global(body:has([data-pick-bar])) .launch { bottom: 88px; }
   .win { left: 0; right: 0; bottom: 0; width: auto; max-width: none; height: 80dvh; border-radius: 12px 12px 0 0; }
 }

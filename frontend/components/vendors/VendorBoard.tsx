@@ -171,7 +171,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                         ) : null}
                         {locked ? null : (
                           <button type="button" className={s.pick} aria-pressed={on} aria-disabled={full || undefined} aria-describedby={full ? "pk-room" : undefined} onClick={() => toggle(v.vendor_id)}>
-                            {on ? <Picked /> : <Plus />}{kind === "past" ? "다시 담기" : "실측 요청에 담기"}<span className="mj-sr">, {name}</span>
+                            {on ? <Picked /> : <Plus />}{on ? "담았어요" : kind === "past" ? "다시 담기" : "실측 요청에 담기"}<span className="mj-sr">, {name}</span>
                           </button>
                         )}
                       </>
@@ -230,7 +230,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
             <textarea id="pk-memo" className="mj-textarea" rows={3} maxLength={300} value={msg} aria-describedby="pk-memo-h" placeholder="예: 평일 오후나 주말 오전이 좋아요." onChange={(e) => { setMsg(e.target.value); writePick(projectId, trade, { ids: picked, msg: e.target.value }); }} />
             <p id="pk-memo-h" className="mj-hint mj-num">{msg.length}/300자 · 담은 업체 모두에게 가요</p>
           </div>
-          <p id="pk-share" className={s.share}>요청하면 업체 연락처가 보여요. 내 연락처는 보내기로 고를 때만 가요.</p>
+          <p id="pk-share" className={s.share}>요청하면 업체 연락처가 보여요.</p>
           <button type="submit" className="mj-btn mj-btn-pri" aria-haspopup="dialog" aria-describedby="pk-share" disabled={!picked.length}>실측 요청 보내기</button>
           <details className={s.dtl}>
             <summary><Chev className={s.chev} />가견적은 어떻게 계산해요?</summary>
@@ -242,6 +242,14 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
           </details>
         </form>
       </aside>}
+
+      {/* 폰 · 좁은 화면(960px 아래)에서는 담은 업체 칸이 목록 맨 아래라, 담으면 화면 아래에 막대를 붙인다 */}
+      {!locked && picked.length ? (
+        <div className={s.bar} data-pick-bar="">
+          <a className={s.barCount} href="#pk-t"><b className="mj-num">{picked.length}곳</b> 담음<span className="mj-sr"> · 담은 업체 보기</span></a>
+          <button type="button" className="mj-btn mj-btn-pri" aria-haspopup="dialog" onClick={() => setOpen(true)}>실측 요청 보내기</button>
+        </div>
+      ) : null}
 
       {locked ? null : (
         <RequestDialog

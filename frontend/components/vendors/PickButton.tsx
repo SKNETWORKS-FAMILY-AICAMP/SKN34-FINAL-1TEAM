@@ -23,7 +23,7 @@ export function PickButton({ projectId, trade, vendorId, name, slotsLeft, again 
   return (
     <>
       <button type="button" className={`${s.pick} ${s.pickWide}`} aria-pressed={on} aria-disabled={full || undefined} aria-describedby={hintId} onClick={toggle}>
-        {on ? <Picked /> : <Plus />}{again && !on ? "다시 담기" : "실측 요청에 담기"}<span className="mj-sr">, {name}</span>
+        {on ? <Picked /> : <Plus />}{on ? "담았어요" : again ? "다시 담기" : "실측 요청에 담기"}<span className="mj-sr">, {name}</span>
       </button>
       <p id={hintId} className="mj-small mj-num">{hint}</p>
     </>
