@@ -101,6 +101,43 @@ def test_list_filters_and_sorts_by_estimate(api):
     )
 
 
+def test_bundle_target_outside_project_hides_estimate(api):
+    approved_vendor(api)
+    assert api.put(PROFILE, json=profile_body(trades=["mokgong"])).status_code == 200
+    fid = upload(api, kind="price_doc", content=PDF, name="단가.pdf").json()["id"]
+    vid = str(vendor_id())
+    assert (
+        api.post("/vendor/price-files", json={"file_id": fid, "trade": "mokgong"}).status_code
+        == 201
+    )
+    prices = {
+        "lines": [
+            {"key": "door", "unit_price": 90_000},
+            {"key": "molding", "included_in": "door"},
+            {"key": "molding_mat", "included_in": "door"},
+        ]
+    }
+    assert api.put("/vendor/prices/mokgong", json=prices).status_code == 200
+    assert api.post("/vendor/prices/mokgong/confirm").status_code == 200
+    signup(api, "home@mitjip.test")
+    p = api.post(
+        "/projects",
+        json=project_body(
+            sgg="노원구", trades={"mokgong": {"spaces": ["a"], "items": ["molding"]}}
+        ),
+    )
+    assert p.status_code == 201, p.text
+    url = f"/projects/{p.json()['id']}/vendors"
+    result = api.get(url, params={"trade": "mokgong"})
+    assert result.status_code == 200, result.text
+    (vendor,) = result.json()["vendors"]
+    assert vendor["estimate_total"] is None
+    assert vendor["vs_standard"] is None
+    detail = api.get(f"{url}/{vid}", params={"trade": "mokgong"})
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["estimate"] is None
+
+
 def test_estimate_total_matches_calc_and_detail_explains_it(api):
     w = world(api)
     query("update vendors set opened_on = '2014-03-02' where user_id = $1", uuid.UUID(w["maru"]))

@@ -108,6 +108,17 @@ def estimate(
     exempt: bool = False,
 ) -> Estimate:
     keys = PRICE_KEYS[trade]
+    # 포함 대상은 이번 집에서 수량과 직접 단가로 실제 계산하는 줄이어야 한다.
+    priced_keys = {
+        price_key(ln.key, grade)
+        for ln in lines
+        if ln.state in COUNTED
+        and ln.qty is not None
+        and ln.qty > 0
+        and price_key(ln.key, grade) in keys
+        and (vp := prices.get(price_key(ln.key, grade))) is not None
+        and vp.unit_price is not None
+    }
     out: list[EstimateLine] = []
     missing: list[str] = []
     left_out: list[str] = []
@@ -122,7 +133,10 @@ def estimate(
         if vp is None:
             missing.append(ln.key)
         elif vp.included_in is not None:
-            out.append(EstimateLine(ln.key, pk, ln.qty, None, vp.included_in, 0))
+            if vp.included_in in priced_keys:
+                out.append(EstimateLine(ln.key, pk, ln.qty, None, vp.included_in, 0))
+            else:
+                missing.append(ln.key)
         else:
             amount = won(ln.qty * vp.unit_price)
             out.append(EstimateLine(ln.key, pk, ln.qty, vp.unit_price, None, amount))

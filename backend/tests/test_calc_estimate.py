@@ -37,7 +37,7 @@ def test_board_example_32_pyeong():
 
 def test_missing_prices_are_left_out_and_named():
     e = estimate(dobae_lines("economy"), MARU, trade="dobae", grade="economy")
-    assert e.missing == ("paper",)  # 합지 단가가 없다
+    assert e.missing == ("paper", "primer")  # 합지 단가 없음 · 초배지의 포함 대상도 없음
     assert e.supply == 1_319_360 + 449_480
     no_ceiling = estimate(dobae_lines(ceiling=False), MARU, trade="dobae", grade="basic")
     assert "ceiling" not in {x.key for x in no_ceiling.lines}  # 천장을 안 하면 줄이 안 셈
@@ -60,6 +60,37 @@ def test_vendor_price_is_price_or_included():
         VendorPrice(100, "wall")
     with pytest.raises(ValueError):
         VendorPrice(-1)
+
+
+@pytest.mark.parametrize("target_state", [None, "excluded", "optional", "bundled", "after_visit"])
+def test_included_price_requires_a_counted_target(target_state):
+    lines = [StdLine("molding", Decimal(20), "included")]
+    if target_state is not None:
+        lines.append(StdLine("door", Decimal(2), target_state))
+    prices = {"molding": VendorPrice(included_in="door"), "door": VendorPrice(90_000)}
+    e = estimate(lines, prices, trade="mokgong")
+    assert e.missing == ("molding",)
+    assert e.lines == ()
+
+
+@pytest.mark.parametrize("state", ["included", "separate"])
+def test_included_price_uses_counted_target_regardless_of_order(state):
+    lines = [StdLine("molding", Decimal(20), "included"), StdLine("door", Decimal(2), state)]
+    prices = {"molding": VendorPrice(included_in="door"), "door": VendorPrice(90_000)}
+    e = estimate(lines, prices, trade="mokgong")
+    assert e.missing == ()
+    assert e.total == 198_000
+    assert e.lines[0].included_in == "door" and e.lines[0].amount == 0
+
+
+@pytest.mark.parametrize("quantity", [None, Decimal(0)])
+def test_included_price_requires_target_quantity(quantity):
+    lines = [
+        StdLine("molding", Decimal(20), "included"),
+        StdLine("door", quantity, "included"),
+    ]
+    prices = {"molding": VendorPrice(included_in="door"), "door": VendorPrice(90_000)}
+    assert estimate(lines, prices, trade="mokgong").missing == ("molding",)
 
 
 def test_price_rows_match_calc_lines():

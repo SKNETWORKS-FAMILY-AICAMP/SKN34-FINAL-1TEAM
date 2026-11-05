@@ -209,9 +209,9 @@ async def _save(
         weekend_work=weekend_work,
     )
     s.add(row)
-    await s.flush()
-    _add_parts(s, row, plan, man_days)
     try:
+        await s.flush()
+        _add_parts(s, row, plan, man_days)
         await s.commit()
     except IntegrityError:  # 동시에 두 번 만들면 먼저 저장한 버전을 쓴다
         await s.rollback()

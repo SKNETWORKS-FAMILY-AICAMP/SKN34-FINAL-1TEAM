@@ -158,47 +158,47 @@ async def ensure_standard(s: AsyncSession, p: ProjectOut) -> dict[str, StandardQ
         return {t: latest[t] for t in wanted}
     area, basis = _area(p)
     pyeong = house_pyeong(p.size.band, p.size.m2, p.size.basis, HOUSE_2026H2)
-    for trade in stale:
-        c = wanted[trade]
-        row = StandardQuote(
-            project_id=p.id,
-            trade=trade,
-            version=(latest[trade].version + 1) if trade in latest else 1,
-            project_rev=p.rev,
-            formula_ver=FORMULA_VERSION,
-            price_ver=PRICE_VER,
-            grade=c.grade,
-            area_m2=area,
-            area_basis=basis,
-            pyeong=pyeong,
-            supply=c.supply,
-            vat=c.vat,
-            total=c.total,
-            man_day=c.man_day,
-            crew=c.crew,
-            notes=c.notes,
-        )
-        s.add(row)
-        await s.flush()
-        s.add_all(
-            [
-                StandardQuoteLine(
-                    quote_id=row.id,
-                    key=ln.key,
-                    name=ln.name,
-                    qty=ln.qty,
-                    unit=ln.unit,
-                    unit_price=ln.unit_price,
-                    amount=ln.amount,
-                    state=ln.state,
-                    basis=ln.basis,
-                    source=ln.source[:120],
-                    sort=i,
-                )
-                for i, ln in enumerate(c.lines)
-            ]
-        )
     try:
+        for trade in stale:
+            c = wanted[trade]
+            row = StandardQuote(
+                project_id=p.id,
+                trade=trade,
+                version=(latest[trade].version + 1) if trade in latest else 1,
+                project_rev=p.rev,
+                formula_ver=FORMULA_VERSION,
+                price_ver=PRICE_VER,
+                grade=c.grade,
+                area_m2=area,
+                area_basis=basis,
+                pyeong=pyeong,
+                supply=c.supply,
+                vat=c.vat,
+                total=c.total,
+                man_day=c.man_day,
+                crew=c.crew,
+                notes=c.notes,
+            )
+            s.add(row)
+            await s.flush()
+            s.add_all(
+                [
+                    StandardQuoteLine(
+                        quote_id=row.id,
+                        key=ln.key,
+                        name=ln.name,
+                        qty=ln.qty,
+                        unit=ln.unit,
+                        unit_price=ln.unit_price,
+                        amount=ln.amount,
+                        state=ln.state,
+                        basis=ln.basis,
+                        source=ln.source[:120],
+                        sort=i,
+                    )
+                    for i, ln in enumerate(c.lines)
+                ]
+            )
         await s.commit()
     except IntegrityError:  # 같은 집을 동시에 두 번 열면 먼저 저장한 버전을 쓴다
         await s.rollback()
