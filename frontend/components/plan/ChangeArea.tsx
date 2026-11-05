@@ -117,7 +117,7 @@ export function ChangeArea({ projectId, version, items, lead }: Props) {
       {done ? (
         <div className={s.doneBox}>
           <p ref={doneRef} tabIndex={-1} role="status" className={`mj-st mj-st-ok mj-num ${s.stBig} ${s.focusT}`}><Check size={16} />{tradeLabel(done.trade)} 날짜를 {spanRo(done.dates)} 바꿨어요</p>
-          <p className="mj-small">확정 공정표를 새 버전으로 바꾸고 {done.vendorName}에 알렸어요.</p>
+          <p className="mj-small">확정 공정표를 바꾸고 {done.vendorName}에 알렸어요.</p>
         </div>
       ) : null}
       {err ? (
@@ -173,7 +173,7 @@ export function ChangeArea({ projectId, version, items, lead }: Props) {
         {asking ? (
           <>
             <h2 id="pc-q" className="mj-h3 mj-num">{tradeLabel(asking.trade)} 날짜를 {spanRo(span(asking.proposal.start, asking.proposal.end))} 바꿀까요?</h2>
-            <p>바꾸면 확정 공정표가 새 버전으로 바뀌고 {asking.vendor_name}에 알려요.</p>
+            <p>바꾸면 확정 공정표가 바뀌고 {asking.vendor_name}에 알려요.</p>
             <div className={d.btns}>
               <button type="button" className="mj-btn mj-btn-pri" onClick={() => { const c = asking; dlg.current?.close(); void accept(c); }}>네, 바꿀게요</button>
               <button ref={noRef} type="button" className="mj-btn mj-btn-sec" onClick={() => dlg.current?.close()}>아니요</button>

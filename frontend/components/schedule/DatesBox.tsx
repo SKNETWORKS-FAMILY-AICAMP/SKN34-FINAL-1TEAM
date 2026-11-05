@@ -272,9 +272,9 @@ export function DatesBox(p: Props) {
       ) : null}
 
       {!canRequest && !p.requested ? (
-        <p className="mj-small">다른 날짜 요청은 2번까지 할 수 있어요. 2번 다 써서 더 요청할 수 없어요. 날짜를 바꿔야 하면 {p.vendorName}에 전화해 주세요.</p>
+        <p className="mj-small">다른 날짜 요청을 다 썼어요. 날짜를 바꾸려면 {p.vendorName}에 전화해 주세요.</p>
       ) : null}
-      {p.conflict ? null : <p id="sd-acc" className="mj-hint">수락하면 공사 날짜가 확정되고 {p.vendorName}에 알려요. 수락한 뒤에는 업체를 다시 고를 수 없어요.</p>}
+      {p.conflict ? null : <p id="sd-acc" className="mj-hint">수락하면 공사 날짜가 확정되고 {p.vendorName}에 알려요.</p>}
       {p.reselect ? <div className={s.btns}><Reselect projectId={p.projectId} trade={p.trade} dealId={p.dealId} {...p.reselect} /></div> : null}
 
       <dialog ref={dlg} className={d.dlg} aria-labelledby="sd-q" onClose={() => opener.current?.focus()}>

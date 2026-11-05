@@ -169,7 +169,7 @@ export function ChangeBox(p: Props) {
 
       <div className={s.btns}>
         {x && !p.conflict ? (
-          <button ref={opener} type="button" className={`mj-btn mj-btn-pri ${busy === "accept" ? s.busy : ""}`} aria-disabled={busy ? true : undefined} aria-haspopup="dialog" aria-describedby="cb-acc" onClick={ask}>
+          <button ref={opener} type="button" className={`mj-btn mj-btn-pri ${busy === "accept" ? s.busy : ""}`} aria-disabled={busy ? true : undefined} aria-haspopup="dialog" onClick={ask}>
             {busy === "accept" ? <><Spin />수락하는 중이에요…</> : "새 날짜 수락하기"}
           </button>
         ) : null}
@@ -183,7 +183,6 @@ export function ChangeBox(p: Props) {
         <Link className="mj-btn mj-btn-sec" href={p.planHref}>확정 공정표 보기</Link>
       </div>
       <p className="mj-sr" role="status">{busy === "accept" ? "수락하는 중이에요" : busy === "request" ? "요청을 보내는 중이에요" : ""}</p>
-      {x ? <p id="cb-acc" className="mj-hint">수락하기 전까지는 지금 날짜가 그대로예요. 수락하면 확정 공정표가 새 날짜로 바뀌고 {p.vendorName}에 알려요.</p> : null}
 
       {canRequest && open ? (
         <form id="cb-req" aria-labelledby="cb-req-h" noValidate className={s.req} onSubmit={(e) => { e.preventDefault(); void request(); }}>
@@ -235,13 +234,13 @@ export function ChangeBox(p: Props) {
 
       {p.finished ? <p className="mj-small">업체가 공사를 끝냈다고 올린 뒤에는 날짜를 바꿀 수 없어요.</p> : null}
       {!p.finished && !p.request && p.requestsLeft <= 0 ? (
-        <p className="mj-small">다른 날짜 요청은 수락 전후 합쳐 2번까지 할 수 있어요. 2번 다 써서 더 요청할 수 없어요. 날짜를 바꿔야 하면 {p.vendorName}에 전화해 주세요.</p>
+        <p className="mj-small">다른 날짜 요청을 다 썼어요. 날짜를 바꾸려면 {p.vendorName}에 전화해 주세요.</p>
       ) : null}
 
       <dialog ref={dlg} className={d.dlg} aria-labelledby="cb-q" onClose={() => opener.current?.focus()}>
         <button type="button" className={d.x} aria-label="닫기" onClick={() => dlg.current?.close()}><Close /></button>
         <h2 id="cb-q" className="mj-h3 mj-num">{x ? `${tName} 날짜를 ${ro(span(x.start, x.end))} 바꿀까요?` : "새 날짜 수락"}</h2>
-        <p>바꾸면 확정 공정표가 새 버전으로 바뀌고 {p.vendorName}에 알려요.</p>
+        <p>바꾸면 확정 공정표가 바뀌고 {p.vendorName}에 알려요.</p>
         <div className={d.btns}>
           <button type="button" className="mj-btn mj-btn-pri" onClick={() => { dlg.current?.close(); void accept(); }}>네, 바꿀게요</button>
           <button ref={noRef} type="button" className="mj-btn mj-btn-sec" onClick={() => dlg.current?.close()}>아니요</button>

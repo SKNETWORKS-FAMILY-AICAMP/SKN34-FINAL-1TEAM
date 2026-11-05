@@ -65,7 +65,7 @@ function ChangeRequestLines({ r, vendorName, left }: { r: DateReq; vendorName: s
         <p className={`mj-st mj-st-wait mj-num ${s.stLine} ${s.stBig}`}><Clock />{when(r.created_at)}에 요청을 보냈어요 · {iGa(vendorName)} {when(r.due_at)}까지 새 날짜를 올려요</p>
       )}
       <p className="mj-small mj-num">고른 날 {r.wish_dates.map((w) => `${day(w)} 시작`).join(" · ")}{r.reason ? ` · 이유: ${r.reason}` : ""}</p>
-      <p className="mj-small mj-num">남은 요청 {left}번 · 새 날짜가 오면 내 공정표에 얹어 보고 수락해요. 그전까지 지금 날짜가 그대로예요.</p>
+      <p className="mj-small mj-num">{left > 0 ? `남은 요청 ${left}번 · ` : ""}새 날짜가 오면 내 공정표에 얹어 보고 수락해요. 그전까지 지금 날짜가 그대로예요.</p>
     </div>
   );
 }
@@ -81,7 +81,7 @@ export function RequestLines({ r, vendorName, left, after }: { r: DateReq; vendo
         <p className={`mj-st mj-st-wait mj-num ${s.stLine} ${s.stBig}`}><Clock />{daySeoul(r.created_at)}에 요청을 보냈어요 · {vendorName} 답을 기다려요 · {when(r.due_at)}까지</p>
       )}
       <p className="mj-small mj-num">고른 날 {r.wish_dates.map((w) => `${day(w)} 시작`).join(" · ")}{r.reason ? ` · 이유: ${r.reason}` : ""}</p>
-      <p className="mj-small mj-num">남은 요청 {left}번 · 업체는 요청 다음 날 18:00까지 새 날짜를 내요. 그전까지 지금 날짜가 그대로이고, 이 날짜로 수락해도 돼요.</p>
+      <p className="mj-small mj-num">{left > 0 ? `남은 요청 ${left}번 · ` : ""}업체는 요청 다음 날 18:00까지 새 날짜를 내요. 그전까지 지금 날짜가 그대로이고, 이 날짜로 수락해도 돼요.</p>
     </div>
   );
 }

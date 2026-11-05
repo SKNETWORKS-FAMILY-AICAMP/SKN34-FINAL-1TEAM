@@ -19,13 +19,13 @@ function Dash() {
   return <><span aria-hidden="true">—</span><span className="mj-sr">금액 없음</span></>;
 }
 
-/** 지난 버전 접어 두기 */
-function Past({ n, children }: { n: number; children: ReactNode }) {
+/** 지난 판 접어 두기 (what: 표준견적서 · 공정표 · 견적서) */
+function Past({ n, what, children }: { n: number; what: string; children: ReactNode }) {
   return (
     <details className={s.past}>
       <summary>
         <svg className={s.chev} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 3l4 4-4 4" /></svg>
-        지난 버전 {n}개
+        지난 {what} {n}개
       </summary>
       <ul>{children}</ul>
     </details>
@@ -80,10 +80,10 @@ export function DocsTable({ docs, trades, deals }: { docs: ApiDocs; trades: stri
       <tr key="standard">
         <th scope="row">
           <Link className={s.doc} href={std[0].link}>표준견적서</Link>
-          <span className={s.sub}>{[...std.map((x) => tradeLabel(x.trade)), "믿집 계산"].join(" · ")}</span>
+          <span className={s.sub}>{std.map((x) => tradeLabel(x.trade)).join(" · ")}</span>
           {old.length ? (
-            <Past n={old.length}>
-              {old.map((x) => <li key={`${x.trade}-${x.version}`}>{tradeLabel(x.trade)} 버전 {x.version} · {day(x.computed_at)} · {won(x.total)}</li>)}
+            <Past n={old.length} what="표준견적서">
+              {old.map((x) => <li key={`${x.trade}-${x.version}`}>{tradeLabel(x.trade)} · {day(x.computed_at)} · {won(x.total)}</li>)}
             </Past>
           ) : null}
         </th>
@@ -104,10 +104,10 @@ export function DocsTable({ docs, trades, deals }: { docs: ApiDocs; trades: stri
       <tr key={kind}>
         <th scope="row">
           <Link className={s.doc} href={cur.link}>{PLAN_NAME[kind]}</Link>
-          <span className={s.sub}>{sub}</span>
+          {sub ? <span className={s.sub}>{sub}</span> : null}
           {old.length ? (
-            <Past n={old.length}>
-              {old.map((x) => <li key={x.version}>버전 {x.version} · {day(x.created_at)} 계산 · {md(x.start)} ~ {md(x.end)}</li>)}
+            <Past n={old.length} what="공정표">
+              {old.map((x) => <li key={x.version}>{day(x.created_at)} · {md(x.start)} ~ {md(x.end)}</li>)}
             </Past>
           ) : null}
         </th>
@@ -116,7 +116,7 @@ export function DocsTable({ docs, trades, deals }: { docs: ApiDocs; trades: stri
       </tr>,
     );
   };
-  planRow("expected", "믿집 계산");
+  planRow("expected", "");
 
   // 실측 견적서: 업체마다 한 줄. 확정한 견적서 아래에 그 공정의 추가 금액
   const placed = new Set<string>();
@@ -130,14 +130,14 @@ export function DocsTable({ docs, trades, deals }: { docs: ApiDocs; trades: stri
       <tr key={q.visit_id} className={q.closed ? s.closed : undefined}>
         <th scope="row">
           <span className={s.doc}>{name}</span>
-          <span className={s.sub}>{quoteSub(q.trade, q.closed, v.confirmed, old.length ? v.version : null)}</span>
+          <span className={s.sub}>{quoteSub(q.trade, q.closed, v.confirmed)}</span>
           <Files v={v} name={name} />
           {old.length ? (
-            <Past n={old.length}>
+            <Past n={old.length} what="견적서">
               {old.map((x) => (
                 <li key={x.id}>
-                  버전 {x.version} · {day(x.sent_at)} · {x.total != null ? won(x.total) : "금액 없음"}
-                  <Files v={x} name={`${name} 버전 ${x.version}`} />
+                  {day(x.sent_at)} · {x.total != null ? won(x.total) : "금액 없음"}
+                  <Files v={x} name={`${name} ${day(x.sent_at)}`} />
                 </li>
               ))}
             </Past>
@@ -171,7 +171,7 @@ export function DocsTable({ docs, trades, deals }: { docs: ApiDocs; trades: stri
             <tr>
               <th scope="col">서류</th>
               <th scope="col">날짜</th>
-              <th scope="col" className={s.amt}>금액 (부가세 포함)</th>
+              <th scope="col" className={s.amt}>금액</th>
             </tr>
           </thead>
           <tbody>{rows}</tbody>

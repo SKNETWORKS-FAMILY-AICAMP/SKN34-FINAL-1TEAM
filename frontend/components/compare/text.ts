@@ -13,10 +13,11 @@ export const CHANGED_LABEL: Record<string, string> = { total: "낼 금액", days
 export const changedText = (keys: string[]) => keys.map((k) => CHANGED_LABEL[k]).filter(Boolean).join(" · ");
 
 /** 표준견적서 대비: "+18.8%" · "−5.3%" · "0%" (API 퍼센트 그대로, 부호 모양만 바꾼다) */
+/** 표준견적서보다 몇 % 많고 적은지 (업체 고르기와 같은 말) */
 export function vsPct(vs: string | null, dir: string | null): string | null {
   if (vs == null || !dir) return null;
-  if (dir === "same") return "0%";
-  return `${dir === "less" ? "−" : "+"}${decText(vs.replace(/^[-+]/, ""))}%`;
+  if (dir === "same") return "같아요";
+  return `${decText(vs.replace(/^[-+]/, ""))}% ${dir === "less" ? "적어요" : "많아요"}`;
 }
 
 /** 고객이 낼 금액 꼬리말 */

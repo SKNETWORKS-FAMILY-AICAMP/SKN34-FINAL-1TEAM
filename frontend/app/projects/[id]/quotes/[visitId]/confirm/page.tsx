@@ -8,7 +8,7 @@ import { OtherTrade } from "@/components/confirm/OtherTrade";
 import { QuoteSummary } from "@/components/confirm/QuoteSummary";
 import { when } from "@/components/confirm/text";
 import { Warn } from "@/components/vendors/icons";
-import { eunNeun, gwaWa, iGa, isTrade, shutKind, type VTrade } from "@/components/vendors/text";
+import { iGa, isTrade, shutKind, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { getQuoteCompare, type QuoteCompare } from "@/lib/api/quote";
 import { listDeals } from "@/lib/api/schedule";
@@ -106,7 +106,6 @@ export default async function ConfirmPage({ params, searchParams }: Params) {
       <div className={`mj-wrap ${s.layout}`}>
         <div className={s.main}>
           <div className={s.head}>
-            <p className="mj-small"><span className={s.tn}>{tName}</span> · 5단계 확정</p>
             <h1 className="mj-h1">{mine ? `${euro(name)} ${tName} 업체를 확정했어요` : `${euro(name)} ${tName} 업체를 확정할까요?`}</h1>
           </div>
 
@@ -141,35 +140,12 @@ export default async function ConfirmPage({ params, searchParams }: Params) {
                   <span className="mj-code" aria-hidden="true">2</span>
                   <div className={s.stepBody}>
                     <p className={s.stepT}>이미 보이는 연락처로 전화해 날짜를 정해도 돼요</p>
-                    <p className="mj-small">정한 날짜는 {iGa(name)} 믿집에 올리고, 수락해야 확정돼요. {gwaWa(name)}는 공사가 끝난 날부터 1년까지 서로 연락처가 보여요.</p>
-                  </div>
-                </li>
-                {others.length ? (
-                  <li>
-                    <span className="mj-code" aria-hidden="true">3</span>
-                    <div className={s.stepBody}>
-                      <p className={s.stepT}>{others.join(" · ")}의 실측 요청은 닫혀요</p>
-                      <p className="mj-small">받은 견적서는 기록으로 남고, 서로 보이던 연락처는 바로 가려져요.</p>
-                    </div>
-                  </li>
-                ) : null}
-                <li>
-                  <span className="mj-code" aria-hidden="true">{others.length ? 4 : 3}</span>
-                  <div className={s.stepBody}>
-                    <p className={s.stepT}>{eunNeun(tName)} &lsquo;공사 날짜&rsquo; 단계로 넘어가요</p>
+                    <p className="mj-small">정한 날짜는 {iGa(name)} 믿집에 올리고, 수락해야 확정돼요.</p>
                   </div>
                 </li>
               </ol>
             </section>
           )}
-
-          <div className={`mj-notice mj-notice-warn ${s.warn}`}>
-            <Warn />
-            <div className={s.warnBody}>
-              <p className={s.stepT}>업체를 바꿀 수 있는 때</p>
-              <p>공사 날짜를 수락하기 전까지는 &lsquo;다시 고르기&rsquo;로 업체를 새로 고를 수 있어요. 다만 지금 받은 견적서로는 다시 확정할 수 없고, 실측부터 새로 요청해요. 수락한 뒤에는 바꿀 수 없어요.</p>
-            </div>
-          </div>
         </div>
 
         {otherTrade ? (

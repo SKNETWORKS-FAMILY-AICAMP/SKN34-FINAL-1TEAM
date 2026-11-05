@@ -26,10 +26,6 @@ export const WORK_TEXT: Record<string, string> = { checking: "공사 끝냄 · �
 /** 연락처 기한 "2027.11.23(화)" (API 값 그대로, 형식만) */
 export const untilDay = (iso: string) => `${dotDate(iso)}(${dayParts(iso).w})`;
 
-/** 정한 방법: "통화로 정함 · 11.8(일) 통화" · "믿집에서 냄" */
-export const methodText = (x: Pick<Proposal, "method" | "call_on">) =>
-  x.method === "call" ? `통화로 정함${x.call_on ? ` · ${day(x.call_on)} 통화` : ""}` : "믿집에서 냄";
-
 /** 쉬는 날 말 (주말에도 공사하면 공휴일만 쉰다) */
 export const offText = (weekendWork: boolean) => (weekendWork ? "공휴일만 쉬어요" : "주말 · 공휴일은 쉬어요");
 

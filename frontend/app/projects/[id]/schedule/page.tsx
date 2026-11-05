@@ -89,7 +89,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
         <ScheduleTabs base={`/projects/${id}/schedule`} trades={trades} current={trade} rows={sch.trades} />
 
         <div className={s.head}>
-          <p className="mj-small"><span className={s.tn}>{tName}</span> · 6단계 공사 날짜{deal ? ` · ${deal.vendor_name} 확정` : ""}</p>
+          <p className="mj-small"><span className={s.tn}>{tName}</span>{deal ? ` · ${deal.vendor_name}` : ""}</p>
           <h1 className="mj-h1">{h}</h1>
           {sub ? <p className="mj-sub">{sub}</p> : null}
         </div>
@@ -105,7 +105,7 @@ export default async function SchedulePage({ params, searchParams }: { params: P
               <>
                 <div className={s.lines}>
                   {deal.start_date && deal.end_date ? <p className={`mj-st mj-st-ok mj-num ${s.st}`}><Check size={16} />{x || t.request ? "지금 공사 날짜" : "공사 날짜"} {span(deal.start_date, deal.end_date)}</p> : null}
-                  <p className="mj-small">{deal.vendor_name} 확정 · 수락한 뒤에는 업체를 다시 고를 수 없어요.</p>
+                  <p className="mj-small">{deal.vendor_name} 확정</p>
                 </div>
                 {t.request ? <RequestLines r={t.request} vendorName={deal.vendor_name} left={t.requests_left} after /> : null}
                 {x && deal.start_date && deal.end_date ? (

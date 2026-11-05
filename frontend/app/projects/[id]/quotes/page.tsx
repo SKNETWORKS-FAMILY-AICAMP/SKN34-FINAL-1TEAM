@@ -16,7 +16,7 @@ import { getMyProject } from "@/lib/api/project";
 import { getQuoteCompare } from "@/lib/api/quote";
 import { listDeals } from "@/lib/api/schedule";
 import { listProjectVisits } from "@/lib/api/visit";
-import { priceVerLabel, projectTitle, tradeLabel } from "@/lib/labels";
+import { projectTitle, tradeLabel } from "@/lib/labels";
 import { won } from "@/lib/format";
 import s from "./page.module.css";
 
@@ -62,9 +62,9 @@ export default async function QuotesPage({ params, searchParams }: { params: Pro
           <CompareTabs base={`/projects/${id}/quotes`} trades={trades} current={trade} counts={c.sent_counts} />
           <section className={s.std} aria-labelledby="std-t">
             <div className={s.stdMain}>
-              <h2 id="std-t" className={`mj-h2 ${s.stdH}`}>표준견적서 <span className={s.chip}>믿집 계산</span></h2>
-              <p className="mj-num"><span className={s.big}>{won(c.standard_total)}</span> <span className="mj-small">부가세 포함</span></p>
-              <p className="mj-small">{priceVerLabel(c.price_ver)} 공공 기준 단가로 믿집이 계산한 참고 금액이에요.</p>
+              <h2 id="std-t" className={`mj-h2 ${s.stdH}`}>표준견적서</h2>
+              <p className="mj-num"><span className={s.big}>{won(c.standard_total)}</span></p>
+              <p className="mj-small">참고 금액이에요.</p>
             </div>
             <Link className="mj-lnk" href={`/projects/${id}/standard`}>표준견적서 보기</Link>
           </section>
@@ -78,12 +78,13 @@ export default async function QuotesPage({ params, searchParams }: { params: Pro
           {deal ? (
             <div className={s.deal}>
               <DealStatus d={deal} />
+              <Link className="mj-lnk" href={`/projects/${id}/schedule?trade=${trade}`}>공사 날짜 보기</Link>
               {dealText ? <Reselect projectId={id} trade={trade} dealId={deal.id} {...dealText} /> : null}
             </div>
           ) : null}
           {c.vendors.length ? (
             <ul role="list" className={s.cards}>
-              {c.vendors.map((r) => <QuoteCard key={r.visit_id} r={r} projectId={id} trade={trade} tradeName={tName} confirmHref={confirmHref(r)} />)}
+              {c.vendors.map((r) => <QuoteCard key={r.visit_id} r={r} projectId={id} trade={trade} confirmHref={confirmHref(r)} />)}
             </ul>
           ) : (
             <div className={s.empty}>

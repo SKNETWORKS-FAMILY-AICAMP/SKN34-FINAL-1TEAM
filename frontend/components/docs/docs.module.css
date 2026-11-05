@@ -19,7 +19,7 @@
 .files { display: flex; flex-direction: column; margin: 4px 0 0; padding: 0; list-style: none; }
 .files a { display: inline-flex; align-items: center; min-height: 40px; font-size: var(--fs-sm); font-weight: 500; overflow-wrap: anywhere; }
 
-/* 지난 버전 */
+/* 지난 판 */
 .past { margin-top: 4px; }
 .past summary { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; font-size: var(--fs-sm); font-weight: 700; color: var(--accent-ink); cursor: pointer; list-style: none; }
 .past summary::-webkit-details-marker { display: none; }
