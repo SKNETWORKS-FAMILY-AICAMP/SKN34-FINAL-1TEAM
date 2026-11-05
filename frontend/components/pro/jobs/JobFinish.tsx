@@ -104,7 +104,7 @@ export function JobFinish({ job, head, who, onSaved, onStale }: Props) {
         <>
           <div className={s.btns}>{btn(true)}</div>
           <p id="j-done-h" className="mj-hint mj-num">
-            {job.can_finish ? `누르면 ${who}에게 확인을 받아요. 고객이 확인하지 않아도 저절로 끝나지 않고, 그동안 연락처는 계속 보여요.` : `마지막 공사일 ${md(end)}부터 눌러져요.`}
+            {job.can_finish ? `누르면 ${who}에게 확인을 받아요.` : `마지막 공사일 ${md(end)}부터 눌러져요.`}
           </p>
         </>
       ) : st === "checking" ? (
@@ -117,7 +117,7 @@ export function JobFinish({ job, head, who, onSaved, onStale }: Props) {
           <div className={s.fixText}>
             <p><b>{iGa(who)} 남은 일이 있대요</b></p>
             {job.fixing_note ? <p className={s.sumText}>&ldquo;{job.fixing_note}&rdquo;</p> : null}
-            <p id="j-done-h" className="mj-small">다 하고 다시 올리면 고객이 다시 확인해요. 연락처 1년은 마지막으로 올린 날부터 세요.</p>
+            <p id="j-done-h" className="mj-small">다 하고 다시 올리면 고객이 다시 확인해요.</p>
           </div>
           {btn(false)}
         </div>

@@ -6,7 +6,6 @@ import { useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, call, errorText } from "@/lib/backend/client";
 import { DECLINE_LABEL } from "@/lib/labels";
-import { iGa } from "./text";
 import s from "./inbox.module.css";
 
 type Code = keyof typeof DECLINE_LABEL;
@@ -18,11 +17,9 @@ type Props = {
   name: string | null;
   /** 요청 번호 (이름이 없을 때 부르는 말) */
   code: string;
-  /** 내 상호 (고객에게 보이는 문장) */
-  vendorName: string;
 };
 
-export function DeclineButton({ visitId, name, code, vendorName }: Props) {
+export function DeclineButton({ visitId, name, code }: Props) {
   const router = useRouter();
   const id = useId();
   const dlg = useRef<HTMLDialogElement>(null);
@@ -85,7 +82,7 @@ export function DeclineButton({ visitId, name, code, vendorName }: Props) {
             ))}
           </div>
         </fieldset>
-        <p>요청이 닫히고 서로 연락처가 바로 가려져요. {name ? `${name} 님` : "고객"}에게 고른 이유와 &ldquo;{iGa(vendorName)} 이번 요청을 받지 못해요 · 다른 업체를 담아 주세요&rdquo;가 보여요.</p>
+        <p>요청이 닫히고 서로 연락처가 바로 가려져요. 고객에게 고른 이유가 보여요.</p>
         {err ? <p id={`${id}-e`} role="alert" className="mj-error">{err}</p> : null}
         <div className={s.dlgBtns}>
           <button type="button" className="mj-btn mj-btn-sec" onClick={() => dlg.current?.close()}>돌아가기</button>

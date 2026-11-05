@@ -21,7 +21,7 @@ import { crewLabel, phoneText, tradeLabel } from "@/lib/labels";
 import { FitChart } from "./FitChart";
 import { JobFinish } from "./JobFinish";
 import { JobDateField } from "./JobDateField";
-import { CREW_MAX, METHOD_LABEL, REASON_MAX, RESELECTED, canMove, eunNeun, isAfter, isOpen, methodText, needText, span, stamp, type Job, type Method, type Preview } from "./text";
+import { CREW_MAX, METHOD_LABEL, REASON_MAX, RESELECTED, canMove, eunNeun, isAfter, isOpen, methodText, span, stamp, type Job, type Method, type Preview } from "./text";
 import s from "./jobs.module.css";
 
 type Fields = { method: Method; call_on: string; start: string; end: string; crew: string; reason: string };
@@ -95,7 +95,7 @@ function Due({ job }: { job: Job }) {
     <div className={s.due}>
       {late ? <p className="mj-st mj-st-bad"><Alert />기한 지남</p> : null}
       <p className="mj-num"><b>{stamp(due)}까지{late ? "였어요" : ""}</b> <span className="mj-small">{st === "waiting" ? "공사 날짜 낼 기한" : "다시 낼 기한"}</span></p>
-      {late ? <p className="mj-small">자동으로 취소되지 않아요. 고객은 더 기다리거나 전화로 물어봐요.</p> : null}
+      {late ? <p className="mj-small">기한이 지났어요. 날짜를 내 주세요.</p> : null}
     </div>
   );
 }
@@ -250,7 +250,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
       setNote(mode === "answer" ? "고객 요청에 새 날짜를 올렸어요. 고객이 수락하면 바뀌고, 알림으로 알려 드려요."
         : mode === "change" ? "새 날짜를 올렸어요. 고객이 수락하기 전까지 지금 날짜 그대로예요."
         : before === "requested" ? "고객 요청에 새 날짜로 답했어요. 고객이 수락하면 알림으로 알려 드려요."
-        : before === "proposed" ? "공사 날짜를 다시 냈어요. 고객에게 ‘날짜가 바뀌었어요’로 보여요."
+        : before === "proposed" ? "공사 날짜를 다시 냈어요."
         : "공사 날짜를 냈어요. 고객이 수락하면 알림으로 알려 드려요.");
       router.refresh();
     } catch (e) {
@@ -272,7 +272,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
     : st === "requested" ? "새 날짜로 답하기" : st === "proposed" ? "날짜 다시 내기" : "날짜 고르기";
   const submit = mode !== "initial" ? "새 날짜 올리기" : st === "requested" ? "이 날짜로 답하기" : st === "proposed" ? "날짜 다시 내기" : "공사 날짜 내기";
   const keep = `고객이 수락하면 바뀌어요. 그전까지 지금 날짜${kept ? ` ${kept}` : ""} 그대로예요.`;
-  const how = mode !== "initial" ? `${keep} 수락하면 고객 확정 공정표와 연락처 기준일이 함께 바뀌어요.`
+  const how = mode !== "initial" ? keep
     : f.method === "call" ? `고객에게 ‘${methodText("call", f.call_on || null)}’로 보이고, 고객이 수락해야 확정돼요.` : "고객에게 알림이 가고, 고객이 수락해야 확정돼요.";
   const picked = mode === "answer" ? job.request_options.find((o) => o.start === f.start && o.end === f.end) ?? null : null;
   const offHint = weekendOff ? "주말 · 공휴일은 고를 수 없어요." : "공휴일은 고를 수 없어요. 이 집은 주말에도 공사해요.";
@@ -288,7 +288,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
       <div className={s.top}>
         <div className={s.headRow}>
           <div className={s.head}>
-            <p className="mj-small">확정 견적서 <span className={s.code}>{q.code}</span> · 버전 {q.version} · {work}</p>
+            <p className="mj-small">{work}</p>
             <h1 id="j-title" className="mj-h1">{title} · {c?.name ? `${c.name} 님` : v.code}</h1>
             <p className="mj-sub mj-num">{c?.address ? `${c.address} · ${pyeongText(v.pyeong)}` : v.home_text} · {work} 확정 {md(dateSeoul(job.confirmed_at))}</p>
           </div>
@@ -316,7 +316,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
         </div>
 
         <dl className={s.brief}>
-          <div><dt>확정 견적서</dt><dd><span className={s.code}>{q.code}</span> · 버전 {q.version} · <Link className={`mj-lnk ${s.inLnk}`} href={`/vendor/requests/${v.id}/quote`}>견적서 보기</Link></dd></div>
+          <div><dt>확정 견적서</dt><dd><Link className={`mj-lnk ${s.inLnk}`} href={`/vendor/requests/${v.id}/quote`}>견적서 보기</Link></dd></div>
           <div><dt>낼 금액</dt><dd className="mj-num"><b>{won(q.total)}</b> <span className="mj-small">고객이 확정한 금액</span></dd></div>
           <div><dt>공사 기간</dt><dd className="mj-num">{q.days ? `${q.days}일 · 견적서에 적은 기간` : "견적서에 적지 않았어요"}</dd></div>
           <div><dt>예상 공정표</dt><dd className="mj-num">{job.plan_start && job.plan_end ? `${trade} ${span(job.plan_start, job.plan_end)}` : "없음"}</dd></div>
@@ -359,7 +359,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
             {r ? <p className="mj-st mj-st-now">고객이 다른 날짜를 원해요</p> : <p className="mj-st mj-st-wait"><Dash />고객 수락 기다림</p>}
           </div>
           <p className={`mj-num ${s.big}`}>{span(p.start, p.end)}</p>
-          <p className="mj-small mj-num">{methodText(p.method, p.call_on)} · 작업 인원 {p.crew}명 · 일하는 날 {p.workdays}일 · {stamp(p.created_at)}에 냈어요{p.changed ? " · 고객에게 ‘날짜가 바뀌었어요’로 보여요" : ""}</p>
+          <p className="mj-small mj-num">{methodText(p.method, p.call_on)} · 작업 인원 {p.crew}명 · 일하는 날 {p.workdays}일 · {stamp(p.created_at)}에 냈어요</p>
           <p className="mj-small">{r ? "새 날짜를 낼 때까지 이 날짜가 그대로 있어요." : `고객이 수락해야 확정돼요. 수락하기 전까지 아래에서 다시 낼 수 있어요. ${left}`}</p>
         </section>
       ) : null}
@@ -369,7 +369,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
           <h2 id="j-ask-t" className="mj-h3">{iGa(whoSay)} {mode === "answer" ? "날짜를 바꾸고 싶어해요" : "다른 공사 날짜를 원해요"} <span className="mj-small mj-num">· {stamp(r.created_at)} 요청</span></h2>
           {r.reason ? <p>&ldquo;{r.reason}&rdquo;</p> : null}
           {mode === "answer" ? null : <p className="mj-num">고객이 고른 시작일 <b>{r.wish_dates.map(md).join(" · ")}</b></p>}
-          <p className="mj-small mj-num">다시 낼 기한 <b className={s.ink}>{stamp(r.due_at)}</b>{r.overdue ? " · 기한이 지났어요. 자동으로 취소되지 않아요." : ""}{mode === "answer" ? "" : ` · ${left}`}</p>
+          <p className="mj-small mj-num">다시 낼 기한 <b className={s.ink}>{stamp(r.due_at)}</b>{r.overdue ? " · 기한이 지났어요." : ""}{mode === "answer" ? "" : ` · ${left}`}</p>
         </section>
       ) : null}
 
@@ -390,7 +390,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
                     ))}
                   </div>
                   <p id="j-opt-h" className="mj-hint mj-num">
-                    {picked ? `${md(picked.start)}에 시작하면 끝나는 날 ${md(picked.end)} · 믿집 계산` : job.request_options.length ? "지금과 같은 일하는 날 수로 끝나는 날을 믿집이 계산해요." : "고객이 고른 시작일이 없어요. 새로 불러와 주세요."}
+                    {picked ? `${md(picked.start)}에 시작하면 끝나는 날 ${md(picked.end)}` : job.request_options.length ? "지금과 같은 일하는 날 수로 끝나는 날이 나와요." : "고객이 고른 시작일이 없어요. 새로 불러와 주세요."}
                   </p>
                   {errs.pick ? <FieldError id="j-opt-e">{errs.pick}</FieldError> : null}
                 </fieldset>
@@ -464,12 +464,11 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
               <dl className={`mj-num ${s.calc}`} aria-busy={calc ? true : undefined}>
                 <div>
                   <dt>{mode === "initial" ? "낸 날짜의 일하는 날" : "새 날짜의 일하는 날"}</dt>
-                  <dd>{shown ? <b>{shown.workdays}일</b> : <span className="mj-sub">{calc ? "계산하고 있어요" : mode === "answer" ? "시작일을 고르면 나와요" : "날짜를 고르면 나와요"}</span>}<span className={s.chip}>믿집 계산</span></dd>
+                  <dd>{shown ? <b>{shown.workdays}일</b> : <span className="mj-sub">{calc ? "계산하고 있어요" : mode === "answer" ? "시작일을 고르면 나와요" : "날짜를 고르면 나와요"}</span>}</dd>
                 </div>
                 <div>
                   <dt>필요한 기간</dt>
-                  <dd>{need ? <b>{need.days}일</b> : <span className="mj-sub">{calc ? "계산하고 있어요" : "날짜를 고르면 이 인원으로 계산해요"}</span>}<span className={s.chip}>믿집 계산</span></dd>
-                  {need ? <dd className={`mj-small ${s.why}`}>{needText(job.trade, need)} 품 ÷ 하루 인원을 반나절 단위로 올리고, 준비 · 마감 반나절을 더해 하루 단위로 올려요.</dd> : null}
+                  <dd>{need ? <b>{need.days}일</b> : <span className="mj-sub">{calc ? "계산하고 있어요" : "날짜를 고르면 이 인원으로 계산해요"}</span>}</dd>
                 </div>
               </dl>
               <div role="status">
@@ -505,7 +504,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
           <div className={s.acts}>
             <button id="j-send" type="submit" className="mj-btn mj-btn-pri" disabled={busy}>{submit}</button>
             {mode === "change" ? <button type="button" className="mj-btn mj-btn-sec" onClick={stopEdit}>바꾸지 않기</button> : null}
-            <p className="mj-hint">{how}{st === "proposed" ? " 다시 내면 고객에게 ‘날짜가 바뀌었어요’로 보여요." : ""}</p>
+            <p className="mj-hint">{how}</p>
           </div>
         </form>
       ) : null}
@@ -530,7 +529,7 @@ export function JobBoard({ initial, today, edit = false, children }: Props) {
         <dl className={`mj-num ${s.sum}`}>
           <div><dt>{mode === "initial" ? "공사 날짜" : "새 날짜"}</dt><dd><b>{f.start && f.end ? span(f.start, f.end) : "—"}</b></dd></div>
           {mode !== "initial" && kept ? <div><dt>지금 날짜</dt><dd>{kept}</dd></div> : null}
-          {shown ? <div><dt>일하는 날</dt><dd>{shown.workdays}일 · 믿집 계산</dd></div> : null}
+          {shown ? <div><dt>일하는 날</dt><dd>{shown.workdays}일</dd></div> : null}
           <div><dt>작업 인원</dt><dd>{f.crew}명</dd></div>
           {mode === "initial" ? <div><dt>정한 방법</dt><dd>{methodText(f.method, f.call_on || null)}</dd></div> : null}
           {mode === "change" ? <div><dt>이유</dt><dd className={s.sumText}>{f.reason.trim()}</dd></div> : null}

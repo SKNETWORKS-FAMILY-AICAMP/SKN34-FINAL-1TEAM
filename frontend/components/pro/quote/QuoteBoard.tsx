@@ -88,9 +88,6 @@ type Props = {
   initial: Board;
   /** 오늘 서울 날짜 (달력에서 고를 수 있는 날) */
   today: string;
-  /** 요청 번호 · "도배 기본형" (견적서가 아직 없을 때 머리 줄) */
-  requestCode: string;
-  work: string;
   /** 고객 이름 (연락처를 보냈을 때). 확인 창 문장에 쓴다 */
   who: string | null;
   /** 이미 닫힌 요청이면 어떻게 끝났나 (서버 화면이 만든 문장) */
@@ -99,7 +96,7 @@ type Props = {
   brief: React.ReactNode;
 };
 
-export function QuoteBoard({ visitId, initial, today, requestCode, work, who, closedText, brief }: Props) {
+export function QuoteBoard({ visitId, initial, today, who, closedText, brief }: Props) {
   const router = useRouter();
   const path = `/vendor/visits/${visitId}/quote`;
   const [board, setBoard] = useState(initial);
@@ -339,10 +336,7 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
   const closed = lock ?? (CLOSED.has(board.visit_status) ? closedText ?? "닫힌 요청이에요." : null);
   const chosen = board.visit_status === "chosen";
   const d = board.draft;
-  const code = d?.code ?? sent?.code ?? null;
   const form = (!sent || editing) && (!closed || !!lock);
-  const shown = form ? d : sent; // 머리 줄 버전
-  const state = form && sent ? "다시 올리는 중" : sent ? (chosen ? "고객이 확정함" : "보냄") : closed ? "닫힘" : "보내기 전";
   const title = form ? (sent ? "실측 견적서 다시 올리기" : "실측 견적서 올리기") : sent ? "보낸 실측 견적서" : "실측 견적서";
   const noResend = lock ?? (chosen ? CHOSEN_TEXT : null); // 다시 올릴 수 없는 까닭 (서버 문장)
   const err = (k: Key) => (errs[k] ? `${FOCUS[k]}-e` : undefined);
@@ -353,9 +347,6 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
       <div className={s.top}>
         <div className={s.headRow}>
           <div className={s.head}>
-            <p className="mj-small">
-              {code ? <>실측 견적서 <span className={s.code}>{code}</span>{sent && shown ? <> · 버전 {shown.version}</> : null}</> : <>실측 요청 <span className={s.code}>{requestCode}</span></>} · {work} · {state}
-            </p>
             <h1 id="q-title" className="mj-h1" tabIndex={-1}>{title}</h1>
           </div>
           {form && !lock ? (
@@ -372,10 +363,10 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
       {sent && !form ? (
         <section aria-labelledby="qs-sent-t" className={s.sent}>
           <div className={s.sentHead}>
-            <h2 id="qs-sent-t" className="mj-h2">보낸 견적서 <span className={s.light}>· 읽기만 돼요</span></h2>
+            <h2 id="qs-sent-t" className="mj-sr">보낸 견적서</h2>
             {closed ? <p className="mj-st mj-st-off">{closed}</p>
               : chosen ? <p className="mj-st mj-st-ok"><Check />고객이 확정했어요</p>
-              : <p className="mj-st mj-st-ok"><Check /><span className="mj-num">보냈어요 · {board.sent.length > 1 ? "다시 올렸어요 " : ""}{stampSeoul(new Date(sent.sent_at ?? sent.updated_at))}{board.sent.length > 1 ? "" : " · 고객이 보고 있어요"}</span></p>}
+              : <p className="mj-st mj-st-ok"><Check /><span className="mj-num">보냈어요 · {board.sent.length > 1 ? "다시 올렸어요 " : ""}{stampSeoul(new Date(sent.sent_at ?? sent.updated_at))}</span></p>}
           </div>
           <SentQuote q={sent} label="보낸" fileHref={vendorFile} />
           {noResend ? (
@@ -459,7 +450,6 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
             <section aria-labelledby="qs-t" className={s.col}>
               <div className={s.secHead}>
                 <h2 id="qs-t" className="mj-h2">견적서 요약</h2>
-                <p className="mj-small">요약은 업체가 적은 값이에요. 고객에게 파일과 함께 보여요.</p>
               </div>
 
               <DateField id="q-measured" label="실측한 날" past value={f.measured_on} today={today} hint="오늘까지 고를 수 있어요."
@@ -506,7 +496,6 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
                     ? <span>고객에게는 넣은 금액 그대로 <span className={`mj-num ${s.big}`}>{won(d.total)}</span> · 면세로 보여요</span>
                     : <span>고객에게는 부가세 포함 <span className={`mj-num ${s.big}`}>{won(d.total)}</span>으로 보여요</span>
                 ) : <span className="mj-sub">낼 금액을 넣고 부가세 방식을 고르면 고객에게 보일 금액이 나와요.</span>}
-                <span className={s.chip}>믿집 계산</span>
                 {stale && !lock && d?.total != null ? <span className="mj-small">다시 계산하고 있어요</span> : null}
               </p>
 
@@ -546,7 +535,6 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
             {d && d.total != null && sent.total != null ? (
               <p className={`mj-num ${s.cust}`}>
                 <span>고객에게 보이는 낼 금액 {won(sent.total)} → <b className={s.big}>{won(d.total)}</b> · {totalTail(d.vat_mode)}</span>
-                <span className={s.chip}>믿집 계산</span>
               </p>
             ) : null}
             <p>{who ? `${who} 님` : "고객"} 비교 화면에 &lsquo;다시 올렸어요&rsquo;와 올린 날짜 · 시각이 보이고 알림이 가요. 앞 파일은 기록으로 남아요.</p>
@@ -567,7 +555,7 @@ export function QuoteBoard({ visitId, initial, today, requestCode, work, who, cl
         </div>
       </dialog>
 
-      {sent ? <Versions sent={board.sent} /> : null}
+      {board.sent.length > 1 ? <Versions sent={board.sent} /> : null}
 
       <p className={s.links}>
         <Link className="mj-lnk" href={`/vendor/requests/${visitId}`}>요청 자세히 보기</Link>

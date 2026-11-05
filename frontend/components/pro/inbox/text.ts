@@ -22,13 +22,6 @@ export const EMPTY: Record<Tab, string> = {
   done: "끝난 일이 아직 없어요.",
 };
 
-/** 탭 위 한 줄 안내 */
-export const TAB_NOTE: Partial<Record<Tab, string>> = {
-  waiting: "고객이 확정하면 공사 탭으로, 다른 업체로 정하면 끝남 탭으로 가요.",
-  jobs: "확정된 공사예요. 공사 날짜를 내고 바꾸고, 추가 금액과 공사 끝남을 여기서 알려요.",
-  done: "고르지 않았거나 취소된 요청은 닫히는 즉시 고객 이름과 연락처를 가려요. 공사가 끝난 고객은 끝냈다고 올린 날부터 1년까지 보여요.",
-};
-
 /** 끝남 탭 다음 쪽 크기 (API 기본값과 같다) */
 export const PAGE = 20;
 
@@ -50,9 +43,9 @@ export function endLabel(v: Pick<Row, "status" | "close_reason" | "deal_status">
   return "다른 업체로 정했어요";
 }
 
-/** "10.29(목) 닫힘 · 연락처를 가렸어요" */
+/** "10.29(목) 닫힘" */
 export function endNote(v: Pick<Row, "closed_at">): string {
-  return v.closed_at ? `${md(dateSeoul(v.closed_at))} 닫힘 · 연락처를 가렸어요` : "닫힘 · 연락처를 가렸어요";
+  return v.closed_at ? `${md(dateSeoul(v.closed_at))} 닫힘` : "닫힘";
 }
 
 export const isDone = (status: string) => status === "cancelled" || status === "declined" || status === "closed";

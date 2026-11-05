@@ -79,7 +79,7 @@ function Totals({ x }: { x: Extras }) {
           </div>
         ))}
       </dl>
-      <p className="mj-small">합계는 믿집 계산이에요. 확정 금액에 더하지 않고, 믿집은 결제를 하지 않아요. 금액은 고객과 직접 정해요.</p>
+      <p className="mj-small">금액은 고객과 직접 정해요.</p>
     </>
   );
 }
@@ -205,7 +205,7 @@ export function JobExtras({ dealId, initial, modes, head, who }: Props) {
       const last = out.extras.items.at(-1);
       setF(empty(modes));
       setErrs({}); setBad([]); setUpMsg("");
-      setNote(`추가 금액을 알렸어요.${last ? ` 고객에게 ${won(last.total)} · ${euro(extraTail(last.vat_mode))} 보여요(믿집 계산).` : ""} 고객이 답하면 알림으로 알려 드려요.`);
+      setNote(`추가 금액을 알렸어요.${last ? ` 고객에게 ${won(last.total)} · ${euro(extraTail(last.vat_mode))} 보여요.` : ""} 고객이 답하면 알림으로 알려 드려요.`);
     } catch (e) {
       if (!(e instanceof ApiError)) { setSendErr(errorText(e)); return; }
       const fe = e.status === 422 || e.code === "file_used" ? errsOf(e) : null;
@@ -323,7 +323,6 @@ export function JobExtras({ dealId, initial, modes, head, who }: Props) {
               <p className={s.cust}>
                 <span className="mj-sub">고객에게 보이는 금액</span>
                 <span>올리면 믿집이 계산해 보여 줘요</span>
-                <span className={s.chip}>믿집 계산</span>
               </p>
 
               <div><button id="x-send" type="submit" className="mj-btn mj-btn-sec" disabled={!!busy}>추가 금액 알리기</button></div>
@@ -343,7 +342,7 @@ export function JobExtras({ dealId, initial, modes, head, who }: Props) {
                   <p className={s.exTitle}><b>{x.title}</b></p>
                   <AckChip x={x} />
                 </div>
-                <p className="mj-num"><b className={s.big}>{won(x.total)}</b> <span className="mj-small">{extraTail(x.vat_mode)} · 고객에게 보이는 금액 · 믿집 계산</span></p>
+                <p className="mj-num"><b className={s.big}>{won(x.total)}</b> <span className="mj-small">{extraTail(x.vat_mode)} · 고객에게 보이는 금액</span></p>
                 <p className="mj-small mj-num">적은 금액 {won(x.entered_amount)} · {VAT_LABEL[x.vat_mode as ExtraVat] ?? ""} · {stamp(x.created_at)}에 알렸어요</p>
                 <p className={s.exText}>{x.reason}</p>
                 {x.photos.length ? (

@@ -66,8 +66,6 @@
 .calc dt { color: var(--ink-sub); }
 .calc dd { margin: 0; display: flex; align-items: center; gap: 8px; }
 .calc[aria-busy="true"] b { color: var(--ink-mute); }
-.why { flex: 1 1 100%; display: block !important; }
-.chip { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-s); font-size: var(--fs-xs); font-weight: 500; color: var(--ink-sub); white-space: nowrap; }
 .noteOk { background: var(--ok-weak); }
 
 /* 고객 공정표와 맞춰 보기 (하루 한 칸) */

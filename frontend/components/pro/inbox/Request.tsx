@@ -58,7 +58,6 @@ export async function Request({ v, profile }: { v: Detail; profile: VendorProfil
 
         <section aria-label="요청 내용" className={`${s.req} ${done ? s.reqOff : ""}`}>
           <dl className={s.dl}>
-            <div><dt>요청</dt><dd><span className={s.code}>{v.code}</span> · {workText(v)}</dd></div>
             <div><dt>집</dt><dd className="mj-num">{v.home_text}</dd></div>
             {done ? null : <>
               <div><dt>희망 시기</dt><dd className="mj-num">{v.when_text}</dd></div>
@@ -88,7 +87,6 @@ export async function Request({ v, profile }: { v: Detail; profile: VendorProfil
                   <CopyPhone phone={phoneText(c.phone)} name={c.name} />
                 </div>
               ) : null}
-              <p className="mj-small">{v.status === "chosen" ? "고객이 보내기로 고른 연락처예요. 공사가 끝난 날부터 1년까지 보여요." : "고객이 보내기로 고른 연락처예요. 요청이 닫히면 바로 가려져요."}</p>
             </div>
           ) : (
             <div className={s.part}>
@@ -100,7 +98,7 @@ export async function Request({ v, profile }: { v: Detail; profile: VendorProfil
           {v.status === "requested" ? (
             <div className={s.foot}>
               <Link className="mj-btn mj-btn-pri" href={`/vendor/requests/${v.id}/quote`}>견적서 올리기</Link>
-              <DeclineButton visitId={v.id} name={c?.name ?? null} code={v.code} vendorName={profile?.biz_name ?? "우리 업체"} />
+              <DeclineButton visitId={v.id} name={c?.name ?? null} code={v.code} />
               <p className="mj-small">방문 날짜는 고객과 직접 정해요. 다녀와서 견적서를 올려요.</p>
             </div>
           ) : v.status === "quoted" ? (

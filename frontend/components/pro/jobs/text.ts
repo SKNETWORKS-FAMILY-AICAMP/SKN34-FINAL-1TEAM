@@ -1,12 +1,10 @@
 // 공사 날짜 내기(시안 WVCalendar)에만 쓰는 화면 말 · 표시 함수. 날짜 · 기간 · 기한은 API 값 그대로 형식만 바꾼다.
 // 작업함 공사 탭 · 요청 자세히도 같은 말을 쓴다.
 import type { Schemas } from "@/lib/backend/client";
-import { decText, md, stampSeoul } from "@/lib/format";
-import { crewLabel, tradeLabel } from "@/lib/labels";
+import { md, stampSeoul } from "@/lib/format";
 
 export type Job = Schemas["JobOut"];
 export type Preview = Schemas["PreviewOut"];
-export type Need = Schemas["NeedOut"];
 export type Other = Schemas["OtherTradeOut"];
 export type Method = Schemas["DatesIn"]["method"];
 type JobRow = Pick<Schemas["InboxRowOut"], "dates_state" | "dates_due_at" | "overdue" | "start_date" | "end_date" | "proposed_start" | "proposed_end" | "request_due_at" | "wish_dates">;
@@ -65,13 +63,6 @@ export const span = (a: string, b: string) => (a === b ? md(a) : `${md(a)} ~ ${m
 /** 기한 "11.6(금) 18:00" (API 시각 그대로, 서울) */
 export const stamp = (iso: string) => stampSeoul(new Date(iso));
 
-/** 반나절 수를 읽기 쉽게: 4 → "2일", 1 → "반나절", 3 → "1일 반나절" (같은 값의 단위만 바꾼다) */
-export function halfText(n: number): string {
-  const day = Math.floor(n / 2);
-  if (n % 2 === 0) return `${day}일`;
-  return day ? `${day}일 반나절` : "반나절";
-}
-
 /** 고객에게 보이는 정한 방법: "통화로 정함 · 11.3(화) 통화" · "믿집에서 냄" */
 export function methodText(method: string, callOn: string | null | undefined): string {
   if (method === "call") return callOn ? `통화로 정함 · ${md(callOn)} 통화` : "통화로 정함";
@@ -117,19 +108,13 @@ export function eunNeun(word: string): string {
   return `${word}${(c - 0xac00) % 28 === 0 ? "는" : "은"}`;
 }
 
-/** 필요한 기간 풀이: "도배 7.5품 · 도배공 4명 → 벽지 바르기 2일 + 마감 반나절 → 3일" (API 값을 늘어놓기만) */
-export function needText(trade: string, need: Need): string {
-  const steps = need.steps.map((x) => `${x.name} ${halfText(x.half_days)}`).join(" + ");
-  return `${tradeLabel(trade)} ${decText(need.man_day)}품 · ${crewLabel(trade)} ${need.crew}명 → ${steps} → ${need.days}일.`;
-}
-
 /** 작업함 · 요청 자세히의 공사 날짜 한 줄 (기한 · 날짜는 API 값) */
 export function datesLine(r: JobRow): string {
   const st = r.dates_state;
   if (st === "waiting") {
     if (!r.dates_due_at) return "공사 날짜를 내 주세요.";
     return r.overdue
-      ? `공사 날짜를 낼 기한(${stamp(r.dates_due_at)})이 지났어요. 자동으로 취소되지 않아요.`
+      ? `공사 날짜를 낼 기한(${stamp(r.dates_due_at)})이 지났어요. 날짜를 내 주세요.`
       : `공사 날짜를 ${stamp(r.dates_due_at)}까지 내 주세요.`;
   }
   if (st === "proposed") {

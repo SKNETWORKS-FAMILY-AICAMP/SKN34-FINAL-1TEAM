@@ -35,8 +35,6 @@ export function QuotePage({ v, board, today }: { v: Detail; board: Board; today:
           visitId={v.id}
           initial={board}
           today={today}
-          requestCode={v.code}
-          work={workText(v)}
           who={who}
           closedText={isDone(v.status) ? `${endLabel(v)} · ${endNote(v)}` : null}
           brief={<Brief v={v} />}

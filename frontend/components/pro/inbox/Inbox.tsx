@@ -17,7 +17,7 @@ import { Alert, Dash, Who } from "./Cells";
 import { DeclineButton } from "./DeclineButton";
 import { DoneNote } from "./DoneNote";
 import { DoneTable } from "./DoneTable";
-import { EMPTY, JOB_LABEL, TABS, TAB_NOTE, dayOf, doneNote, pyeongText, stampOf, whoOf, type Row, type Tab } from "./text";
+import { EMPTY, JOB_LABEL, TABS, dayOf, doneNote, pyeongText, stampOf, whoOf, type Row, type Tab } from "./text";
 import s from "./inbox.module.css";
 
 type Props = {
@@ -31,7 +31,7 @@ type Props = {
   note: string | null;
 };
 
-function TodoRow({ v, vendorName }: { v: Row; vendorName: string }) {
+function TodoRow({ v }: { v: Row }) {
   const call = v.new && !!v.customer;
   return (
     <tr>
@@ -53,7 +53,7 @@ function TodoRow({ v, vendorName }: { v: Row; vendorName: string }) {
           ) : (
             <Link className={`mj-btn mj-btn-sec mj-btn-sm ${s.go}`} href={`/vendor/requests/${v.id}`} aria-label={`${whoOf(v)} 요청 보기`}>요청 보기</Link>
           )}
-          <DeclineButton visitId={v.id} name={v.customer?.name ?? null} code={v.code} vendorName={vendorName} />
+          <DeclineButton visitId={v.id} name={v.customer?.name ?? null} code={v.code} />
         </div>
       </td>
     </tr>
@@ -190,7 +190,6 @@ function PriceLine({ trade, p, many }: { trade: string; p: VendorPrices | null; 
     return (
       <>
         <p className="mj-num">{pre}{files ? `파일 ${files}개 · 확인한 단가 없음` : "올린 견적서가 없어요"}</p>
-        <p className="mj-small">고객 목록에 &lsquo;가견적 없음 · 실측 뒤 금액&rsquo;으로 보여요</p>
       </>
     );
   }
@@ -207,7 +206,6 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
   const count: Record<Tab, number> = { todo: summary.todo, waiting: summary.waiting, jobs: summary.jobs, done: summary.done };
   const items = page?.items ?? [];
   const label = TABS.find((t) => t.k === tab)?.t ?? "";
-  const vendorName = profile?.biz_name ?? fallback.biz ?? "우리 업체";
   const owner = profile?.owner_name ?? fallback.owner;
   const phone = profile?.phone ?? fallback.phone;
   const way = profile?.contact_method
@@ -223,7 +221,7 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
         <th scope="col" className={s.cx}>받은 날</th><th scope="col">고객 · 요청</th><th scope="col" className={s.cx}>지역</th>
         <th scope="col" className="r">평형</th><th scope="col">다음 할 일</th><th scope="col"><span className="mj-sr">행동</span></th>
       </>}>
-        {items.map((v) => <TodoRow key={v.id} v={v} vendorName={vendorName} />)}
+        {items.map((v) => <TodoRow key={v.id} v={v} />)}
       </Table>
     );
   } else if (tab === "waiting") {
@@ -262,7 +260,6 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
           </nav>
           <section id={tab} aria-labelledby="tab-t" className={s.sec}>
             <h2 id="tab-t" className="mj-sr">{label} {count[tab]}건</h2>
-            {TAB_NOTE[tab] ? <p className="mj-small">{TAB_NOTE[tab]}</p> : null}
             {body}
           </section>
         </div>
@@ -283,7 +280,6 @@ export function Inbox({ tab, summary, page, prices, profile, fallback, note }: P
             </div>
             <p className={`mj-num ${s.telNo}`}>{[owner, phoneText(phone)].filter(Boolean).join(" · ") || "—"}</p>
             <p>{way}</p>
-            <p className="mj-small">실측을 요청한 고객에게 보이고, 요청이 닫히면 가려져요. 확정한 고객에게는 공사가 끝난 날부터 1년까지 보여요.</p>
           </section>
 
           <section aria-labelledby="mon-t" className={s.card}>

@@ -275,14 +275,13 @@ export function PriceSection({ trades, pending, initial, bizName, exempt, reload
             {/* 단가 표 */}
             <div className={s.stack}>
               <div className={s.row}>
-                <h3 className={s.h3}>표준 행 단가</h3>
+                <h3 className={s.h3}>항목별 단가</h3>
                 <p className="mj-small">{label}{t === "dobae" ? " · 도배지는 기본형 · 저가형을 따로 넣어요" : ""}</p>
               </div>
-              <p id="pr-vat" className="mj-hint">{exempt ? "면세 업체라 넣은 단가 그대로 고객 가견적을 계산해요." : "부가세 빼고 적어요. 믿집이 부가세 10%를 더해 고객에게 보여 줘요."}</p>
-              <p className="mj-hint">비워 둔 줄이 필요한 집에는 &lsquo;가견적 없음 · 실측 뒤 금액&rsquo;으로 보여요.</p>
+              <p id="pr-vat" className="mj-hint">{exempt ? "면세 업체라 넣은 단가 그대로 고객 가견적을 계산해요." : "부가세 빼고 적어요."}</p>
               <table className={`${s.ptable} mj-num`}>
-                <caption className="mj-sr">{label} 표준 행 단가. 단가는 원, 부가세 빼고</caption>
-                <thead><tr><th scope="col">표준 행</th><th scope="col">단위</th><th scope="col">단가(원)</th><th scope="col">근거 파일 (선택)</th></tr></thead>
+                <caption className="mj-sr">{label} 항목별 단가. 단가는 원, 부가세 빼고</caption>
+                <thead><tr><th scope="col">항목</th><th scope="col">단위</th><th scope="col">단가(원)</th><th scope="col">참고한 파일 (선택)</th></tr></thead>
                 <tbody>
                   {d.rows.map((r) => {
                     const x = rs?.[r.key] ?? { mode: "price" as const, price: "", incl: "", src: "" };
@@ -314,8 +313,8 @@ export function PriceSection({ trades, pending, initial, bizName, exempt, reload
                           </div>
                         </td>
                         <td>
-                          <span className={s.cellLab} aria-hidden="true">근거 파일</span>
-                          <label htmlFor={`pr-${r.key}-src`} className="mj-sr">{r.name} 근거 파일</label>
+                          <span className={s.cellLab} aria-hidden="true">참고한 파일</span>
+                          <label htmlFor={`pr-${r.key}-src`} className="mj-sr">{r.name} 참고한 파일</label>
                           <select id={`pr-${r.key}-src`} className={`mj-select ${s.srcSel}`} value={files.some((f) => f.file_id === x.src) ? x.src : ""}
                             disabled={!files.length} onChange={(ev) => edit(r.key, { src: ev.target.value })}>
                             <option value="">{files.length ? "고르지 않음" : "올린 파일이 없어요"}</option>

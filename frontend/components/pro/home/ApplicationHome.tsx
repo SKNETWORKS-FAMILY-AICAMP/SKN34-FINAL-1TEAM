@@ -45,7 +45,7 @@ function Pending({ app }: { app: VendorApplicationMine }) {
         <div><dt>사업자등록번호</dt><dd className="mj-num">{bizNoText(app.biz_no) || "—"}</dd></div>
         <div><dt>사업자등록증</dt><dd className={s.file}>{app.license?.filename ?? "—"}</dd></div>
       </dl>
-      <p className="mj-small">심사 중에는 신청 내용을 고칠 수 없어요. 승인되면 이 화면 대신 작업함이 열려요.</p>
+      <p className="mj-small">심사 중에는 신청 내용을 고칠 수 없어요.</p>
     </>
   );
 }

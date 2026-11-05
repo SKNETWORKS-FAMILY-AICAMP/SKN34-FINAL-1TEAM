@@ -278,10 +278,6 @@ export function ProfileForm({ profile, regions, prices }: Props) {
         <div className={`mj-wrap ${s.top}`}>
           <div className={s.titleRow}>
             <h1 id="vp-t" className="mj-h1">업체 정보</h1>
-            <dl className={s.meta}>
-              <div><dt>가입 상태</dt><dd><span className="mj-st mj-st-ok"><Check />승인된 업체</span></dd></div>
-              <div><dt>마지막 저장</dt><dd className="mj-num">{lastSaved}</dd></div>
-            </dl>
           </div>
           <nav className={s.toc} aria-label="이 화면 목차">
             <ul>{SECTIONS.map((x) => <li key={x.id}><a href={`#${x.id}`}><span className="mj-code" aria-hidden="true">{x.no}</span>{x.title}</a></li>)}</ul>
@@ -393,7 +389,7 @@ export function ProfileForm({ profile, regions, prices }: Props) {
             <div className="mj-sec-l">
               <p className="mj-code" aria-hidden="true">03</p>
               <h2 id="s3-t" className="mj-h2">가견적에 쓸 견적서</h2>
-              <p className="mj-small">예전에 낸 견적서 · 단가표를 근거로 올리고, 표준 행마다 단가를 직접 넣어요. &lsquo;확인했어요&rsquo;를 누르면 그 단가로 고객 가견적을 계산해요.</p>
+              <p className="mj-small">예전에 낸 견적서 · 단가표를 근거로 올리고, 항목마다 단가를 직접 넣어요. &lsquo;확인했어요&rsquo;를 누르면 그 단가로 고객 가견적을 계산해요.</p>
             </div>
             <div className="mj-sec-c">
               <PriceSection trades={savedTrades} pending={pending} initial={prices} bizName={saved.biz_name ?? "우리 업체"} exempt={saved.tax_kind === "exempt"} reload={reload} />
