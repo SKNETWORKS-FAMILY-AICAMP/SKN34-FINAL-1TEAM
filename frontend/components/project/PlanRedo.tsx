@@ -1,7 +1,7 @@
 "use client";
 // 날짜 바꿔 보기 (시안 WPlan): 시작일 · 주말 공사를 바꿔 POST /projects/{id}/plan → 화면을 새 결과로 다시 그린다.
 // 날짜 · 기간은 서버(계산 엔진)가 정한다. 오늘은 못 고른다(서버가 내일부터 받는다).
-// 업체를 확정한 뒤에는 서버가 막아서(409 dates_locked) 칸 대신 공사 날짜 화면으로 안내만 한다(locked).
+// 업체를 확정한 뒤에는 서버가 막아서(409 dates_locked) 칸 대신 공사 날짜 화면 버튼만 둔다(locked).
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,13 +13,7 @@ import s from "./PlanRedo.module.css";
 
 export function PlanRedo({ id, start, weekend, today, locked = false }: { id: string; start: string; weekend: boolean; today: string; locked?: boolean }) {
   if (locked) {
-    return (
-      <section className={s.box} aria-labelledby="pl-chg-t">
-        <h2 id="pl-chg-t" className="mj-h3">날짜 바꿔 보기</h2>
-        <p className="mj-small">업체를 확정해서 날짜를 바꿔 볼 수 없어요. 공사 날짜는 업체가 올리고, 다른 날짜는 공사 날짜 화면에서 요청해요.</p>
-        <p><Link className="mj-btn mj-btn-sec" href={`/projects/${id}/schedule`}>공사 날짜 보기</Link></p>
-      </section>
-    );
+    return <p className={s.box}><Link className="mj-btn mj-btn-sec" href={`/projects/${id}/schedule`}>공사 날짜 보기</Link></p>;
   }
   return <RedoForm id={id} start={start} weekend={weekend} today={today} />;
 }

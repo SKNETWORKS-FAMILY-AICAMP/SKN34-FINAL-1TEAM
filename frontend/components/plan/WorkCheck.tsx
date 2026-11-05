@@ -189,7 +189,6 @@ export function WorkCheck({ projectId, deals, tels }: Props) {
               );
             })}
           </ul>
-          <p className="mj-small">연락처 1년은 업체가 마지막으로 &lsquo;공사 끝냈어요&rsquo;를 올린 날부터 세요.</p>
         </div>
       ) : null}
       <p className="mj-sr" role="status">{busy ? "보내는 중이에요" : ""}</p>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ApiProject } from "@/lib/api/project";
 import type { ApiStandard } from "@/lib/api/quote";
-import { budgetLabel, gradeLabel, lineStateLabel, mokLabel, outsideTotal, priceVerLabel, sizeLabel, tradeLabel } from "@/lib/labels";
+import { budgetLabel, gradeLabel, lineStateLabel, mokLabel, outsideTotal, sizeLabel, tradeLabel } from "@/lib/labels";
 import { dateSeoul, decText, dotDate, numText, won } from "@/lib/format";
 import { RegradeButton } from "./RegradeButton";
 import s from "./StandardDoc.module.css";
@@ -56,9 +56,8 @@ export function StandardDoc({ p, q, title }: { p: ApiProject; q: ApiStandard; ti
           <h1 id="doc-t" className={s.docTitle}>표준견적서</h1>
         </div>
         <dl className={s.meta}>
-          <dt>문서 번호</dt><dd className="mj-code">{q.code}</dd>
+          <dt>공사 번호</dt><dd className="mj-code">{q.code}</dd>
           <dt>계산</dt><dd className="mj-code">{dotDate(dateSeoul(q.computed_at))}</dd>
-          <dt>단가</dt><dd>{priceVerLabel(q.price_ver)}</dd>
         </dl>
       </header>
 
@@ -83,7 +82,7 @@ export function StandardDoc({ p, q, title }: { p: ApiProject; q: ApiStandard; ti
         {b && b.status === "within" ? <p className="mj-small">넣은 예산({budgetLabel(b.band)}) 안이에요.</p> : null}
         {b && b.status === "over" && b.over_by != null ? (
           <>
-            <p className={`mj-num ${s.over}`}>넣은 예산({budgetLabel(b.band)})보다 {won(b.over_by)} 많아요 · 믿집 계산</p>
+            <p className={`mj-num ${s.over}`}>넣은 예산({budgetLabel(b.band)})보다 {won(b.over_by)} 많아요</p>
             {canEdit ? (
               <div className={s.overActs}>
                 {p.trades.dobae && p.trades.dobae.grade !== "economy" ? <RegradeButton p={p} /> : null}
@@ -122,18 +121,15 @@ export function StandardDoc({ p, q, title }: { p: ApiProject; q: ApiStandard; ti
                 </tbody>
                 <tfoot>
                   <tr>
-                    <th scope="row" colSpan={3}>{name} 소계 <span className={s.footSub}>{decText(t.man_day)}품</span></th>
+                    <th scope="row" colSpan={3}>{name} 소계</th>
                     <td className="r">{numText(t.supply)}</td>
                     <td />
                   </tr>
                 </tfoot>
               </table>
             </div>
-            {t.notes.length ? (
-              <ul className={s.notes} aria-label={`${name} 계산할 때 잡은 것`}>
-                {t.notes.map((n) => <li key={n}>{n}</li>)}
-              </ul>
-            ) : null}
+            {/* 계산할 때 잡은 것(notes)은 저장만 하고, 화면에는 한 줄로 알린다 */}
+            <p className={`mj-small ${s.est}`}>수량은 평형으로 어림했어요. 실측 때 다시 재요.</p>
           </section>
         );
       })}
@@ -147,12 +143,10 @@ export function StandardDoc({ p, q, title }: { p: ApiProject; q: ApiStandard; ti
             <dt>부가세 <span className="mj-small">10%</span></dt><dd>{numText(q.vat)}</dd>
             <dt className={s.tt}>낼 금액 <span className="mj-small">부가세 포함</span></dt><dd className={s.tt}>{numText(q.total)}</dd>
           </dl>
-          <p className="mj-small">&lsquo;실측 후&rsquo; 줄은 합계에 들어가지 않아요.</p>
           <p className="mj-small">공공 기준: 표준시장단가 · 시중노임단가 · 조달청 가격정보</p>
         </div>
       </section>
 
-      <p className={s.disc}>공공 기준 단가로 믿집이 계산한 참고 금액이에요. 업체 견적이 아니에요.</p>
     </article>
   );
 }

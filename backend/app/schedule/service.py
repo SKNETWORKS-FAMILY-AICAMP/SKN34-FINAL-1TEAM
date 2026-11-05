@@ -1784,10 +1784,6 @@ def _mdt(at: datetime) -> str:
     return f"{_md(x.date())} {x:%H:%M}"
 
 
-def _ymd(d: date) -> str:
-    return f"{d:%Y.%m.%d}({WEEKDAY[d.weekday()]})"
-
-
 def _day(at: datetime | None) -> date | None:
     return at.astimezone(SEOUL).date() if at else None
 
@@ -1873,10 +1869,7 @@ def _todo_out(pid: uuid.UUID, code: str, trade: str, d: Deal | None, ctx: dict) 
         ),
         "fixing": (f"{who} 남은 일을 하고 있어요 · {label}", "공정표 보기", f"{base}/plan"),
         "done": (
-            f"공사가 끝났어요 · 하자가 보이면 {d.vendor_name}에 전화해요"
-            + (f" · 연락처는 {_ymd(ctx['until'])}까지 보여요" if ctx.get("until") else "")
-            if d
-            else "",
+            f"공사가 끝났어요 · 하자가 보이면 {d.vendor_name}에 전화해요" if d else "",
             "연락처 보기",
             base,
         ),
@@ -1924,7 +1917,6 @@ async def _progress_of(s: AsyncSession, p: ProjectOut, today: date, now: datetim
     pend, reqs = await _pending(s, ids), await _open_requests(s, ids)
     waiting = await _extras_pending(s, ids)
     accepted = await _accepted_on(s, ids)
-    visits = await visit_service.visits_by_id(s, [d.visit_id for d in deals.values()])
     out = []
     for t in trades:
         f, d = facts.get(t), deals.get(t)
@@ -1951,8 +1943,7 @@ async def _progress_of(s: AsyncSession, p: ProjectOut, today: date, now: datetim
             work_done_on=d.work_done_on if d else None,
             extras_pending=waiting.get(d.id, 0) if d else 0,
         )
-        until = visits[d.visit_id].contact_until if d and d.visit_id in visits else None
-        ctx = {"proposal": x, "request": r, "facts": f, "until": until}
+        ctx = {"proposal": x, "request": r, "facts": f}
         out.append((progress(tf, today, now), d, ctx, f))
     return out, std, deals
 

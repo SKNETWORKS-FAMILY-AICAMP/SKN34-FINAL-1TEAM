@@ -29,14 +29,6 @@
 }
 
 /* 진행 단계 자세히 */
-.more > summary { list-style: none; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--accent-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.more > summary::-webkit-details-marker { display: none; }
-.more[open] > summary svg { transform: rotate(180deg); }
-.more > :global(.mj-table-box) { margin-top: 8px; }
-.steps { max-width: 840px; }
-.steps th:first-child { padding-left: 0; }
-.steps td { min-width: 200px; }
-.no { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-sub); }
 
 /* 금액과 날짜 · 업체 연락처 */
 .row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 40px 64px; padding-top: 48px; }

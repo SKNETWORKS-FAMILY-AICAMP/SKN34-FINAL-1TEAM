@@ -11,7 +11,7 @@ import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import type { TradeDates } from "@/components/schedule/text";
 import { Warn } from "@/components/vendors/icons";
 import { iGa, telDigits } from "@/components/vendors/text";
-import { dateSeoul, dotDate, md, todaySeoul } from "@/lib/format";
+import { md, todaySeoul } from "@/lib/format";
 import type { Schemas } from "@/lib/backend/client";
 import { tradeLabel } from "@/lib/labels";
 import { ChangeArea, type ChangeItem } from "./ChangeArea";
@@ -84,7 +84,6 @@ export function FinalPlan({ id, title, plan, rows, contacts, checks, start }: Pr
         <div className={s.topL}>
           <div className={s.h}>
             <h1 className="mj-h1">확정 공정표</h1>
-            <p className="mj-small mj-num">버전 {plan.version} · {dotDate(dateSeoul(plan.computed_at))} 만듦</p>
           </div>
           <p className="mj-sub">{stateLine(plan.blocks)}</p>
           <p className={`mj-num ${s.line}`}>일하는 날 <b>{plan.work_days}일</b> · <b>{md(plan.start)} ~ {md(end)}</b> · {plan.weekend_work ? "주말에도 공사" : "주말 휴일"}</p>

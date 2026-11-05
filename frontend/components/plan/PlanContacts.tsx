@@ -17,7 +17,6 @@ export function PlanContacts({ rows }: { rows: PlanContact[] }) {
   return (
     <section aria-labelledby="pc-h" className={s.contacts}>
       <h2 id="pc-h" className={s.ctH}>업체 연락처</h2>
-      <p className="mj-small">공사가 끝난 날부터 1년까지 보여요.</p>
       <ul className={`mj-num ${s.ctList}`}>
         {shown.map(({ trade, vendorName, ct, until }) => {
           const tel = telDigits(ct.phone);

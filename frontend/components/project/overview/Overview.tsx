@@ -1,6 +1,6 @@
 // 한 공사 화면 (시안 WProjectB). GET /projects/{id}/overview 하나로 그린다.
 // 지금 할 일 문구 · 버튼 · 가는 곳, 단계 판정, 낼 금액 · 예산 견줌, 공사 기간, 연락처 기한은 모두 API(계산 엔진) 값이고 화면은 형식만 바꾼다.
-// 견적 직후(phase=estimate)에는 '진행 단계 자세히'와 '업체 연락처'를 두지 않는다(시안 메모).
+// 견적 직후(phase=estimate)에는 '업체 연락처'를 두지 않는다(시안 메모).
 // 수락한 공사 날짜가 있고 공사 시작 전이면 '금액과 날짜' 아래에 공사 전에 할 일(PreWorkCheck)을 둔다. 상담 묻기는 넣지 않는다.
 import Link from "next/link";
 import { PreWorkCheck } from "@/components/project/PreWorkCheck";
@@ -10,7 +10,7 @@ import { budgetLabel, phoneText, projectTitle, tradeLabel } from "@/lib/labels";
 import { decText, md, todaySeoul, won } from "@/lib/format";
 import { CopyPhone } from "./CopyPhone";
 import { Chev, Phone, State } from "./icons";
-import { stepCell, tradeDates, tradeState, type Overview as Ov } from "./text";
+import { tradeDates, tradeState, type Overview as Ov } from "./text";
 import s from "./Overview.module.css";
 
 export function Overview({ ov }: { ov: Ov }) {
@@ -28,7 +28,6 @@ export function Overview({ ov }: { ov: Ov }) {
   const allStandard = money.by_trade.every((m) => m.source === "standard");
   const notAccepted = ov.trades.filter((t) => !t.start_date).map((t) => tradeLabel(t.trade));
   const beforeWork = period.kind === "final" && period.start > todaySeoul() && ov.checks.length > 0;
-  const steps = ov.trades[0]?.steps ?? [];
 
   return (
     <main id="main">
@@ -40,7 +39,7 @@ export function Overview({ ov }: { ov: Ov }) {
       </nav>
       <div className={`mj-wrap ${s.head}`}>
         <h1 className="mj-h1">{title}</h1>
-        <p className="mj-sub mj-num">{ov.sgg}{ov.pyeong ? ` · ${decText(ov.pyeong)}평` : ""}</p>
+        {ov.pyeong ? <p className="mj-sub mj-num">{decText(ov.pyeong)}평</p> : null}
       </div>
 
       {todo || finished ? (
@@ -82,38 +81,6 @@ export function Overview({ ov }: { ov: Ov }) {
           })}
         </ul>
 
-        {early || !steps.length ? null : (
-          <details className={s.more}>
-            <summary>진행 단계 자세히<Chev down /></summary>
-            <div className="mj-table-box" role="region" tabIndex={0} aria-label="공정별 진행 단계, 옆으로 넘겨 볼 수 있어요">
-              <table className={`mj-table mj-num ${s.steps}`}>
-                <caption className="mj-sr">공정별 진행 단계 {steps.length}개와 날짜</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">단계</th>
-                    {ov.trades.map((t) => <th key={t.trade} scope="col">{tradeLabel(t.trade)}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {steps.map((st, i) => (
-                    <tr key={st.key}>
-                      <th scope="row"><span className={s.no}>{i + 1}</span> {st.label}</th>
-                      {ov.trades.map((t) => {
-                        const one = t.steps.find((x) => x.key === st.key);
-                        const c = one ? stepCell(one, t) : null;
-                        return (
-                          <td key={t.trade}>
-                            {c ? <><State tone={c.tone} text={c.label} />{c.note ? <> <span className="mj-small">{c.note}</span></> : null}</> : null}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        )}
       </section>
 
       <div className={`mj-wrap ${s.row}`}>
@@ -123,7 +90,7 @@ export function Overview({ ov }: { ov: Ov }) {
             <div className={`mj-num ${s.md}`}>
               <dl className={s.box}>
                 <dt className={s.dt}>{allStandard ? "표준견적서" : "낼 금액"}</dt>
-                <dd className={s.big}><span className={s.bigV}>{won(money.total)}</span><span className="mj-small">부가세 포함</span></dd>
+                <dd className={s.big}><span className={s.bigV}>{won(money.total)}</span></dd>
                 {money.by_trade.length ? (
                   <dd className="mj-small">
                     {money.by_trade.map((m, i) => (
@@ -160,7 +127,6 @@ export function Overview({ ov }: { ov: Ov }) {
         {contacts.length ? (
           <section id="contacts" className={s.contacts} aria-labelledby="ct-t">
             <h2 id="ct-t" className={s.dt}>업체 연락처</h2>
-            <p className="mj-small">공사가 끝난 날부터 1년까지 보여요.</p>
             <ul className={`mj-num ${s.ctList}`}>
               {contacts.map((c) => {
                 const phone = phoneText(c.contact.phone ?? "");

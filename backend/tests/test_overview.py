@@ -49,9 +49,7 @@ def test_overview_of_two_trades(api):
     assert [st["state"] for st in mok["steps"]] == ["done"] * 6
     assert mok["steps"][4]["label"] == "업체 확정" and mok["vendor_name"] == "바름집수리"
     until = contact_until(TODAY)
-    assert mok["todo"]["text"].endswith(
-        f"{until:%Y.%m.%d}({'월화수목금토일'[until.weekday()]})까지 보여요"
-    )
+    assert mok["todo"]["text"] == "공사가 끝났어요 · 하자가 보이면 바름집수리에 전화해요"
     assert (dob["trade"], dob["phase"], dob["current"], dob["todo"]["code"]) == (
         "dobae",
         "estimate",  # 다시 고르기로 닫힌 요청은 단계에서 빠진다

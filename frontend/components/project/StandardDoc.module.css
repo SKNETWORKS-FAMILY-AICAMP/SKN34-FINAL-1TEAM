@@ -30,8 +30,7 @@
 .tbl tbody th { min-width: 9em; }
 .tbl td:global(.r) { white-space: nowrap; }
 .paren { color: var(--ink-sub); }
-.footSub { font-size: var(--fs-sm); font-weight: 400; color: var(--ink-sub); }
-.notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); color: var(--ink-sub); }
+.est { margin: 0; color: var(--ink-sub); }
 
 /* 맨 아래 합계 칸 */
 .totWrap { display: flex; justify-content: flex-end; }
@@ -42,4 +41,3 @@
 .tot dd { text-align: right; }
 .tot .tt { padding-top: 14px; border-top: 2px solid var(--ink); border-bottom: 0; font-size: var(--fs-h2); font-weight: 700; }
 .tot .tt > span { font-weight: 400; }
-.disc { padding-top: 20px; border-top: 1px solid var(--line); font-size: var(--fs-sm); font-weight: 700; }

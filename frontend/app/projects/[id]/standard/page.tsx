@@ -4,7 +4,7 @@ import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { StandardDoc } from "@/components/project/StandardDoc";
 import { getMyProject } from "@/lib/api/project";
 import { getStandard } from "@/lib/api/quote";
-import { priceVerLabel, projectTitle, tradeLabel } from "@/lib/labels";
+import { projectTitle, tradeLabel } from "@/lib/labels";
 import s from "./page.module.css";
 
 export const metadata = { title: "표준견적서" };
@@ -38,10 +38,7 @@ export default async function StandardPage({ params, searchParams }: { params: P
             {back ? (
               <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors?trade=${back}`}>{tradeLabel(back)} 업체 고르기로 돌아가기</Link>
             ) : (
-              <>
-                <h2 className="mj-h3">다음은 업체 고르기예요</h2>
-                <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors`}>업체 고르기</Link>
-              </>
+              <Link className="mj-btn mj-btn-pri" href={`/projects/${id}/vendors`}>업체 고르기</Link>
             )}
             <p><Link className="mj-lnk" href={`/projects/${id}/plan`}>예상 공정표 보기</Link></p>
           </div>
@@ -52,7 +49,6 @@ export default async function StandardPage({ params, searchParams }: { params: P
                 면적 · 공간 · 도배 유형을 바꾸면 다시 계산해요. 실측을 요청한 뒤에는 바꿀 수 없어요.
                 {p.locked ? null : <><br /><Link className={`mj-lnk ${s.small}`} href={`/start?edit=${id}`}>집 정보 고치기</Link></>}
               </li>
-              <li>기준 단가가 바뀌어도 이 문서는 {priceVerLabel(q.price_ver)} 단가로 고정돼요.</li>
             </ul>
           </div>
         </aside>

@@ -51,13 +51,15 @@ function Photos({ x, src }: { x: Extra; src: (fileId: string) => string }) {
 
 /** 합계 칸: 확인했어요 · 확인 기다림 · 업체와 이야기 중 (공급가 · 부가세를 나눠 보이는 곳은 여기 하나) */
 function Totals({ g }: { g: Group }) {
-  const rows: [string, Schemas["MoneyOut"]][] = [["확인했어요", g.ok], ["확인 기다림", g.pending], ["업체와 이야기 중", g.talk]];
+  // 0원인 칸은 숨기고, 낼 금액만 보인다
+  const rows = ([["확인했어요", g.ok], ["확인 기다림", g.pending], ["업체와 이야기 중", g.talk]] as [string, Schemas["MoneyOut"]][]).filter(([, m]) => m.total > 0);
+  if (!rows.length) return null;
   return (
     <dl className={`mj-num ${s.exSum}`} aria-label={`${tradeLabel(g.trade)} 추가 금액 합계`}>
       {rows.map(([t, m]) => (
         <div key={t}>
           <dt>{t}</dt>
-          <dd><b className={s.exBig}>{won(m.total)}</b><span className="mj-small">공급가 {won(m.supply)} · 부가세 {won(m.vat)}</span></dd>
+          <dd><b className={s.exBig}>{won(m.total)}</b></dd>
         </div>
       ))}
     </dl>
@@ -129,7 +131,7 @@ export function PlanExtras({ projectId, groups, deals, multi }: Props) {
     <section id="extras" aria-labelledby="ex-t" className={s.extras}>
       <div className={s.exHead}>
         <h2 id="ex-t" className="mj-h2">공사 중 추가 금액</h2>
-        <p className="mj-small">믿집은 결제를 하지 않아요. 업체가 알린 금액을 기록하고 알려 주기만 해요. 낼지는 업체와 직접 정해요.</p>
+        <p className="mj-small">업체가 알린 추가 금액이에요. 낼지는 업체와 직접 정해요.</p>
       </div>
 
       {shown.map((g) => {
@@ -184,7 +186,7 @@ export function PlanExtras({ projectId, groups, deals, multi }: Props) {
                       <p className={s.exTitle}><b>{x.title}</b></p>
                       <p className={`mj-st ${x.ack === "ok" ? "mj-st-ok" : "mj-st-now"}`}>{x.ack === "ok" ? <Check /> : null}{ACK_TEXT[x.ack]}</p>
                     </div>
-                    <p className="mj-num">업체가 알린 추가 금액 <b>{won(x.total)}</b> · {tail(x.vat_mode)} · {madeOn(x)}</p>
+                    <p className="mj-num"><b>{won(x.total)}</b> · {madeOn(x)}</p>
                     <p className={`mj-small ${s.exText}`}>{x.reason}</p>
                     <Photos x={x} src={src(x)} />
                   </li>

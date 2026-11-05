@@ -1,10 +1,8 @@
 // 한 공사 화면(시안 WProjectB)에만 쓰는 화면 말. 할 일 문구 · 금액 · 날짜는 API 값이고 여기서는 고르고 형식만 바꾼다.
 import type { ApiOverview } from "@/lib/api/schedule";
-import { md } from "@/lib/format";
 
 export type Overview = ApiOverview;
 export type TradeRow = Overview["trades"][number];
-export type Step = TradeRow["steps"][number];
 export type Tone = "ok" | "wait" | "now" | "bad" | "off";
 
 /** 공정 한 줄의 지금 상태: 그 공정의 할 일 코드(calc/progress.py TODO_RANK) → 판 말 */
@@ -29,25 +27,6 @@ const TRADE_STATE: Record<string, { text: string; tone: Tone }> = {
 export function tradeState(t: TradeRow): { text: string; tone: Tone } {
   if (t.overdue) return TRADE_STATE.dates_overdue;
   return TRADE_STATE[t.todo.code] ?? { text: "확인 중", tone: "off" };
-}
-
-/** 진행 단계 표 한 칸: "끝남 11.2(월) · 2곳 요청" · "지금 11.8(일) 받음 · 확인할 차례" · "아직" */
-export function stepCell(st: Step, t: TradeRow): { label: string; tone: Tone; note: string } {
-  if (st.state === "done") {
-    const parts = [
-      st.on ? `${md(st.on)}${st.key === "dates" ? " 수락" : ""}` : "",
-      st.key === "pick" && st.count ? `${st.count}곳 요청` : "",
-      st.key === "visit" && st.count ? `견적서 ${st.count}개` : "",
-      st.key === "deal" && t.vendor_name ? t.vendor_name : "",
-    ];
-    return { label: "끝남", tone: "ok", note: parts.filter(Boolean).join(" · ") };
-  }
-  if (st.state === "now") {
-    const now = tradeState(t);
-    const parts = [st.on ? `${md(st.on)}${st.key === "dates" ? " 받음" : ""}` : "", now.text];
-    return { label: "지금", tone: now.tone === "bad" ? "bad" : "now", note: parts.filter(Boolean).join(" · ") };
-  }
-  return { label: "아직", tone: "off", note: "" };
 }
 
 /** 공정 카드의 날짜: 수락한 날짜, 없으면 수락 기다리는 날짜 */
