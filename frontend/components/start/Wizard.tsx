@@ -372,7 +372,7 @@ export function Wizard({ regions, today, role, project = null }: Props) {
       <form id="wz-form" className={s.form} onSubmit={submit} noValidate aria-labelledby="wz-t">
         <div className={s.head}>
           <h1 id="wz-t" className="mj-h1">{edit ? "집 정보 고치기" : "견적 받기"}</h1>
-          <p className="mj-sub">{edit ? "고친 내용으로 표준견적서와 예상 공정표를 다시 계산해요." : "집 정보와 공정을 넣으면 공공 기준 단가로 표준견적서와 예상 공정표를 계산해요."}</p>
+          <p className="mj-sub">{edit ? "고친 내용으로 표준견적서와 예상 공정표를 다시 계산해요." : "집 정보와 공정을 넣으면 표준견적서와 예상 공정표가 나와요."}</p>
           {locked ? (
             <p className="mj-notice mj-notice-warn" role="status">
               <span>실측을 요청한 뒤에는 집 정보를 고칠 수 없어요. 다른 조건으로 보려면 <Link href="/my">내 공사 목록</Link>에서 새 견적을 받아요.</span>
@@ -399,7 +399,6 @@ export function Wizard({ regions, today, role, project = null }: Props) {
                     : g.items.map((n) => <option key={n} value={n}>{n}</option>))}
                 </select>
               </div>
-              {sido?.id === "jeonnam-gwangju" ? <p className="mj-small">2026년 7월 광주와 전남이 전남광주통합특별시로 합쳐졌어요.</p> : null}
               {regions.length ? null : <p className="mj-small">지역 목록을 불러오지 못했어요. 새로 고쳐 주세요.</p>}
               {err("region")}
             </fieldset>
@@ -440,7 +439,7 @@ export function Wizard({ regions, today, role, project = null }: Props) {
                 </div>
               )}
               {err("area")}{err("basis")}{err("band")}
-              <p className={s.hint}>{a.bandMode ? "평형대의 대표 평형으로 계산해요." : "공급면적은 분양 평형, 전용면적은 실제로 쓰는 면적이에요."}</p>
+              {a.bandMode ? null : <p className={s.hint}>공급면적은 분양 평형, 전용면적은 실제로 쓰는 면적이에요.</p>}
               <p><button type="button" className="mj-lnk" aria-expanded={a.bandMode} aria-controls="wz-band" onClick={toggleBand}>{a.bandMode ? "면적을 알아요 · ㎡로 적기" : "면적을 몰라요 · 평형대로 고르기"}</button></p>
             </fieldset>
 
@@ -497,7 +496,7 @@ export function Wizard({ regions, today, role, project = null }: Props) {
                           <label key={m.key} className={s.opt}><input id={`wz-item-${m.key}`} className={s.ck} type="checkbox" checked={a.items.includes(m.key)} onChange={() => set({ items: toggle(a.items, m.key) })} /><span>{m.label} <span className="mj-small">· {m.desc}</span></span></label>
                         ))}
                       </div>
-                      {a.items.includes("door") ? <p className={s.hint}>문 개수는 고른 공간 중 이름에 &lsquo;방&rsquo;이 든 곳 수로 잡아요. 실측 때 다시 세요.</p> : null}
+                      {a.items.includes("door") ? <p className={s.hint}>문 개수는 실측 때 다시 세요.</p> : null}
                       {err("items")}
                     </fieldset>
                   </div>
@@ -605,7 +604,7 @@ export function Wizard({ regions, today, role, project = null }: Props) {
           <p className="mj-small mj-num" role="status">{sending ?? savedAt}</p>
           <div className={s.full}>{err("form")}</div>
           {!edit && !role ? <p className={`mj-small ${s.full}`}>가입해도 넣은 집 정보 · 사진은 그대로 이어져요.</p> : null}
-          {edit ? <p className={`mj-small ${s.full}`}>다시 계산하면 표준견적서와 예상 공정표가 새 버전으로 바뀌어요.</p> : null}
+          {edit ? <p className={`mj-small ${s.full}`}>다시 계산하면 표준견적서와 예상 공정표가 바뀌어요.</p> : null}
         </div>
       </form>
     </main>
