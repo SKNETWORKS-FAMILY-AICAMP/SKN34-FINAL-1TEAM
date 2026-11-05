@@ -15,7 +15,7 @@ import { BUDGETS, DOBAE_GRADES, MOK_ITEMS, WHEN_LABEL, type Budget, type DobaeGr
 import { eulReul, md, stampSeoul } from "@/lib/format";
 import type { Role } from "@/lib/types";
 import { DateCalendar } from "./DateCalendar";
-import { PhotoDrop, releasePhoto, toPhotos, type Photo } from "./PhotoDrop";
+import { PhotoDrop, toPhotos, type Photo } from "./PhotoDrop";
 import { PHOTO_MEMO, clearPhotoMemo, readDraft, writeDraft } from "./draft";
 import s from "./Wizard.module.css";
 
@@ -141,9 +141,9 @@ function fromProject(p: ApiProject) {
   const photos: Record<string, Photo[]> = {};
   for (const ph of p.photos) {
     const list = (photos[ph.space_id] ??= []);
-    list.push({ id: `f-${ph.file_id}`, name: `사진 ${list.length + 1}`, url: `/api/files/${ph.file_id}`, type: "image/*", fileId: ph.file_id });
+    list.push({ id: `f-${ph.file_id}`, name: `사진 ${list.length + 1}`, type: "image/*", fileId: ph.file_id });
   }
-  const plan: Photo[] = p.plans.map((fid, i) => ({ id: `f-${fid}`, name: `도면 ${i + 1}`, url: `/api/files/${fid}`, type: "", fileId: fid }));
+  const plan: Photo[] = p.plans.map((fid, i) => ({ id: `f-${fid}`, name: `도면 ${i + 1}`, type: "", fileId: fid }));
   return { a, photos, plan };
 }
 
@@ -274,7 +274,6 @@ export function Wizard({ regions, today, role, project = null, demo = false }: P
   function removeSpace(id: string) {
     const sp = a.spaces.find((x) => x.id === id);
     set({ spaces: a.spaces.filter((x) => x.id !== id), picked: a.picked.filter((x) => x !== id) });
-    (photos[id] ?? []).forEach(releasePhoto);
     setPhotos((m) => { const n = { ...m }; delete n[id]; return n; });
     setSpaceMsg(`${eulReul(sp?.name ?? "공간")} 뺐어요.`);
   }
@@ -607,7 +606,7 @@ export function Wizard({ regions, today, role, project = null, demo = false }: P
                   {chosen.map((sp) => (
                     <PhotoDrop key={sp.id} variant="list" id={`ph-${sp.id}`} title={sp.name} label={`${sp.name} 사진`} photos={photos[sp.id] ?? []} accept={PHOTO_TYPES} maxMB={10} hint="" describedBy="wz-ph-f"
                       onAdd={(files) => setPhotos((m) => ({ ...m, [sp.id]: [...(m[sp.id] ?? []), ...toPhotos(files)] }))}
-                      onRemove={(pid) => setPhotos((m) => { const gone = (m[sp.id] ?? []).find((x) => x.id === pid); if (gone) releasePhoto(gone); return { ...m, [sp.id]: (m[sp.id] ?? []).filter((x) => x.id !== pid) }; })} />
+                      onRemove={(pid) => setPhotos((m) => ({ ...m, [sp.id]: (m[sp.id] ?? []).filter((x) => x.id !== pid) }))} />
                   ))}
                 </div>
               ) : <p className="mj-sub">공간을 고르면 공간마다 사진을 넣을 수 있어요.</p>}
@@ -615,7 +614,7 @@ export function Wizard({ regions, today, role, project = null, demo = false }: P
             <div className={s.photoBox}>
               <PhotoDrop variant="list" id="wz-plan" title="도면" label="도면" photos={plan} max={5} accept={`${PHOTO_TYPES},application/pdf`} maxMB={20} hint="PDF · 그림 · 한 개 20MB · 5개까지"
                 onAdd={(files) => setPlan((old) => [...old, ...toPhotos(files)])}
-                onRemove={(pid) => setPlan((old) => { const gone = old.find((x) => x.id === pid); if (gone) releasePhoto(gone); return old.filter((x) => x.id !== pid); })} />
+                onRemove={(pid) => setPlan((old) => old.filter((x) => x.id !== pid))} />
             </div>
             {err("photos")}
           </section>

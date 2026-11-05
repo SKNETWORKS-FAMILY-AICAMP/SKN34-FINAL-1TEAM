@@ -11,7 +11,6 @@ export const DRAFT_EVENT = "mj-draft-change";
 // uploaded: 이미 서버에 올린 사진의 파일 id (만들기를 다시 눌러도 두 번 올리지 않게)
 export const PHOTO_MEMO: { bySpace: Record<string, Photo[]>; plan: Photo[]; uploaded: Record<string, string> } = { bySpace: {}, plan: [], uploaded: {} };
 export function clearPhotoMemo() {
-  Object.values(PHOTO_MEMO.bySpace).flat().concat(PHOTO_MEMO.plan).forEach((ph) => URL.revokeObjectURL(ph.url));
   PHOTO_MEMO.bySpace = {};
   PHOTO_MEMO.plan = [];
   PHOTO_MEMO.uploaded = {};

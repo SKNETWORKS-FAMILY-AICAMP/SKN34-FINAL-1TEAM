@@ -8,15 +8,36 @@ import { eulReul, fileSize } from "@/lib/format";
 import s from "./PhotoDrop.module.css";
 
 /** file: 새로 고른 파일. fileId: 이미 올려 둔 파일(집 정보 고치기에서 불러온 것) */
-export type Photo = { id: string; name: string; url: string; type: string; file?: File; fileId?: string };
+export type Photo = { id: string; name: string; type: string; file?: File; fileId?: string };
 
 let seq = 0;
 export function toPhotos(files: File[]): Photo[] {
-  return files.map((f) => ({ id: `p${++seq}`, name: f.name, url: URL.createObjectURL(f), type: f.type, file: f }));
+  return files.map((f) => ({ id: `p${++seq}`, name: f.name, type: f.type, file: f }));
 }
-/** 새로 고른 파일의 미리보기 주소만 풀어 준다(이미 올린 파일 주소는 그대로) */
-export function releasePhoto(p: Photo) {
-  if (p.url.startsWith("blob:")) URL.revokeObjectURL(p.url);
+
+/** 미리보기. 새로 고른 사진은 파일에서 바로 그리고(파일로 만든 주소를 img에 넣지 않는다), 올려 둔 사진은 서버 주소로 연다. */
+function Picture({ photo, alt, max }: { photo: Photo; alt: string; max: number }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const file = photo.file;
+  useEffect(() => {
+    const c = ref.current;
+    if (!file || !c) return;
+    let live = true;
+    createImageBitmap(file)
+      .then((bmp) => {
+        if (live) {
+          const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+          c.width = Math.max(1, Math.round(bmp.width * k));
+          c.height = Math.max(1, Math.round(bmp.height * k));
+          c.getContext("2d")?.drawImage(bmp, 0, 0, c.width, c.height);
+        }
+        bmp.close();
+      })
+      .catch(() => {}); // 브라우저가 못 그리는 형식은 빈 칸으로 둔다
+    return () => { live = false; };
+  }, [file, max]);
+  if (!file) return photo.fileId ? <img src={`/api/files/${photo.fileId}`} alt={alt} /> : null;
+  return alt ? <canvas ref={ref} role="img" aria-label={alt} /> : <canvas ref={ref} aria-hidden="true" />;
 }
 
 type Props = {
@@ -102,7 +123,7 @@ export function PhotoDrop({ id, label, photos, onAdd, onRemove, max = 10, accept
             {photos.map((p, i) => (
               <li key={p.id} className={s.row}>
                 <span className={s.thumb} aria-hidden="true">
-                  {p.type.startsWith("image/") ? <img src={p.url} alt="" /> : <FileMark />}
+                  {p.type.startsWith("image/") ? <Picture photo={p} alt="" max={256} /> : <FileMark />}
                 </span>
                 <p className={s.name}>{p.name}{p.file ? <span className="mj-small mj-num"> · {fileSize(p.file.size)}</span> : <span className="mj-small"> · 올려 둔 파일</span>}</p>
                 <button type="button" className={`mj-btn mj-btn-sec mj-btn-sm ${s.x}`} onClick={() => remove(i)} aria-label={`${name} ${i + 1}번째 빼기 · ${p.name}`}>빼기</button>
@@ -133,7 +154,7 @@ export function PhotoDrop({ id, label, photos, onAdd, onRemove, max = 10, accept
             {photos.map((p, i) => (
               <li key={p.id} className="mj-thumb-li">
                 <button type="button" className="mj-thumb" aria-pressed={i === cur} onClick={() => setCur(i)} aria-label={`${i + 1}번째 크게 보기 · ${p.name}`}>
-                  {p.type.startsWith("image/") ? <img src={p.url} alt="" /> : <span className="mj-thumb-file">PDF</span>}
+                  {p.type.startsWith("image/") ? <Picture photo={p} alt="" max={256} /> : <span className="mj-thumb-file">PDF</span>}
                   <span className="mj-thumb-n mj-num" aria-hidden="true">{i + 1}</span>
                 </button>
                 <button type="button" className="mj-thumb-x" onClick={() => remove(i)} aria-label={`${i + 1}번째 빼기 · ${p.name}`}>
@@ -144,7 +165,7 @@ export function PhotoDrop({ id, label, photos, onAdd, onRemove, max = 10, accept
           </ol>
           {shown && (
             <figure className="mj-viewer">
-              {shown.type.startsWith("image/") ? <img src={shown.url} alt={`${label} ${cur + 1}번째: ${shown.name}`} /> : <div className="mj-viewer-file">{shown.name}</div>}
+              {shown.type.startsWith("image/") ? <Picture key={shown.id} photo={shown} alt={`${label} ${cur + 1}번째: ${shown.name}`} max={1280} /> : <div className="mj-viewer-file">{shown.name}</div>}
             </figure>
           )}
         </>

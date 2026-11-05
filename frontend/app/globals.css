@@ -130,7 +130,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .mj-thumbs { list-style: none; margin: 0; padding: 14px 14px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 20px; }
 .mj-thumb-li { position: relative; }
 .mj-thumb { position: relative; display: block; width: 100%; aspect-ratio: 1; max-width: 100%; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; cursor: pointer; }
-.mj-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mj-thumb img, .mj-thumb canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mj-thumb[aria-pressed="true"] { outline: 3px solid var(--accent); outline-offset: 1px; }
 .mj-thumb:focus-visible { outline: 3px solid var(--focus); }
 .mj-thumb-n { position: absolute; left: 5px; top: 5px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--scrim); color: var(--bg); font-size: var(--fs-xs); line-height: 22px; font-weight: 700; text-shadow: 0 0 2px var(--scrim); }
@@ -142,7 +142,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .mj-thumb-x:focus-visible > span { outline: 3px solid var(--focus); outline-offset: 1px; }
 .mj-thumb-file { display: flex; align-items: center; justify-content: center; height: 100%; font-weight: 700; color: var(--ink-sub); }
 .mj-viewer { margin: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--surface); }
-.mj-viewer img { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius); background: var(--surface-2); }
+.mj-viewer img, .mj-viewer canvas { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius); background: var(--surface-2); }
 .mj-viewer-file { padding: 24px; text-align: center; font-weight: 700; overflow-wrap: anywhere; }
 
 /* 펼친 달력 (DayPicker) */
