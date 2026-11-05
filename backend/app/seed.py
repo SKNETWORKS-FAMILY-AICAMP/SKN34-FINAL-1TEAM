@@ -52,9 +52,9 @@ VENDOR_TRADES = ("dobae", "mokgong")
 VENDOR_AREAS = [("seoul", sgg) for sgg in sorted(SGG["seoul"])]
 
 
-def _test_pdf() -> bytes:
-    """업체 가입에 꼭 필요한 사업자등록증 자리를 채우는 한 쪽짜리 시험용 PDF ('TEST ONLY')."""
-    text = b"BT /F1 18 Tf 30 70 Td (TEST ONLY - not a real business license) Tj ET"
+def sample_pdf(line: bytes = b"TEST ONLY - not a real business license") -> bytes:
+    """한 줄짜리 한 쪽 시험용 PDF. 기본은 업체 가입에 꼭 필요한 사업자등록증 자리('TEST ONLY')."""
+    text = b"BT /F1 18 Tf 30 70 Td (%s) Tj ET" % line
     objs = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -76,7 +76,7 @@ def _test_pdf() -> bytes:
     return out
 
 
-LICENSE = _test_pdf()
+LICENSE = sample_pdf()
 
 
 async def seed(password: str) -> list[tuple[str, bool]]:
