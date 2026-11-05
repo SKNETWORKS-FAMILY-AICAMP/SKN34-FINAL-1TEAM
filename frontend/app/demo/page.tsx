@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { listMyProjects, type ApiProjectItem } from "@/lib/api/project";
+import { DEMO_EMAIL } from "@/lib/demo";
 import { getSession } from "@/lib/session";
 import s from "./page.module.css";
 
 export const metadata = { title: "시연 순서", robots: { index: false } };
-
-const DEMO_EMAIL = "demo@mitjip.test";
 
 type Step = { code: string; title: string; desc: string; go: string };
 
@@ -65,7 +64,7 @@ export default async function DemoPage() {
               <span className={s.no} aria-hidden="true">1</span>
               <div className={s.main}>
                 <h2 className={s.t}><span className="mj-sr">1단계 </span>견적 받기</h2>
-                <p>집 정보와 공정을 넣으면 표준견적서와 예상 공정표가 바로 나와요.</p>
+                <p>집 정보와 공정을 넣으면 표준견적서와 예상 공정표가 바로 나와요. 질문 화면 맨 위 &lsquo;예시 값 채우기&rsquo;로 한 번에 채울 수 있어요.</p>
                 <div className={s.acts}>
                   <Link className="mj-btn mj-btn-pri" href="/start">견적 받기 시작</Link>
                   {first ? (

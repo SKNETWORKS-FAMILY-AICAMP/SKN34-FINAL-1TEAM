@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { Wizard } from "@/components/start/Wizard";
 import { getMyProject, listRegions } from "@/lib/api/project";
+import { isDemo } from "@/lib/demo";
 import { getSession, requireRole } from "@/lib/session";
 import { todaySeoul } from "@/lib/format";
 
@@ -15,7 +16,7 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
   return (
     <>
       <SiteHeader />
-      <Wizard key={project?.id ?? "new"} regions={regions} today={todaySeoul()} role={session?.role ?? null} project={project} />
+      <Wizard key={project?.id ?? "new"} regions={regions} today={todaySeoul()} role={session?.role ?? null} project={project} demo={!project && isDemo(session)} />
     </>
   );
 }

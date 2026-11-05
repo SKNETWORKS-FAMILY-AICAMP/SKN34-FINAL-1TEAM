@@ -4,6 +4,7 @@
 // 고치기(project가 있을 때): 그 프로젝트 값을 채우고 PATCH로 저장한다. 브라우저 초안은 건드리지 않는다. 실측을 요청했으면 막는다.
 // 계산하기: 사진 · 도면을 POST /files로 하나씩 올림 → POST(고치기는 PATCH) /projects → 표준견적서로 간다.
 // 오류는 칸 아래에만 보인다. 처음 누른 뒤부터는 고칠 때마다 다시 확인한다.
+// 시연 고객(demo)이면 맨 위에 '예시 값 채우기'가 보인다. 시연 데이터(app/demo.py)와 같은 집이다.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -169,11 +170,23 @@ function toBody(a: Answers, photoIds: { space: string; file_id: string }[], plan
   };
 }
 
+/** 시연용 예시 답: 노원구 공급 105.8㎡(32평) 빈 집 · 도배 기본형 + 목공(몰딩 · 걸레받이) · 거실 · 안방 · 작은방 1 */
+function demoAnswers(today: string): Answers {
+  const after = (n: number) => { const d = new Date(`${today}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  return {
+    ...EMPTY, sido: "seoul", sgg: "노원구", builtYear: "2009",
+    size: "manual", manualBasis: "supply", manualM2: "105.8", occupied: "no",
+    trades: { dobae: true, mokgong: true }, grade: "basic", items: ["molding", "base"],
+    picked: ["sp-d0", "sp-d2", "sp-d3"],
+    when: "date", whenDate: after(28), whenEnd: after(42), budget: "500-700",
+  };
+}
+
 const touched = (a: Answers) => !!(a.sido || a.size || a.trades.dobae || a.trades.mokgong || a.picked.length || a.when || a.occupied || a.builtYear);
 
-type Props = { regions: Region[]; today: string; role: Role | null; project?: ApiProject | null };
+type Props = { regions: Region[]; today: string; role: Role | null; project?: ApiProject | null; demo?: boolean };
 
-export function Wizard({ regions, today, role, project = null }: Props) {
+export function Wizard({ regions, today, role, project = null, demo = false }: Props) {
   const router = useRouter();
   const edit = project;
   const [init] = useState(() => (edit ? fromProject(edit) : null));
@@ -189,6 +202,7 @@ export function Wizard({ regions, today, role, project = null }: Props) {
   const [newSpace, setNewSpace] = useState("");
   const [spaceMsg, setSpaceMsg] = useState("");
   const [cur, setCur] = useState<string>(SECTIONS[0].id);
+  const [filled, setFilled] = useState(false);
   const goAfterLogin = useRef(false);
   const autoRan = useRef(false);
   const editUploaded = useRef<Record<string, string>>({});
@@ -263,6 +277,11 @@ export function Wizard({ regions, today, role, project = null }: Props) {
     (photos[id] ?? []).forEach(releasePhoto);
     setPhotos((m) => { const n = { ...m }; delete n[id]; return n; });
     setSpaceMsg(`${eulReul(sp?.name ?? "공간")} 뺐어요.`);
+  }
+  function fillDemo() {
+    set(demoAnswers(today));
+    setTried(false);
+    setFilled(true);
   }
   function saveNow() {
     if (!touched(a)) { setSavedAt("넣은 내용이 아직 없어요."); return; }
@@ -373,6 +392,12 @@ export function Wizard({ regions, today, role, project = null }: Props) {
         <div className={s.head}>
           <h1 id="wz-t" className="mj-h1">{edit ? "집 정보 고치기" : "견적 받기"}</h1>
           <p className="mj-sub">{edit ? "고친 내용으로 표준견적서와 예상 공정표를 다시 계산해요." : "집 정보와 공정을 넣으면 표준견적서와 예상 공정표가 나와요."}</p>
+          {demo && !edit ? (
+            <div className={s.demo}>
+              <button type="button" className="mj-btn mj-btn-sec" onClick={fillDemo} disabled={!!sending}>예시 값 채우기</button>
+              <p className="mj-small" role="status">{filled ? "예시 값을 채웠어요. 맨 아래 계산하기를 눌러 주세요." : "시연 계정이에요. 노원구 32평 · 도배와 목공 예시로 한 번에 채워요."}</p>
+            </div>
+          ) : null}
           {locked ? (
             <p className="mj-notice mj-notice-warn" role="status">
               <span>실측을 요청한 뒤에는 집 정보를 고칠 수 없어요. 다른 조건으로 보려면 <Link href="/my">내 공사 목록</Link>에서 새 견적을 받아요.</span>
