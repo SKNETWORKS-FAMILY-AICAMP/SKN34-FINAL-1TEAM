@@ -37,7 +37,6 @@ export default async function VendorPanelPage({ params, searchParams }: { params
   const deal = deals?.[0] ?? null;
   const mine = visits?.visits.find((v) => v.vendor_id === vid) ?? null; // 최근 순이라 첫 것이 가장 최근
   const live = mine && isLive(mine.status) ? mine : null;
-  const text = visits?.request_texts.find((t) => t.trade === trade)?.text;
   const slotsLeft = visits?.slots_left[trade] ?? 0;
   const order = list?.vendors.map((v) => v.vendor_id) ?? [];
   const at = order.indexOf(vid);
@@ -77,7 +76,7 @@ export default async function VendorPanelPage({ params, searchParams }: { params
       <section className={s.sec} aria-labelledby="vd-ct">
         <h3 id="vd-ct" className="mj-h3">실측 · 연락</h3>
         {live ? (
-          <ContactCard v={live} projectId={id} trade={trade} requestText={text} allHref={visitsHref} />
+          <ContactCard v={live} projectId={id} trade={trade} allHref={visitsHref} />
         ) : (
           <>
             <ContactFacts d={d} />
@@ -88,7 +87,7 @@ export default async function VendorPanelPage({ params, searchParams }: { params
 
       <section className={s.sec} aria-labelledby="vd-qt">
         <h3 id="vd-qt" className="mj-h3">가견적</h3>
-        <Estimate d={d} name={name} />
+        <Estimate d={d} />
       </section>
 
       <section className={s.sec} aria-labelledby="vd-pt">

@@ -7,8 +7,6 @@
 .ln { display: flex; gap: 6px; align-items: flex-start; }
 .ln svg { flex: none; margin-top: 4px; }
 .ok { display: inline-flex; color: var(--ok); }
-.rq { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-.rqt { align-self: stretch; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); font-size: var(--fs-sm); line-height: 1.6; user-select: all; overflow-wrap: anywhere; }
 .foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 16px; margin-top: auto; padding-top: 4px; border-top: 1px solid var(--line-soft); }
 .sm { font-size: var(--fs-sm); align-self: flex-start; }
 .cmp { align-self: flex-start; }

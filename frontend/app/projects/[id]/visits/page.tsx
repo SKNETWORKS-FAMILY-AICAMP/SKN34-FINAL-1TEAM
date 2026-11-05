@@ -1,4 +1,4 @@
-// 실측 요청 · 업체 연락 (시안 WVisit): 연락할 때 보낼 문구, 요청한 업체 카드(연락처 · 연락 방식 버튼 · 요청 취소).
+// 실측 요청 · 업체 연락 (시안 WVisit): 요청한 업체 카드(연락처 · 연락 방식 버튼 · 요청 취소).
 // 믿집은 방문 날짜를 잡지 않는다. 연락처는 API가 공개 규칙을 지난 요청에만 준다(취소함 · 못 받음은 가린다).
 // 이 공정을 확정했으면(GET /projects/{id}/deals) 확정 안내를 두고 보낼 문구 · 더 요청하기를 뺀다.
 // 닫힌 업체는 닫힌 까닭(close_reason)으로 '다른 업체로 정했어요' · '지난 실측 닫힘'을 나누고, 다시 고르는 중이면 그 안내를 둔다.
@@ -8,7 +8,6 @@ import { DealNote } from "@/components/confirm/DealNote";
 import { ReselectNote } from "@/components/confirm/ReselectNote";
 import { ProjectCrumb } from "@/components/project/ProjectCrumb";
 import { ContactCard } from "@/components/vendors/ContactCard";
-import { CopyButton } from "@/components/vendors/CopyButton";
 import { VTabs } from "@/components/vendors/VTabs";
 import { isLive, isReselected, isTrade, type VTrade, type Visit } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
@@ -46,8 +45,8 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
 
   const counts = Object.fromEntries(trades.map((t) => [t, latest(all.visits, t).length]));
   const rows = latest(all.visits, trade);
-  // 보낼 문구는 연락할 업체(열린 요청)가 있고 아직 확정하지 않았을 때만 보인다
-  const text = !deal && rows.some((v) => isLive(v.status)) ? all.request_texts.find((t) => t.trade === trade)?.text ?? "" : "";
+  // 방문 날짜를 정할 업체(요청함)가 있고 아직 확정하지 않았을 때만 '먼저 연락해' 안내를 보인다
+  const contacting = !deal && rows.some((v) => v.status === "requested");
   const tName = tradeLabel(trade);
   const pickHref = `/projects/${id}/vendors?trade=${trade}`;
   const again = !deal && all.visits.some((v) => v.trade === trade && isReselected(v));
@@ -57,7 +56,7 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
       <ProjectCrumb id={id} title={projectTitle(p.region, trades)} here="실측 요청 · 업체 연락" />
       <div className={`mj-wrap ${s.title}`}>
         <h1 className="mj-h1">실측 요청 · 업체 연락</h1>
-        <p className="mj-sub">업체에 먼저 연락해 방문 날짜를 정해 주세요.</p>
+        {contacting ? <p className="mj-sub">업체에 먼저 연락해 방문 날짜를 정해 주세요.</p> : null}
       </div>
 
       <div className={`mj-wrap ${s.layout}`}>
@@ -65,17 +64,6 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
           <VTabs base={`/projects/${id}/visits`} trades={trades} current={trade} counts={counts} />
           {deal ? <DealNote d={deal} projectId={id} /> : null}
           {again ? <ReselectNote trade={trade} again={!rows.some((v) => isLive(v.status))} /> : null}
-
-          {text ? (
-            <section aria-labelledby="msg-t" className={s.sec}>
-              <h2 id="msg-t" className="mj-h3">연락할 때 보낼 문구</h2>
-              <p className={`mj-num ${s.rqt}`}>{text}</p>
-              <div className={s.copyRow}>
-                <CopyButton text={text} label="문구 복사" small />
-                <p className="mj-small">문자 · 카카오톡에 붙여 넣으면 업체가 믿집 요청과 맞춰 봐요.</p>
-              </div>
-            </section>
-          ) : null}
 
           <section aria-labelledby="vd-t" className={s.sec}>
             <h2 id="vd-t" className="mj-h3">요청한 업체 <span className="mj-num">{rows.length}</span><span className="mj-sr">곳</span></h2>
@@ -103,11 +91,9 @@ export default async function VisitsPage({ params, searchParams }: { params: Pro
           <section aria-labelledby="hw-t" className={s.how}>
             <h2 id="hw-t" className="mj-h3">실측은 이렇게 해요</h2>
             <ol className={s.steps}>
-              <li><span className="mj-code">1</span><span>업체에 연락해 방문 날짜를 정해요.</span></li>
-              <li><span className="mj-code">2</span><span>업체가 다녀가서 견적서를 올려요.</span></li>
-              <li><span className="mj-code">3</span><span>견적서가 오면 표준견적서와 같이 보고 골라요.</span></li>
+              <li><span className="mj-code">1</span><span>업체가 다녀가서 견적서를 올려요.</span></li>
+              <li><span className="mj-code">2</span><span>견적서가 오면 표준견적서와 같이 보고 골라요.</span></li>
             </ol>
-            <p className="mj-small">믿집은 방문 날짜를 잡지 않아요. 견적서가 오면 알림으로 알려 드려요.</p>
           </section>
           <section aria-labelledby="sh-t" className={s.sent}>
             <h2 id="sh-t" className="mj-h3">업체에 간 것</h2>

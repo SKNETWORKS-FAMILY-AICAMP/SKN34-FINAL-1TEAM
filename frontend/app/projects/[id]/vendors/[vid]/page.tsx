@@ -10,7 +10,7 @@ import { ContactCard } from "@/components/vendors/ContactCard";
 import { BizInfo, ContactFacts, Estimate, Faqs, Photos, Verified } from "@/components/vendors/Detail";
 import { Lock, VisitState } from "@/components/vendors/icons";
 import { PickButton } from "@/components/vendors/PickButton";
-import { areasText, daySeoul, declineText, iGa, isLive, isTrade, shutKind, when, type VTrade } from "@/components/vendors/text";
+import { areasText, declineText, iGa, isLive, isTrade, shutKind, when, type VTrade } from "@/components/vendors/text";
 import { getMyProject } from "@/lib/api/project";
 import { listDeals } from "@/lib/api/schedule";
 import { getProjectVendor, listProjectVisits } from "@/lib/api/visit";
@@ -37,7 +37,6 @@ export default async function VendorDetailPage({ params, searchParams }: { param
   const listHref = `/projects/${id}/vendors?trade=${trade}`;
   const mine = visits?.visits.find((v) => v.vendor_id === vid) ?? null; // 최근 순이라 첫 것이 가장 최근
   const live = mine && isLive(mine.status) ? mine : null;
-  const text = visits?.request_texts.find((t) => t.trade === trade)?.text;
   const slotsLeft = visits?.slots_left[trade] ?? 0;
   const again = !!mine && shutKind(mine, !!deal) === "past";
 
@@ -62,7 +61,7 @@ export default async function VendorDetailPage({ params, searchParams }: { param
         <section className={s.cc} aria-labelledby="ct-t">
           <h2 id="ct-t" className="mj-h3">실측 · 연락</h2>
           {live ? (
-            <ContactCard v={live} projectId={id} trade={trade} requestText={text} allHref={`/projects/${id}/visits?trade=${trade}`} />
+            <ContactCard v={live} projectId={id} trade={trade} allHref={`/projects/${id}/visits?trade=${trade}`} />
           ) : (
             <>
               {mine ? (
@@ -87,13 +86,13 @@ export default async function VendorDetailPage({ params, searchParams }: { param
       <div className="mj-wrap">
         <section className={`mj-sec ${s.sec}`} aria-labelledby="qt-t">
           <div className="mj-sec-l"><h2 id="qt-t" className="mj-h2">가견적</h2></div>
-          <div className="mj-sec-c"><Estimate d={d} name={name} big /></div>
+          <div className="mj-sec-c"><Estimate d={d} big /></div>
         </section>
 
         <section className={`mj-sec ${s.sec}`} aria-labelledby="pt-t">
           <div className="mj-sec-l">
             <h2 id="pt-t" className="mj-h2">시공 사례</h2>
-            {pr.portfolio.length ? <p className="mj-small">사진 {pr.portfolio.length}장 · 사진의 위치 정보는 지웠어요.</p> : null}
+            {pr.portfolio.length ? <p className="mj-small">사진 {pr.portfolio.length}장</p> : null}
           </div>
           <div className="mj-sec-c"><Photos d={d} projectId={id} /></div>
         </section>
@@ -115,7 +114,7 @@ export default async function VendorDetailPage({ params, searchParams }: { param
             )}
             <Link className={s.gbtn} href={listHref}>업체 고르기로</Link>
           </div>
-          <p className="mj-small mj-num">{pr.updated_at ? `업체 정보 최종 수정 ${daySeoul(pr.updated_at)} · ` : ""}믿집은 공사 계약 당사자가 아니에요. 계약은 업체와 직접 해요.</p>
+          <p className="mj-small mj-num">믿집은 공사 계약 당사자가 아니에요. 계약은 업체와 직접 해요.</p>
         </div>
       </div>
     </main>

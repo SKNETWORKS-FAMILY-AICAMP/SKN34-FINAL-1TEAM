@@ -48,18 +48,11 @@
 .form { display: flex; flex-direction: column; gap: 16px; }
 .basket { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-strong); }
 .basket li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
-.basketEmpty { padding-top: 12px; border-top: 1px solid var(--line-strong); }
 .bName { min-width: 0; }
 .strong { font-weight: 700; }
 .rmv { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-right: -10px; border: 0; border-radius: var(--radius); background: transparent; color: var(--ink-sub); cursor: pointer; }
 .rmv:hover { background: var(--surface); color: var(--ink); }
 .share { font-size: var(--fs-sm); font-weight: 500; }
-.dtl { border-top: 1px solid var(--line); }
-.dtl summary { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--accent-ink); font-weight: 700; cursor: pointer; list-style: none; }
-.dtl summary::-webkit-details-marker { display: none; }
-.chev { flex: none; }
-.dtl[open] .chev { transform: rotate(90deg); }
-.dtlBody { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 8px; font-size: var(--fs-sm); }
 
 .sent { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: var(--radius); background: var(--surface); }
 .sent:focus { outline: none; }

@@ -8,8 +8,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { CONTACT_LABEL, tradeLabel } from "@/lib/labels";
-import { dotDate, won } from "@/lib/format";
-import { Check, Chev, Close, Picked, Plus, VisitState } from "./icons";
+import { won } from "@/lib/format";
+import { Check, Close, Picked, Plus, VisitState } from "./icons";
 import { PICK_EVENT, markFromList, readPick, writePick } from "./pick";
 import { RequestDialog } from "./RequestDialog";
 import { FAILED_TEXT, areasText, asMethod, declineText, feeText, isLive, shutKind, vsText, when, type Created, type VendorRow, type VTrade } from "./text";
@@ -34,7 +34,7 @@ type Sent = { ok: string[]; failed: { name: string; code: string }[] };
 
 function Estimate({ v }: { v: VendorRow }) {
   if (v.estimate_total == null) {
-    return <><p className={s.none}>가견적 없음</p><p className="mj-small">실측 뒤 금액</p></>;
+    return <p className={s.none}>가견적 없음</p>;
   }
   const vs = vsText(v.vs_standard, v.vs_direction);
   return (
@@ -109,7 +109,9 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
 
   const roomText = slotsLeft <= 0
     ? "이미 3곳에 요청했어요. 요청을 취소하거나 업체가 못 받으면 칸이 비어요."
-    : room === 0 ? "3곳까지 담았어요. 하나를 빼면 담을 수 있어요." : `${room}곳 더 담을 수 있어요 (3곳까지)`;
+    : room === 0 ? "3곳까지 담았어요. 하나를 빼면 담을 수 있어요."
+    : !picked.length ? (room >= 3 ? "업체를 담아 주세요 (3곳까지)" : `업체를 담아 주세요 (${room}곳 더 담을 수 있어요)`)
+    : `${room}곳 더 담을 수 있어요 (3곳까지)`;
   const backTo = `${base}/vendors?trade=${trade}`;
 
   return (
@@ -143,7 +145,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                     <p className="mj-small">{[...v.trades.map(tradeLabel), areasText(v.areas, areaName)].join(" · ")}</p>
                   </div>
                   <ul className={`${s.c2} ${s.facts}`} aria-label="믿집 확인">
-                    <li><span className={s.okIcon}><Check /></span><span>사업자 확인함{v.verified_on ? <> <span className="mj-small mj-num">{dotDate(v.verified_on)}</span></> : null}</span></li>
+                    <li><span className={s.okIcon}><Check /></span><span>사업자 확인함</span></li>
                   </ul>
                   <div className={s.c3}>
                     <p className={s.mlab}>실측 · 연락</p>
@@ -205,7 +207,7 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
         ) : null}
 
         <form className={s.form} onSubmit={(e) => { e.preventDefault(); if (picked.length) setOpen(true); }} noValidate>
-          <h2 id="pk-t" className="mj-h3">{tName} 실측 요청할 업체 <span className="mj-num">{picked.length}<span className="mj-sr">곳</span></span></h2>
+          <h2 id="pk-t" className="mj-h3">{tName} 실측 요청할 업체{picked.length ? <> <span className="mj-num">{picked.length}<span className="mj-sr">곳</span></span></> : null}</h2>
           {picked.length ? (
             <ul role="list" className={s.basket}>
               {picked.map((id) => {
@@ -215,14 +217,14 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
                   <li key={id}>
                     <div className={s.bName}>
                       <p className={s.strong}>{name}</p>
-                      <p className="mj-small mj-num">{v.estimate_total != null ? `가견적 ${won(v.estimate_total)}` : "가견적 없음 · 실측 뒤 금액"}</p>
+                      <p className="mj-small mj-num">{v.estimate_total != null ? `가견적 ${won(v.estimate_total)}` : "가견적 없음"}</p>
                     </div>
                     <button type="button" className={s.rmv} aria-label={`${name} 빼기`} onClick={() => toggle(id)}><Close /></button>
                   </li>
                 );
               })}
             </ul>
-          ) : <p className={`mj-small ${s.basketEmpty}`}>아직 담은 업체가 없어요. 업체 줄의 &lsquo;실측 요청에 담기&rsquo;를 눌러 주세요.</p>}
+          ) : null}
           <p id="pk-room" className="mj-hint">{roomText}</p>
           {live.length ? <p className="mj-small">이미 요청한 업체 {live.length}곳 · <Link className={`mj-lnk ${s.sm}`} href={`${base}/visits?trade=${trade}`}>연락하러 가기</Link></p> : null}
           <div className="mj-field">
@@ -232,14 +234,6 @@ export function VendorBoard({ head, projectId, trade, areaName, slotsLeft, conse
           </div>
           <p id="pk-share" className={s.share}>요청하면 업체 연락처가 보여요.</p>
           <button type="submit" className="mj-btn mj-btn-pri" aria-haspopup="dialog" aria-describedby="pk-share" disabled={!picked.length}>실측 요청 보내기</button>
-          <details className={s.dtl}>
-            <summary><Chev className={s.chev} />가견적은 어떻게 계산해요?</summary>
-            <div className={s.dtlBody}>
-              <p>업체가 직접 넣고 확인한 단가만 써요. 이 집 수량(표준견적서와 같아요)에 업체 단가를 곱하고 부가세를 더해요. 실측 뒤 금액인 줄은 빠져 있어요.</p>
-              <p>업체 이름을 누르면 줄마다 어떻게 계산했는지 볼 수 있어요.</p>
-              <p className="mj-sub">단가를 확인하지 않은 업체는 &lsquo;가견적 없음&rsquo;이에요.</p>
-            </div>
-          </details>
         </form>
       </aside>}
 
