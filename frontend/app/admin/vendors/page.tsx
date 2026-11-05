@@ -3,7 +3,7 @@ import { getReviewSummary, getVendorApplication, listVendorApplications, type Re
 import { DocViewer } from "@/components/admin/DocViewer";
 import { SavedNote } from "@/components/admin/SavedNote";
 import { StatusMark, VendorReview } from "@/components/admin/VendorReview";
-import { eulReul, md, stampSeoul, todaySeoul } from "@/lib/format";
+import { eulReul, stampSeoul } from "@/lib/format";
 import { changedText, tradeLabel } from "@/lib/labels";
 import s from "./page.module.css";
 
@@ -56,7 +56,6 @@ export default async function AdminVendors({ searchParams }: { searchParams: Pro
     <main id="main" className="mj-wrap" style={{ maxWidth: 1440 }}>
       <div className={s.head}>
         <h1 className="mj-h1">업체 심사</h1>
-        <p className="mj-small mj-num">오늘 {md(todaySeoul())} · 기다림 {n.pending}곳 · 보완 요청 {n.needs_info}곳</p>
       </div>
       {saved && saved.status !== "pending" ? <SavedNote className={`mj-st mj-st-ok ${s.saved}`} text={savedText(saved, savedNext)} /> : null}
 

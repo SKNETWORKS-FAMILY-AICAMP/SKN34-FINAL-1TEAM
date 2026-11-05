@@ -8,6 +8,8 @@ export type NavItem = { id: string; href: string; label: string };
 // '시공 상담'(챗)은 보류라 넣지 않는다.
 // '업체 찾기'는 지금 숨겨 둔다(내 공사와 같은 화면으로 가서 헷갈림). 업체는 내 공사에서 공사를 고른 뒤 고른다.
 // 다시 보이려면 customer에 { id: "find", href: "/my", label: "업체 찾기" }를 '내 공사' 뒤에 넣는다(isCurrent의 "find"는 그대로 둠).
+// 관리자 '회원관리'는 아직 예시 회원(lib/mock)만 보여서 숨겨 둔다. 주소(/admin/members)로는 열린다.
+// 다시 보이려면 admin에 { id: "members", href: "/admin/members", label: "회원관리" }를 '업체 심사' 뒤에 넣는다.
 export const NAV: Record<HeaderKind, NavItem[]> = {
   guest: [
     { id: "start", href: "/start", label: "견적 받기" },
@@ -24,7 +26,6 @@ export const NAV: Record<HeaderKind, NavItem[]> = {
   ],
   admin: [
     { id: "review", href: "/admin/vendors", label: "업체 심사" },
-    { id: "members", href: "/admin/members", label: "회원관리" },
   ],
 };
 

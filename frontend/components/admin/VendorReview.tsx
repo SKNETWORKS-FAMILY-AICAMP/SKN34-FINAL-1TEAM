@@ -228,7 +228,7 @@ export function VendorReview({ v, viewer, nextHref }: { v: Detail; viewer: React
             <tr>
               <th scope="row">개업일</th><td className="mj-small">신청서에 없어요</td>
               <td>{cell("opened_on", "개업일", { num: true, describedBy: errors.opened ? "rd-open-h rd-open-e" : "rd-open-h" })}<span id="rd-open-h" className={`mj-small ${s.block}`}>적으면 결정과 함께 저장해요 (선택)</span>{errors.opened ? <FieldError id="rd-open-e">{errors.opened}</FieldError> : null}</td>
-              <td><span className="mj-st mj-st-off"><Mark k="off" />비교 안 함</span></td>
+              <td />
             </tr>
             <tr><th scope="row">업태 · 종목</th><td>공정 {tradesText(v.trades)}{wasTrades}</td><td>{cell("kind", "업태 · 종목")}</td><td><span className="mj-st mj-st-wait"><Mark k="ask" />확인 못 함</span><span className={`mj-small ${s.block}`}>직접 판단해요</span></td></tr>
           </tbody>
@@ -315,17 +315,17 @@ export function VendorReview({ v, viewer, nextHref }: { v: Detail; viewer: React
 
         <div className="mj-field">
           <label htmlFor="rs-t" className="mj-label">사유{reasons.length ? " (필수)" : ""}</label>
-          <select id="rs-t" className="mj-select" disabled={!reasons.length} value={code} aria-invalid={errors.code ? true : undefined} aria-describedby={errors.code ? "rs-t-h rs-t-e" : "rs-t-h"} onChange={(e) => { setCode(e.target.value); clearErr("code"); clearErr("note"); }}>
+          <select id="rs-t" className="mj-select" disabled={!reasons.length} value={code} aria-invalid={errors.code ? true : undefined} aria-describedby={[decision === "needs_info" ? "rs-t-h" : "", errors.code ? "rs-t-e" : ""].filter(Boolean).join(" ") || undefined} onChange={(e) => { setCode(e.target.value); clearErr("code"); clearErr("note"); }}>
             {reasons.length ? reasons.map((r) => <option key={r.key} value={r.key}>{r.label}</option>) : <option value="">{decision === "approve" ? "승인일 때는 안 써요" : "결정을 고르면 골라요"}</option>}
           </select>
           {decision === "needs_info" ? (
             <p id="rs-t-h" className="mj-hint" role="status"><b className={s.ink}>업체에게 열릴 칸: {needsInfoOpenText(code)}</b></p>
-          ) : <p id="rs-t-h" className="mj-hint">보완 요청 · 거절을 고르면 골라요.</p>}
+          ) : null}
           {errors.code ? <FieldError id="rs-t-e">{errors.code}</FieldError> : null}
         </div>
 
         <div className="mj-field">
-          <label htmlFor="rs" className="mj-label">업체에 보낼 말 ({noteNeed ? "필수 · " : noteOn ? "선택 · " : ""}300자까지)</label>
+          <label htmlFor="rs" className="mj-label">업체에 보낼 말{noteNeed ? " (필수)" : noteOn ? " (선택)" : ""}</label>
           <textarea id="rs" className="mj-textarea" maxLength={NOTE_MAX} rows={3} disabled={!noteOn} value={noteOn ? note : ""} aria-invalid={errors.note ? true : undefined} aria-describedby={errors.note ? "rs-c rs-e" : "rs-c"} onChange={(e) => { setNote(e.target.value); clearErr("note"); }} />
           <p id="rs-c" className="mj-hint mj-num">{NOTE_MAX - (noteOn ? note.length : 0)}자 남았어요</p>
           {errors.note ? <FieldError id="rs-e">{errors.note}</FieldError> : null}
