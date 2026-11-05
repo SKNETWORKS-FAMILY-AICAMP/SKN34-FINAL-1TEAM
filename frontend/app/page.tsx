@@ -1,4 +1,4 @@
-// 첫 화면(시안 WHome · 정적). 견본 숫자는 시안의 계산 엔진 결과(상계동 32평 · 단가 2026 하반기)를 그대로 옮긴 것이다.
+// 첫 화면(시안 WHome · 정적). 견본 숫자는 시안의 계산 엔진 결과(상계동 32평 · 2026 하반기 단가)를 그대로 옮긴 것이다.
 // 02 구역은 표준견적서 줄이 합계에 들어가는지 · 실측 뒤 업체가 정하는지를 보여 준다.
 // 03 구역은 자주 묻는 질문 미리 보기다. 질문을 누르면 그 자리에서 답이 펼쳐진다(details).
 import Link from "next/link";
@@ -33,7 +33,7 @@ function PreviewAnswer({ it }: { it: Faq }) {
     <div className={s.an}>
       <p>{it.body.filter((b) => typeof b === "string").join("")}</p>
       {ref ? (
-        <p className="mj-small"><b className={s.ink}>근거 · {ref.src}</b> {ref.quote ? `“${ref.text}”` : ref.text}</p>
+        <p className="mj-small"><b className={s.ink}>근거 · {ref.short ?? ref.src}</b> {ref.plain ?? (ref.quote ? `“${ref.text}”` : ref.text)}</p>
       ) : it.ask ? (
         <p className="mj-small"><b className={s.ink}>업체에 물어볼 문장</b> “{it.ask}”</p>
       ) : null}
@@ -80,13 +80,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
             <figure className={`mj-paper ${s.doc}`} aria-labelledby="doc-t">
               <div className={s.docHead}>
                 <p id="doc-t" className={s.docTitle}>표준견적서</p>
-                <p className="mj-code">MJ-견본</p>
               </div>
               <dl className={s.meta}>
                 <div><dt>현장</dt><dd>노원구 상계동 아파트</dd></div>
                 <div><dt>면적</dt><dd className="mj-num">공급 105.8㎡ (32평)</dd></div>
                 <div><dt>공정</dt><dd>도배 기본형 · 목공</dd></div>
-                <div><dt>계산</dt><dd className="mj-num">2026.11.02 · 단가 2026 하반기</dd></div>
               </dl>
               <div className="mj-table-box" role="region" tabIndex={0} aria-label="도배 표준견적서 견본, 옆으로 넘겨 볼 수 있어요">
                 <table className={`mj-table mj-num ${s.tbl}`}>
@@ -97,12 +95,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
                     <tr><th scope="row">천장 도배 시공 (풀 포함)</th><td className="r">66.1㎡</td><td className="r">563,899</td></tr>
                     <tr><th scope="row">도배지 (실크)</th><td className="r">317.4㎡</td><td className="r">1,055,355</td></tr>
                     <tr><th scope="row">초배지</th><td className="r">291.0㎡</td><td className="r">70,422</td></tr>
-                    <tr><th scope="row">기존 벽지 철거</th><td className="r">264.5㎡</td><td className="r"><span className="mj-st mj-st-wait"><WaitIcon />실측 후</span><span className={`mj-small ${s.cellNote}`}>참고 456,792 · 합계 밖</span></td></tr>
+                    <tr><th scope="row">기존 벽지 철거</th><td className="r">264.5㎡</td><td className="r"><span className="mj-st mj-st-wait"><WaitIcon />실측 후</span><span className={`mj-small ${s.cellNote}`}>실측 뒤 정해요</span></td></tr>
                     <tr><th scope="row">폐기물 처리</th><td className="r"><Dash sr="수량은 실측 후" /></td><td className="r"><span className="mj-st mj-st-wait"><WaitIcon />실측 후</span><span className={`mj-small ${s.cellNote}`}>합계 밖</span></td></tr>
                   </tbody>
                   <tfoot>
-                    <tr className={s.supply}><th scope="row">공급가</th><td /><td className="r">2,878,687</td></tr>
-                    <tr className={s.withVat}><th scope="row">부가세 포함</th><td /><td className="r">3,166,556</td></tr>
+                    <tr className={s.withVat}><th scope="row">낼 금액</th><td /><td className="r">3,166,556</td></tr>
                   </tfoot>
                 </table>
               </div>
@@ -166,7 +163,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
             </div>
             <div className="mj-sec-c">
               <figure className={`mj-paper ${s.ex}`} aria-labelledby="ex-t">
-                <p id="ex-t" className={s.exHead}><span>표준견적서 · 도배</span><span className="mj-sub">견본 · 세 줄만</span></p>
+                <p id="ex-t" className={s.exHead}><span>표준견적서 예시</span></p>
                 <ul className={`${s.exList} mj-num`}>
                   <li>
                     <span className={s.exN}>벽 도배 시공 <span className="mj-small">198.4㎡</span></span>
@@ -204,8 +201,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
                   </details>
                 ))}
                 <Link className={s.fqMore} href="/faq">
-                  <span>질문 {faqCount}개 모두 보기</span>
-                  <span className={s.tg}>{faqCount > preview.length ? <span className="mj-small">{faqCount - preview.length}개 더 있어요</span> : null}<ChevRight /></span>
+                  <span>질문 모두 보기 <span className="mj-num">({faqCount}개)</span></span>
+                  <span className={s.tg}><ChevRight /></span>
                 </Link>
               </div>
             </div>

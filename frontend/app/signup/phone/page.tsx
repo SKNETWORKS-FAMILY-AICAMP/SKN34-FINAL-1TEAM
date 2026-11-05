@@ -24,9 +24,8 @@ export default async function PhonePage({ searchParams }: { searchParams: Promis
       <main id="main" className={`mj-wrap ${s.page}`}>
         <div className={s.single}>
           <div className={s.head}>
-            {session ? null : <p className="mj-small">카카오로 가입하는 중 · 마지막 단계예요</p>}
-            <h1 className="mj-h1">휴대폰 번호를 넣어 주세요</h1>
-            <p className="mj-sub">{returning ? "실측을 요청하려면 휴대폰 번호가 필요해요. 업체가 이 번호로 연락해요." : "실측을 요청하면 업체가 이 번호로 연락해요."}</p>
+            <h1 className="mj-h1">연락처를 넣어 주세요</h1>
+            {returning ? <p className="mj-sub">실측을 요청하려면 휴대폰 번호가 필요해요.</p> : null}
           </div>
           <PhoneForm role={session?.role ?? null} next={next} submitLabel={label} draftNote={!returning} />
         </div>

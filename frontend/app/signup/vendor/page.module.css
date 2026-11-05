@@ -1,11 +1,4 @@
-/* 업체 가입 신청 (시안 WVSignup) · 제목과 오른쪽 심사 안내 */
+/* 업체 가입 신청 (시안 WVSignup) · 제목 */
 .top { padding-block: 40px 28px; }
 .head { display: flex; flex-direction: column; gap: 8px; }
 .head p { max-width: 44em; }
-.aside { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 28px; padding-top: 24px; border-top: 2px solid var(--ink); }
-.box { display: flex; flex-direction: column; gap: 8px; }
-.ask { gap: 4px; padding-top: 20px; border-top: 1px solid var(--line); }
-.an { list-style: none; margin: 0; padding: 0; }
-.an li { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
-.an li > span:first-child { flex: none; width: 16px; padding-top: 2px; }
-.block { display: block; }

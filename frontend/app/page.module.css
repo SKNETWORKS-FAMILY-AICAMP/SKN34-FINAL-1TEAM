@@ -17,7 +17,6 @@
 .meta dt { flex: none; color: var(--ink-sub); }
 .meta dd { margin: 0; }
 .tbl .cellNote { display: block; }
-.tbl .supply th, .tbl .supply td { font-weight: 500; }
 .tbl .withVat th, .tbl .withVat td { border-top: 1px solid var(--line-soft); }
 @media (max-width: 480px) { .doc { padding: 20px 16px 16px; } }
 

@@ -22,7 +22,6 @@ export default async function FaqPage({ searchParams }: { searchParams: Promise<
           <div className={s.head}>
             <div className={s.title}>
               <h1 className="mj-h1">자주 묻는 질문</h1>
-              <p className="mj-sub">도배 · 목공 공사 전에 많이 묻는 것을 모았어요.</p>
             </div>
             <form role="search" aria-label="질문 찾기" action="/faq" className={s.search}>
               <label htmlFor="gq" className={s.label}>무엇이 궁금해요?</label>

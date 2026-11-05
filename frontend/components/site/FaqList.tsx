@@ -9,12 +9,6 @@ function Answer({ it, open }: { it: Faq; open: boolean }) {
   const refs = it.refs ?? [];
   return (
     <div id={`${it.id}-a`} className={s.ans} hidden={!open}>
-      {it.auto ? (
-        <>
-          <p className="mj-small"><b className={s.ink}>자동 답변 · {it.trade}</b> · {refs.length ? `시방서 근거 ${refs.length}개` : "시방서 근거 없음"}</p>
-          <p className="mj-small">답은 AI가 시방서와 믿집 계산으로 만들어요. 업체나 상담원이 아니에요.</p>
-        </>
-      ) : null}
       <p className={s.body}>
         {it.body.map((b, i) => typeof b === "number"
           ? <sup key={i}><a href={`#${it.id}-r${b}`} aria-label={`근거 ${b}, 시방서 내용 보기`}>[{b}]</a></sup>

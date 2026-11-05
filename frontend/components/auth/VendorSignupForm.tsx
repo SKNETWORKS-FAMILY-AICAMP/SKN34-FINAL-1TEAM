@@ -128,7 +128,7 @@ const STEP_TEXT = { done: "끝남", now: "지금", left: "남음" } as const;
 const STEP_CLS = { done: "mj-st-ok", now: "mj-st-now", left: "mj-st-off" } as const;
 const STEP_MARK = { done: "ok", now: "now", left: "off" } as const;
 
-export function VendorSignupForm({ regions, again, aside }: { regions: Region[]; again?: Again; aside: ReactNode }) {
+export function VendorSignupForm({ regions, again }: { regions: Region[]; again?: Again }) {
   const router = useRouter();
   const p = again?.prev;
   const [bizName, setBizName] = useState(p?.biz_name ?? "");
@@ -247,11 +247,11 @@ export function VendorSignupForm({ regions, again, aside }: { regions: Region[];
   });
   const err = (k: Key) => (errors[k] ? <FieldError id={`${FOCUS[k]}-e`}>{errors[k]}</FieldError> : null);
   const before = (now: string, old?: string) => (again && old !== undefined && now.trim() !== old ? <p className="mj-hint">지난 신청: {old}</p> : null);
-  const head = (no: number, t: string, st: keyof typeof STEP_TEXT) => (
+  // 단계(지금 · 남음)는 위 단계 줄에만 보인다
+  const head = (no: number, t: string) => (
     <div className={s.sh}>
       <span className="mj-code" aria-hidden="true">{no}</span>
       <h2 id={`v${no}-t`} className="mj-h2">{t}</h2>
-      <span className={`mj-st ${STEP_CLS[st]}`}><Mark k={STEP_MARK[st]} />{STEP_TEXT[st]}</span>
     </div>
   );
   const areaText = areas.map((a) => areaLabel(regions, a)).join(" · ");
@@ -282,7 +282,7 @@ export function VendorSignupForm({ regions, again, aside }: { regions: Region[];
           ) : null}
 
           <section id="v1" className={s.sec} aria-labelledby="v1-t">
-            {head(1, "기본 정보", steps[0].st)}
+            {head(1, "기본 정보")}
             <div className={s.fg}>
               <div className="mj-field">
                 <label className="mj-label" htmlFor="v-name">상호 (필수)</label>
@@ -337,7 +337,7 @@ export function VendorSignupForm({ regions, again, aside }: { regions: Region[];
           </section>
 
           <section id="v2" className={s.sec} aria-labelledby="v2-t">
-            {head(2, "사업자 확인", steps[1].st)}
+            {head(2, "사업자 확인")}
             <div className={`mj-field ${s.narrow}`}>
               <label className="mj-label" htmlFor="v-biz">사업자등록번호{again ? "" : " (필수)"}</label>
               {again ? (
@@ -428,7 +428,7 @@ export function VendorSignupForm({ regions, again, aside }: { regions: Region[];
           </section>
 
           <section id="v3" className={s.sec} aria-labelledby="v3-t">
-            {head(3, "신청 확인", steps[2].st)}
+            {head(3, "신청 확인")}
             <dl className={s.sum}>
               <div><dt>상호 · 대표</dt><dd>{[bizName.trim(), owner.trim()].filter(Boolean).join(" · ") || "아직 안 적었어요"}</dd></div>
               <div><dt>사업자등록번호</dt><dd className="mj-num">{(again ? bizNoText(p?.biz_no) : bizNo) || "아직 안 적었어요"}</dd></div>
@@ -471,7 +471,6 @@ export function VendorSignupForm({ regions, again, aside }: { regions: Region[];
             {errors.form ? <div id="v-form-e" tabIndex={-1}><FieldError id="v-form-e-t" alert>{errors.form}</FieldError></div> : null}
           </section>
         </form>
-        {aside}
       </div>
     </>
   );

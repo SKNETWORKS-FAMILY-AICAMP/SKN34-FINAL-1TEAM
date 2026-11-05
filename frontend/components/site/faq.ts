@@ -2,13 +2,14 @@
 // 시안에 답이 없는 질문은 그럴듯한 답을 짓지 않고 '시방서 근거 없음' 모양으로 둔다.
 // 첫 화면(/)의 질문 미리 보기와 /faq가 함께 쓴다.
 
-export type FaqRef = { src: string; text: string; quote?: boolean };
+/** short · plain: 첫 화면 미리 보기에서 기준서 번호 · 원문 대신 보이는 이름과 쉬운 말 */
+export type FaqRef = { src: string; text: string; quote?: boolean; short?: string; plain?: string };
 export type Faq = {
   id: string;
   q: string;
   /** 질문 옆 공정 표시 */
   tag: string;
-  /** 답의 공정('자동 답변 · 도배'처럼 밝힌다) */
+  /** 답의 공정 */
   trade: string;
   /** 시방서로 만든 자동 답변인지. 아니면 믿집 안내 글이다 */
   auto: boolean;
@@ -101,14 +102,14 @@ export const FAQ: FaqGroup[] = [
         trade: "도배",
         auto: true,
         body: ["도배는 바탕이 평평하고 충분히 마른 상태인지 점검한 뒤 시작해요.", 1, " 그래서 믿집 공정표도 목공을 먼저 끝내고 도배를 이어서 해요."],
-        refs: [{ src: "KCS 41 51 05 도배공사 · 3.3 공법 (1) 바탕 점검 ①", text: "콘크리트 부재는 접합부에 틈새, 요철부, 휘어짐 등이 없이 평활하게 설치되어 있으며 충분히 건조되어야 한다.", quote: true }],
+        refs: [{ src: "KCS 41 51 05 도배공사 · 3.3 공법 (1) 바탕 점검 ①", text: "콘크리트 부재는 접합부에 틈새, 요철부, 휘어짐 등이 없이 평활하게 설치되어 있으며 충분히 건조되어야 한다.", quote: true, short: "도배 시방서", plain: "바탕이 평평하고 충분히 말라 있어야 해요." }],
       },
     ],
   },
 ];
 
 /** 첫 화면 미리 보기에 보이는 질문 */
-export const FAQ_PREVIEW = ["q-bulge", "q-condense", "q-molding", "q-grade"];
+export const FAQ_PREVIEW = ["q-bulge", "q-molding", "q-grade"];
 
 export function findFaq(id: string): Faq | undefined {
   for (const g of FAQ) for (const it of g.items) if (it.id === id) return it;

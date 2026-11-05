@@ -1,11 +1,12 @@
 /* 업체 가입 신청 (시안 WVSignup) */
-.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 880px; }
 .steps a { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 52px; padding-top: 10px; border-top: 3px solid var(--line); color: var(--ink-sub); text-decoration: none; }
 .steps .done a { border-top-color: var(--ink); color: var(--ink); }
 .steps a[aria-current="step"] { border-top-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 
 .cols { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 40px 64px; padding-block: 28px 64px; }
-.form { flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; }
+/* 옆 심사 안내 칸을 뺐으므로 넓은 화면에서 칸이 너무 넓어지지 않게 한다 */
+.form { flex: 1 1 600px; max-width: 880px; min-width: 0; display: flex; flex-direction: column; }
 .againNote { display: flex; flex-direction: column; gap: 8px; padding-bottom: 24px; }
 .againNote > p:first-child { font-size: var(--fs-md); }
 .sec { display: flex; flex-direction: column; gap: 22px; padding-block: 28px 44px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }

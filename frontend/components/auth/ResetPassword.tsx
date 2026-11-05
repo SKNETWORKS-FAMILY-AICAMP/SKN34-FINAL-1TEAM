@@ -55,10 +55,8 @@ export function ResetPassword({ fromMail }: { fromMail: boolean }) {
     <div className={s.single}>
       <div className={s.head}>
         <h1 ref={h1} tabIndex={-1} className="mj-h1">{TITLE[step]}</h1>
-        {step === "find" ? <p className="mj-sub">가입한 이메일로 비밀번호를 다시 정하는 링크를 보내요.</p> : null}
         {step === "new" ? <p className="mj-sub">{email ? <>가입한 이메일 <span className="mj-num">{email}</span>의 비밀번호를 바꿔요.</> : "가입한 이메일의 비밀번호를 바꿔요."}</p> : null}
       </div>
-      <p className={`mj-notice ${s.notice}`}>비밀번호 찾기는 준비 중이에요. 지금은 메일이 가지 않고 화면만 볼 수 있어요.</p>
 
       {step === "find" ? (
         <form className={s.form} onSubmit={onFind} noValidate aria-label="비밀번호 재설정 링크 받기">

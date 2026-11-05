@@ -80,7 +80,7 @@ export default function LegalPage() {
             <section id="terms" className={s.doc} aria-labelledby="terms-t">
               <div className={s.dh}>
                 <h2 id="terms-t">이용약관</h2>
-                <p className={s.meta}><span className="mj-code">버전 1.0 · 시행일 [시행일]</span><a className="mj-lnk" href="#terms-history">이전 버전 보기</a></p>
+                <p className={s.meta}><span className="mj-code">버전 1.0 · 시행일 [시행일]</span></p>
               </div>
 
               <h3 id="terms-customer" className="mj-h3">고객 이용약관</h3>
@@ -105,7 +105,7 @@ export default function LegalPage() {
             <section id="privacy" className={s.doc} aria-labelledby="privacy-t">
               <div className={s.dh}>
                 <h2 id="privacy-t">개인정보처리방침</h2>
-                <p className={s.meta}><span className="mj-code">버전 1.0 · 시행일 [시행일]</span><a className="mj-lnk" href="#pv-10">이전 버전 보기</a></p>
+                <p className={s.meta}><span className="mj-code">버전 1.0 · 시행일 [시행일]</span></p>
               </div>
               <nav aria-label="개인정보처리방침 항목">
                 <ol className={s.pvt}>
