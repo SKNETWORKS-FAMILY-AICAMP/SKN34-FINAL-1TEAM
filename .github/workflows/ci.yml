@@ -25,7 +25,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # main 배포가 시작된 실행은 새 push로 중단하지 않는다.
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
 jobs:
   repository-checks:
@@ -39,6 +40,8 @@ jobs:
         run: |
           python3 -m compileall -q .github/scripts
           python3 .github/scripts/check_repo.py
+          python3 .github/scripts/development_flow.py pr
+          python3 -m unittest discover -s .github/scripts/tests -v
 
   backend:
     name: Backend
@@ -164,3 +167,15 @@ jobs:
       - name: 테스트 컨테이너 정리
         if: always()
         run: docker rm --force ci-web 2>/dev/null || true
+
+  deploy:
+    name: Deploy main
+    needs: [repository-checks, backend, frontend, containers]
+    if: >-
+      github.repository == 'SKNETWORKS-FAMILY-AICAMP/SKN34-FINAL-1TEAM' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/deploy-staging.yml
