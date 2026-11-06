@@ -13,6 +13,8 @@ on:
       - dev
       - integration
   pull_request:
+    # base 변경 후 경로 정책과 새 비교 대상도 다시 검사한다.
+    types: [opened, synchronize, reopened, edited]
     branches:
       - main
       - dev
@@ -24,9 +26,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # main 배포가 시작된 실행은 새 push로 중단하지 않는다.
-  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+  # 수동 CI가 자동 CI의 실행·대기 항목을 취소하거나 대체하지 않게 분리한다.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   repository-checks:
