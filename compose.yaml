@@ -7,7 +7,15 @@ x-api-env: &api-env
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mitjip}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD를 .env에 넣어 주세요}@db:5432/${POSTGRES_DB:-mitjip}
   REDIS_URL: redis://redis:6379/0
   LLM_LIVE: ${LLM_LIVE:-false}
+  # 시연 업체 자동 응답 (worker만 쓴다)
+  DEMO_AUTO: ${DEMO_AUTO:-false}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+  OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-6.1-terra}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-low}
+  # 입구 분류 Jev
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  JEV_ENABLED: ${JEV_ENABLED:-true}
   # 로그인 쿠키로 상태를 바꾸는 요청을 받아 줄 화면 주소 (쉼표로 구분)
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3100}
   # 올린 사진 · 도면 · 사업자등록증을 두는 곳 (files-data 볼륨)
@@ -15,7 +23,9 @@ x-api-env: &api-env
 
 services:
   db:
-    image: postgres:17-alpine
+    image: skn34-final/db:pgvector-0.8.7
+    build:
+      context: ./deploy/postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mitjip}
       POSTGRES_USER: ${POSTGRES_USER:-mitjip}
@@ -82,6 +92,9 @@ services:
       target: prod
     command: ["arq", "app.worker.WorkerSettings"]
     environment: *api-env
+    # 시연 자동 응답이 올리는 견적서 파일을 api와 같은 곳에 둔다
+    volumes:
+      - files-data:/data/files
     depends_on:
       redis:
         condition: service_healthy

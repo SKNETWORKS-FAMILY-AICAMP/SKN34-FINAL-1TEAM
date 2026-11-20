@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
     api_root_path: str = ""
     # false면 LLM을 부르지 않고 스텁 응답을 쓴다 (유료 호출 0회)
     llm_live: bool = False
+    # 수동 임베딩 CLI와 에이전트 LLM(agent/llm.py)이 쓴다. 키는 repr·오류에 표시하지 않는다.
+    openai_api_key: SecretStr = SecretStr("")
+    openai_embedding_model: str = "text-embedding-3-small"
     # 상태를 바꾸는 요청(POST 등)에서 허용할 브라우저 Origin, 쉼표로 구분
     allowed_origins: str = "http://localhost:3000,http://localhost:3100"
     # 로그인 세션 유지 기간(일)
@@ -21,6 +25,24 @@ class Settings(BaseSettings):
     files_dir: str = "./data/files"
     # 스테이징/운영에서만 사용. 비어 있으면 기존 로컬 디스크 저장소 유지
     files_s3_bucket: str = ""
+    # true면 worker가 시연 업체(app/demo.py) 일을 몇 초마다 대신 한다. 운영에서는 켜도 돌지 않는다
+    demo_auto: bool = False
+    # 에이전트 LLM. agent/llm.py만 읽는다
+    openai_agent_model: str = "gpt-6.1-terra"
+    openai_reasoning_effort: str = "low"
+    # 짧은 구조화 출력(공정 에이전트 등)에 쓰는 작은 모델. 비우면 openai_agent_model을 쓴다
+    openai_light_model: str = "gpt-6-luna"
+    openai_light_effort: str = "none"
+    openai_light_roles: str = "trade"  # 작은 모델을 쓸 역할 (쉼표로)
+    # 입구 관문. 학습 모델 신뢰도가 이보다 낮으면 Jev에 한 번 묻는다 (#70에서 0.7로 정함)
+    intent_confidence_threshold: float = 0.7
+    # Jev는 입구 분류에만 쓴다. 키는 repr·오류에 표시하지 않는다
+    openrouter_api_key: SecretStr = SecretStr("")
+    jev_model: str = "typesafe/jev-1.14"
+    # false면 Jev를 부르지 않고 학습 모델 라벨을 그대로 쓴다 (Jev 효과 비교 테스트용)
+    jev_enabled: bool = True
+    # v3 실시간 줄기 키 앞말. 비우면 mj:{app_env} (테스트 · 묶음끼리 섞이지 않게 바꿀 수 있다)
+    realtime_prefix: str = ""
 
     @property
     def is_https(self) -> bool:
