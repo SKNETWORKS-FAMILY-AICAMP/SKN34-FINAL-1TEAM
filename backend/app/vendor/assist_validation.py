@@ -78,7 +78,9 @@ def _amount_mentions(evidence: str) -> set[int]:
             not unit
             and (
                 after.startswith(("-", "/", "."))
-                or re.match(r"\s*(?:일|명|인|월|년|개|주|시|분|%|㎡|평|대)", after)
+                or after.lstrip().startswith(
+                    ("일", "명", "인", "월", "년", "개", "주", "시", "분", "%", "㎡", "평", "대")
+                )
             )
         ):
             continue

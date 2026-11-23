@@ -56,6 +56,22 @@ def test_abbreviated_list_returns_only_named_days_with_november_base():
     }
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2027 년 \t12 월 \n2 일", [date(2027, 12, 2)]),
+        (
+            "12 월 \t11 일, 12 일, 13 일",
+            [date(2026, 12, 11), date(2026, 12, 12), date(2026, 12, 13)],
+        ),
+    ],
+)
+def test_calendar_whitespace_keeps_values_and_source_spans(text, expected):
+    tokens = date_tokens(text, context())
+    assert [value for _, _, value in tokens] == expected
+    assert all(text[start:end].strip() for start, end, _ in tokens)
+
+
 def test_explicit_month_overrides_november_context_for_bare_range_endpoint():
     text = "12월7일부터9일까지"
     assert [(text[a:b], day.isoformat()) for a, b, day in date_tokens(text, context())] == [

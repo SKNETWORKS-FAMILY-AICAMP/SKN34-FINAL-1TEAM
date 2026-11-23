@@ -686,6 +686,13 @@ def test_clear_positive_and_negated_evidence():
     assert got["title"].status == "invalid"
 
 
+@pytest.mark.parametrize("suffix", [" 명", "\t일", "\n㎡"])
+def test_quantity_with_whitespace_unit_cannot_become_amount(suffix):
+    from app.vendor.assist_validation import _amount_mentions
+
+    assert _amount_mentions("견적 3" + suffix) == set()
+
+
 def test_rule_only_model_timeout_does_not_revive_previous_on_uncertain_input(monkeypatch):
     async def timeout(*args, **kwargs):
         raise TimeoutError("no provider response")
