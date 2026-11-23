@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     openai_light_model: str = "gpt-6-luna"
     openai_light_effort: str = "none"
     openai_light_roles: str = "trade"  # 작은 모델을 쓸 역할 (쉼표로)
+    # 업체 도우미의 구조화 출력은 기존 고객 상담 모델 설정과 별도로 조정한다
+    openai_vendor_assist_model: str = "gpt-6.1-terra"
+    openai_vendor_assist_effort: str = "medium"
+    # 실제 공급자 요금 확인 후 입력한다. 미설정이면 비용을 계산하지 않는다 (USD / 100만 토큰)
+    vendor_assist_input_cost_usd_per_million: float | None = None
+    vendor_assist_cached_input_cost_usd_per_million: float | None = None
+    vendor_assist_output_cost_usd_per_million: float | None = None
     # 입구 관문. 학습 모델 신뢰도가 이보다 낮으면 Jev에 한 번 묻는다 (#70에서 0.7로 정함)
     intent_confidence_threshold: float = 0.7
     # Jev는 입구 분류에만 쓴다. 키는 repr·오류에 표시하지 않는다

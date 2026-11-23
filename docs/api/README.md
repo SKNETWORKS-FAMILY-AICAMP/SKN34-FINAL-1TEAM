@@ -175,7 +175,7 @@ FastAPI 원본 경로입니다. 동일 URL에서 메서드가 다르면 별도 A
 | PUT | `/projects/{project_id}/checks/{key}` | 공사 전 준비 체크 상태 켜기·끄기 | 고객 | `project.set_check` |
 | GET | `/projects/{project_id}/standard` | 저장된 표준견적 버전 조회·필요 시 계산 | 본인/관리자 | `quote.standard` |
 
-## 업체 가입·심사·단가·프로필 (19개)
+## 업체 가입·심사·단가·프로필·도우미 (20개)
 
 코드: [업체 라우터](../../backend/app/vendor/router.py) · [업체 승인 의존성](../../backend/app/vendor/deps.py).
 
@@ -200,6 +200,15 @@ FastAPI 원본 경로입니다. 동일 URL에서 메서드가 다르면 별도 A
 | DELETE | `/vendor/price-files/{file_id}` | 단가 근거 파일 연결 해제(204) | 승인 업체 | `vendor.remove_price_file` |
 | GET | `/vendor/review-links` | 내 외부 리뷰 링크 최대 3개·검토 상태 | 승인 업체 | `vendor.review_links` |
 | PUT | `/vendor/review-links` | HTTPS 리뷰 링크 전체 저장(바뀐 링크는 검토 대기) | 승인 업체 | `vendor.save_review_links` |
+| POST | `/vendor/assist/interpret` | 본인 실측·공사 폼의 자연어를 변경 후보로 해석(저장 없음) | 승인 업체 | `vendor.assist_interpret` |
+
+### 업체 도우미 후보 계약 (#177·#178)
+
+기존 재재 채팅 전송으로 규칙 추출과 해석 요청을 실행한다. 입력 중에는 요청하지 않는다. `form`은 `period`, `quote`, `dates`, `extra`이고 `resource_id`는 앞의 두 화면에서 실측 ID, 뒤의 두 화면에서 확정 공사 ID다. 서버는 업체 승인·소유권·업무 조건을 다시 확인한다. 메시지는 1,000자, 전체 본문은 32 KiB로 제한하며 업체별 분당 20회·하루 200회를 센다. Redis 장애 때에도 프로세스 내 한도를 적용한다.
+
+요청에는 `request_id`, `text`, `current`, `previous_candidate`, `rule_fields`를 포함한다. 현재 값과 이전 후보도 허용 필드·타입·원문 근거를 검사한다. 응답은 필드별 `keep/set/clear/uncertain`, 값, 근거, 출처, 검증 상태와 충돌 대안을 담는다. `clear`는 명시적 삭제일 때만 허용한다. 모델 오류·시간초과·비활성 상태에서는 검증한 규칙 후보와 안내를 반환한다. 인증·권한·요청 제한 오류는 숨기지 않는다.
+
+해석 API는 업무 데이터를 저장하지 않는다. 화면의 ‘폼에 적용’에서 선택한 값만 반영하며, 그 이후 기존 자동 임시 저장은 동작할 수 있다. 견적·일정·추가 금액의 제출·확정은 기존 버튼을 사용한다. 화면은 취소·이전 요청·직접 수정한 값에 대한 오래된 응답을 차단한다. 정확한 타입은 [스키마](../../backend/app/vendor/assist_schemas.py)와 OpenAPI 생성물에 있다.
 
 ## 업체 고르기·실측 요청·견적서 파일 (37개)
 

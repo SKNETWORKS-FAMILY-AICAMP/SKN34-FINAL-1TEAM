@@ -11,9 +11,12 @@ from app.auth.deps import require_role, set_session_cookie
 from app.auth.models import User
 from app.auth.schemas import MeOut
 from app.db import get_session
+from app.shared import ratelimit
 from app.shared.clock import today_seoul
 from app.shared.ratelimit import client_ip
-from app.vendor import service
+from app.vendor import assist_service, service
+from app.vendor.assist_context import load_context
+from app.vendor.assist_schemas import AssistRequest, AssistResponse
 from app.vendor.deps import approved_vendor
 from app.vendor.schemas import (
     ApplicationOut,
@@ -40,6 +43,38 @@ from app.vendor.schemas import (
 router = APIRouter(tags=["업체"])
 admin_only = require_role("admin")
 vendor_only = require_role("vendor")
+
+
+@router.post(
+    "/vendor/assist/interpret",
+    response_model=AssistResponse,
+    summary="업체 도우미 입력 해석 · 승인 업체의 본인 업무, 저장하지 않음",
+)
+async def assist_interpret(
+    data: AssistRequest,
+    vendor: User = Depends(approved_vendor),
+    s: AsyncSession = Depends(get_session),
+) -> AssistResponse:
+    # 승인 상태와 업무 소유권을 확인한 뒤, 모델을 기다리기 전에 DB 거래를 닫는다.
+    await ratelimit.hit(
+        ratelimit.key("vendor_assist", "minute", str(vendor.id)),
+        20,
+        60,
+        ratelimit.TOO_MANY,
+        fallback="local",
+    )
+    await ratelimit.hit(
+        ratelimit.key("vendor_assist", "day", str(vendor.id)),
+        200,
+        86400,
+        ratelimit.TOO_MANY,
+        fallback="local",
+    )
+    try:
+        context = await load_context(s, vendor, data)
+    finally:
+        await s.rollback()
+    return await assist_service.interpret(data, context)
 
 
 @router.post(

@@ -177,6 +177,7 @@ jobs:
           git diff --exit-code -- lib/backend/schema.d.ts
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm test:unit
       - run: pnpm build
 
   containers:

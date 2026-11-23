@@ -1697,6 +1697,23 @@ export interface paths {
         patch: operations["case_rename_v2_cases__case_id__patch"];
         trace?: never;
     };
+    "/vendor/assist/interpret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 업체 도우미 입력 해석 · 승인 업체의 본인 업무, 저장하지 않음 */
+        post: operations["assist_interpret_vendor_assist_interpret_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/vendor-signup": {
         parameters: {
             query?: never;
@@ -2637,6 +2654,8 @@ export interface components {
              */
             ack: "ok" | "talk";
         };
+        /** @enum {string} */
+        Action: "keep" | "set" | "clear" | "uncertain";
         /** AdminActionOut */
         AdminActionOut: {
             /**
@@ -2780,6 +2799,18 @@ export interface components {
             context: components["schemas"]["AiContext"];
             button?: components["schemas"]["Button"] | null;
         };
+        /** Alternative */
+        Alternative: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "set" | "clear";
+            value: components["schemas"]["Value"];
+            /** Evidence */
+            evidence: string;
+            source: components["schemas"]["Source"];
+        };
         /**
          * AnswerIn
          * @description v3 추가 금액 답 (C37, D23): 승인 · 거절 · 채팅으로 묻기. 최신 판에만.
@@ -2841,6 +2872,41 @@ export interface components {
             sgg: string;
             /** Label */
             label: string;
+        };
+        /** AssistRequest */
+        AssistRequest: {
+            /** Request Id */
+            request_id: string;
+            form: components["schemas"]["FormName"];
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            /** Text */
+            text: string;
+            /** Current */
+            current: {
+                [key: string]: components["schemas"]["Value"];
+            };
+            previous_candidate: components["schemas"]["PreviousCandidate"] | null;
+            /** Rule Fields */
+            rule_fields: components["schemas"]["FieldIntent"][];
+        };
+        /** AssistResponse */
+        AssistResponse: {
+            /** Request Id */
+            request_id: string;
+            form: components["schemas"]["FormName"];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "rule" | "llm";
+            /** Fields */
+            fields: components["schemas"]["CandidateField"][];
+            /** Warnings */
+            warnings: string[];
         };
         /**
          * BoardRowOut
@@ -3012,6 +3078,19 @@ export interface components {
             code: "changed" | "other_vendor" | "late_quote" | "other";
             /** Note */
             note?: string | null;
+        };
+        /** CandidateField */
+        CandidateField: {
+            /** Field */
+            field: string;
+            action: components["schemas"]["Action"];
+            value: components["schemas"]["Value"];
+            /** Evidence */
+            evidence: string;
+            source: components["schemas"]["Source"];
+            status: components["schemas"]["Status"];
+            /** Alternatives */
+            alternatives: components["schemas"]["Alternative"][];
         };
         /**
          * ChangeOut
@@ -4009,6 +4088,15 @@ export interface components {
             /** Answer */
             answer: string;
         };
+        /** FieldIntent */
+        FieldIntent: {
+            /** Field */
+            field: string;
+            action: components["schemas"]["Action"];
+            value: components["schemas"]["Value"];
+            /** Evidence */
+            evidence: string;
+        };
         /** FileOut */
         FileOut: {
             /**
@@ -4046,6 +4134,8 @@ export interface components {
              */
             end_by: string | null;
         };
+        /** @enum {string} */
+        FormName: "period" | "quote" | "dates" | "extra";
         /**
          * GuestLineOut
          * @description 표준견적서 줄 (계산 엔진). 합계에는 included · separate만 들어간다.
@@ -5546,6 +5636,15 @@ export interface components {
              */
             short: boolean;
             fit: components["schemas"]["FitOut"];
+        };
+        /** PreviousCandidate */
+        PreviousCandidate: {
+            /** Request Id */
+            request_id: string;
+            /** Text */
+            text: string;
+            /** Fields */
+            fields: components["schemas"]["FieldIntent"][];
         };
         /**
          * PriceFileIn
@@ -7308,6 +7407,8 @@ export interface components {
             /** Slots */
             slots: components["schemas"]["SlotIn"][];
         };
+        /** @enum {string} */
+        Source: "rule" | "llm";
         /** SpaceIn */
         SpaceIn: {
             /**
@@ -7496,6 +7597,8 @@ export interface components {
              */
             label: string;
         };
+        /** @enum {string} */
+        Status: "valid" | "conflict" | "invalid" | "uncertain";
         /** StepNeedOut */
         StepNeedOut: {
             /** Name */
@@ -10122,6 +10225,7 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        Value: string | number | string[] | null;
         /** VendorAdminDetailOut */
         VendorAdminDetailOut: {
             /**
@@ -15016,6 +15120,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2CaseItemOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assist_interpret_vendor_assist_interpret_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistResponse"];
                 };
             };
             /** @description Validation Error */
