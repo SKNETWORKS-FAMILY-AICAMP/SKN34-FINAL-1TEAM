@@ -124,3 +124,7 @@ python evaluation/vendor_assist/run.py --mode hybrid --split dev --live --allow-
 
 각 문장·조건당1회 생성한 진단이며, 정답은 AI 초안 및 LLM-as-a-Judge 검토 자료다. 사람 승인 상태를 바꾸지 않았고 held-out은 열람·실행하지 않았다. 평가 중 제품 코드와 프롬프트를 고쳐 점수를 맞추지 않았다. Draft를 유지하고 회귀 수정 뒤 같은 조건으로 재평가한다.
 <!-- paired-dev-20261124:end -->
+
+## 네 폼 자동 시나리오
+
+[편집 동작으로 기대 폼 상태를 계산하는 검사](scenarios/README.md)는 각 턴의 미리보기와 마지막 적용 시 잘못 바뀐 필드·필요한 변경 누락을 따로 집계한다.

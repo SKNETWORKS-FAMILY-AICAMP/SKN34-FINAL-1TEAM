@@ -180,7 +180,7 @@ jobs:
       - run: pnpm test:unit
       - name: 업체 도우미 평가 코드 검사 (유료 호출 없음)
         working-directory: .
-        run: uv run --project backend python -m pytest evaluation/tests/test_vendor_assist_eval.py evaluation/tests/test_vendor_assist_quality_eval.py -q
+        run: uv run --project backend python -m pytest evaluation/tests/test_vendor_assist_eval.py evaluation/tests/test_vendor_assist_quality_eval.py evaluation/tests/test_vendor_assist_scenarios.py -q
       - run: pnpm build
 
   containers:
