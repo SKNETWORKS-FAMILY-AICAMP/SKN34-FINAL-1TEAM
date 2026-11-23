@@ -2,5 +2,6 @@
 export type QuoteSnapshot = { amount: string; vat: string | null };
 
 export function shouldAutosaveQuote(previous: QuoteSnapshot, latest: QuoteSnapshot): boolean {
-  return (previous.amount !== latest.amount || previous.vat !== latest.vat) && !!latest.amount && !!latest.vat;
+  return (previous.amount !== latest.amount || previous.vat !== latest.vat) &&
+    !!latest.amount && !!latest.vat && Number(latest.amount) <= 1_000_000_000;
 }

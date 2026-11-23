@@ -32,6 +32,9 @@ type Vat = "included" | "excluded" | "exempt";
 const DOC_OK = /\.(pdf|xlsx?|csv|jpe?g|png|heic|webp)$/i;
 const WARRANTY = [{ value: "6", label: "6개월" }, { value: "12", label: "1년" }, { value: "24", label: "2년" }];
 const digits = (v: string) => v.replace(/\D/g, "").slice(0, 10);
+const AMOUNT_MAX = 1_000_000_000;
+const amountDigits = (v: string) => v.replace(/\D/g, "").slice(0, 11);
+const OVER = "10억 원까지 넣을 수 있어요.";
 const money = (v: string) => (v ? Number(v).toLocaleString("ko-KR") : "");
 
 export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQuoteBoard; now: string }) {
@@ -116,6 +119,7 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
     const e: Record<string, string> = {};
     if (!files.length) e.files = "견적서 파일을 올려 주세요.";
     if (!amount || Number(amount) <= 0) e.amount = "견적 금액을 원 단위로 넣어 주세요.";
+    else if (Number(amount) > AMOUNT_MAX) e.amount = OVER;
     if (!vat) e.vat = "부가세를 어떻게 적었는지 골라 주세요.";
     if (!days || Number(days) < 1 || Number(days) > board.days_max) e.days = `공사 기간을 1~${board.days_max}일로 넣어 주세요.`;
     if (!valid) e.valid = "유효기간을 골라 주세요.";
@@ -183,7 +187,7 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
             setErr({});
           }} />
         <Group>
-          <Field ref={amountRef} label={simplified ? "받을 금액" : "견적 금액"} unit="원" num inputMode="numeric" value={money(amount)} error={err.amount} onChange={(e) => { setAmount(digits(e.target.value)); setErr((x) => ({ ...x, amount: undefined })); }} />
+          <Field ref={amountRef} label={simplified ? "받을 금액" : "견적 금액"} unit="원" num inputMode="numeric" value={money(amount)} error={err.amount} onChange={(e) => { const n = amountDigits(e.target.value); setAmount(n); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
           {fixedVat ? (
             <Small>{simplified ? "간이과세라 부가세를 따로 붙이지 않아요. 적은 금액이 고객이 보는 금액이에요." : `부가세 ${VAT_MODE_LABEL[fixedVat]}`}</Small>
           ) : (

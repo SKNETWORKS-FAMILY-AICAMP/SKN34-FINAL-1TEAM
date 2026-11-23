@@ -52,6 +52,25 @@ const writes = (requests: RecordedRequest[]) =>
   requests.filter((entry) => entry.method === "PUT" || entry.method === "PATCH" ||
     (entry.method === "POST" && entry.path !== ASSIST_PATH));
 
+for (const form of ["quote", "extra"] as const) {
+  test(`${form}: #176 수정의 10억 원 한도와 금액 절삭 방지를 유지한다`, async ({ page, request }) => {
+    await open(page, form === "quote" ? `/vendor/requests/${VISITED}/quote` : `/vendor/jobs/${WORKING}?step=extra`);
+    const amount = page.getByLabel(form === "quote" ? "견적 금액" : "금액", { exact: true });
+    await amount.fill("10000000000");
+    await expect(amount).toHaveValue("10,000,000,000");
+    await expect(page.getByText("10억 원까지 넣을 수 있어요.", { exact: true })).toBeVisible();
+    await page.waitForTimeout(950);
+    expect(writes(await recorded(request))).toHaveLength(0);
+    await amount.fill("1000000000");
+    await expect(amount).toHaveValue("1,000,000,000");
+    await expect(page.getByText("10억 원까지 넣을 수 있어요.", { exact: true })).toHaveCount(0);
+    if (form === "quote") {
+      await expect.poll(async () => writes(await recorded(request)).length).toBe(1);
+      expect(writes(await recorded(request))[0].body?.entered_amount).toBe(1_000_000_000);
+    }
+  });
+}
+
 async function open(page: Page, route: string): Promise<ReturnType<Page["locator"]>> {
   await page.goto(route);
   const assistant = page.locator('section[aria-label="업체 도우미"]');

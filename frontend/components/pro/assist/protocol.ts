@@ -79,7 +79,7 @@ export function validSetValue(form: AssistForm, field: string, value: unknown, o
   }
   if (field === "amount") {
     return typeof value === "number" && Number.isSafeInteger(value) && value > 0 &&
-      value <= 1_000_000_000 && (form !== "extra" || String(value).length <= 9);
+      value <= 1_000_000_000;
   }
   if (field === "crew" || (form === "quote" && field === "days")) {
     const max = field === "crew" ? (opts.crewMax ?? 6) : (opts.daysMax ?? 365);

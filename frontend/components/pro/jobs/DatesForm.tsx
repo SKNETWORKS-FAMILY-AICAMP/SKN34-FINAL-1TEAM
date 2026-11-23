@@ -22,6 +22,20 @@ import { daysText } from "./days";
 import { AssistBox } from "../assist/AssistBox";
 import s from "./jobs.module.css";
 
+// #176의 희망 시작일·공사 기간에 맞춘 예시를 유지해요. 날짜 표시용 문장만 만들어요.
+function example(start: string, n: number, noWeekend: boolean): string {
+  const d = new Date(`${start}T00:00:00Z`);
+  const md = (x: Date) => `${x.getUTCMonth() + 1}/${x.getUTCDate()}`;
+  const off = (x: Date) => noWeekend && (x.getUTCDay() === 0 || x.getUTCDay() === 6);
+  while (off(d)) d.setUTCDate(d.getUTCDate() + 1);
+  const a = md(d);
+  for (let left = Math.max(n, 1) - 1; left > 0; ) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (!off(d)) left -= 1;
+  }
+  return `${a}부터 ${md(d)}까지, 2명`;
+}
+
 const CREW = [1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: `${n}명` }));
 
 export function DatesForm({ job, now }: { job: JobV3; now: string }) {
@@ -68,7 +82,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
         ) : job.dates_due_at ? <Small red>{dueText(job.dates_due_at, { now })} 올려요</Small> : null}
         <AssistBox key={job.deal_id} form="dates" resourceId={job.deal_id}
           hint="공사 날짜와 인원을 말하면 변경 후보를 보여 드려요."
-          examples={["12/8부터 12/10까지, 2명"]}
+          examples={[example(job.request?.wish_dates[0] ?? v.work_wish_on ?? today, need ?? 3, !job.weekend_work)]}
           current={{ days, crew: crew ? Number(crew) : null }}
           options={{
             today, baseMonth: job.request?.wish_dates[0] ?? v.work_wish_on,

@@ -1,9 +1,11 @@
 "use client";
 // 기존 재재 채팅 전송으로 규칙·서버 해석을 시작하고, 업체 확인 전에는 업무 폼을 수정하지 않아요.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 import { VAT_MODE_LABEL } from "../text";
 import { AssistSession } from "./session";
+import { AssistSlot } from "./slot";
 import type { AssistCurrent, AssistForm, AssistValue, RuleOptions, CandidateField, Alternative } from "./protocol";
 import s from "./assist.module.css";
 
@@ -46,6 +48,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
   onApply: (changes: AssistCurrent) => void;
 }) {
   const session = useMemo(() => new AssistSession(form, resourceId), [form, resourceId]);
+  const slot = useContext(AssistSlot);
   const [view, setView] = useState(() => session.view);
   const [text, setText] = useState("");
   const latest = useRef({ current, options, onApply });
@@ -65,7 +68,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
     field.status === "valid" && (field.action === "set" || field.action === "clear") ||
     field.status === "conflict" && field.alternatives.length > 0);
 
-  return (
+  const box = (
     <section className={s.box} aria-label="업체 도우미">
       <p className={s.head}><b>재재 · 업체 도우미</b><span>{hint}</span></p>
       {view.utterance ? (
@@ -166,4 +169,6 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
       </div>
     </section>
   );
+  if (slot.inDesk && !slot.el) return null;
+  return slot.el ? createPortal(box, slot.el) : box;
 }

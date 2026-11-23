@@ -271,7 +271,8 @@ test("허용 범위 밖 금액·정책 위반 부가세·잘못된 날짜는 후
   assert.equal(session.view.response?.fields.find((field) => field.field === "valid")?.status, "invalid");
   assert.equal(session.apply(quote, () => assert.fail("유효하지 않은 후보")), false);
   assert.equal(validSetValue("quote", "amount", 1_000_000_000, quoteOptions), true);
-  assert.equal(validSetValue("extra", "amount", 1_000_000_000, quoteOptions), false);
+  assert.equal(validSetValue("extra", "amount", 1_000_000_000, quoteOptions), true);
+  assert.equal(validSetValue("extra", "amount", 1_000_000_001, quoteOptions), false);
 });
 
 test("#176 날짜·추가 금액 파서를 기존 기간·견적 규칙에 이어 사용해요", () => {

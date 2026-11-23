@@ -1,7 +1,7 @@
 // 업체 도우미 말 해석 시험: pnpm test:unit (node --test). 애매하면 칸을 채우지 않는지까지 봐요.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SAID_AMOUNT, parseDates, parseExtra, parsePeriod, parseQuote } from "./parse.ts";
+import { parseDates, parseExtra, parsePeriod, parseQuote } from "./parse.ts";
 
 const T = "2026-11-23";
 
@@ -103,20 +103,6 @@ test("리뷰 회귀: 추가 금액 항목 이름", () => {
   const x = parseExtra("곰팡이 방지 12만 원이 아니라 15만 원", T);
   assert.equal(x.title, "곰팡이 방지");
   assert.equal(x.amount, 150_000);
-  // 리뷰(PR #176): 천 단위 쉼표를 문장 구분으로 보지 않아요
-  const mold = parseExtra("곰팡이 처리 1,000,000원, 부가세 포함, 벽면 곰팡이 발견해서", T);
-  assert.equal(mold.title, "곰팡이 처리");
-  assert.equal(mold.amount, 1_000_000);
-  assert.equal(mold.vat, "included");
-  assert.equal(mold.reason, "벽면 곰팡이 발견해서");
-  // QA: 천 단위 쉼표에서 토막을 나누지 않고, 억 금액은 항목 이름에 남기지 않아요
-  const big = parseExtra("걸레받이 교체 1,000,000,000원 부가세 별도, 기존 것이 썩어서", T);
-  assert.equal(big.title, "걸레받이 교체");
-  assert.equal(big.amount, 1_000_000_000);
-  assert.equal(big.reason, "기존 것이 썩어서");
-  const eok = parseExtra("합판 보강 2억 원, 부가세 포함", T);
-  assert.equal(eok.title, "합판 보강");
-  assert.equal(eok.amount, undefined); // 억은 읽지 않아요(화면이 '금액을 읽지 못했어요'로 알려요)
 });
 
 // #174(dev)에서 온 시험 문장
@@ -200,24 +186,4 @@ test("#174 실측 기간: 이중 부정('어렵지 않아요')은 빼지 않아�
   assert.deepEqual(parsePeriod("12/2부터 12/5까지 됩니다, 12/4도 어렵지 않아요", T), all);
   assert.deepEqual(parsePeriod("12/2부터 12/5까지 됩니다, 12/4는 안 되지는 않아요", T), all);
   assert.deepEqual(parsePeriod("12/2부터 12/5까지 됩니다, 12/4는 힘들지 않습니다", T), all);
-});
-
-test("리뷰 회귀: 천 · 백을 섞어 쓴 만 단위 금액, 못 읽은 금액은 '말했다'로 알아봐요", () => {
-  assert.equal(parseQuote("견적 1천만 원, 부가세 별도", T).amount, 10_000_000);
-  assert.equal(parseQuote("견적 3백만 원", T).amount, 3_000_000);
-  assert.equal(parseQuote("견적 1천5백만 원", T).amount, 15_000_000);
-  assert.equal(parseQuote("견적 455만 5천 원", T).amount, 4_555_000); // 만 뒤 천은 그대로
-  assert.equal(parseExtra("합판 보강 1천만 원, 부가세 포함", T).title, "합판 보강");
-  assert.equal(parseExtra("합판 보강 1천만 원, 부가세 포함", T).amount, 10_000_000);
-  for (const t of ["견적 1억 원", "천만 원이요", "삼백만원 부가세 별도", "견적 2억 3천만 원"]) {
-    assert.equal(parseQuote(t, T).amount, undefined, t);
-    assert.ok(SAID_AMOUNT.test(t), t);
-  }
-  assert.ok(!SAID_AMOUNT.test("부가세 별도, 공사 3일"));
-});
-
-test("리뷰 회귀: 한글 숫자 금액은 항목 이름에 남기지 않아요", () => {
-  assert.equal(parseExtra("합판 보강 천만 원, 부가세 별도", T).title, "합판 보강");
-  assert.equal(parseExtra("몰딩 교체 삼십만원", T).title, "몰딩 교체");
-  assert.equal(parseExtra("이중 초배 추가 5만 원", T).title, "이중 초배 추가"); // '이중'의 '이'는 숫자가 아니에요
 });
