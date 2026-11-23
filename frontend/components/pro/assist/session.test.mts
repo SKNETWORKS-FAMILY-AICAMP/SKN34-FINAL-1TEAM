@@ -237,8 +237,8 @@ test("견적 폼 최초 마운트·StrictMode 재실행은 임시 저장하지 �
   assert.equal(shouldAutosaveQuote(draft, { amount: "4550000", vat: null }), false);
 });
 
-test("서버 401/403/429는 규칙 후보로 우회할 수 없고 화면에 드러나요", async () => {
-  for (const code of [401, 403, 429]) {
+test("서버의 요청·권한·업무 상태 오류는 규칙 후보로 우회할 수 없어요", async () => {
+  for (const code of [400, 401, 403, 404, 409, 413, 422, 429]) {
     const api = pending();
     const session = new AssistSession("quote", "visit-id", api.requester);
     session.send("견적 455만 원", quote, quoteOptions);

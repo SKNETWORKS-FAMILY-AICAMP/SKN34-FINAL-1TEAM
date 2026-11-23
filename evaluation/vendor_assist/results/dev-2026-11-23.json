@@ -1,0 +1,674 @@
+{
+  "recorded_at": "2026-11-23T22:54:46.850850+09:00",
+  "evaluated_code_commit": "6343394bd25ef693c04c32d46480913572b28906",
+  "pr": "https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-FINAL-1TEAM/pull/179",
+  "pr176_checked_head": "d351d22c65a9a7ac486ff4735484eb1f0c615f3a",
+  "gold_status": "ai_draft_unreviewed",
+  "human_verified_cases": 0,
+  "dataset_cases": 144,
+  "dev_cases": 96,
+  "heldout_cases": 48,
+  "heldout_executed": false,
+  "dev_sha256": "b719e21362131b51cb226b2cd6c1b82922411287e106530343718fe388ea1297",
+  "prompt_sha256": "0ab6884d367dda1a37d7cd289e135cbe6ac96a636e7fc592885780045ec0ac90",
+  "results": {
+    "rule": {
+      "cases": 96,
+      "field_total": 312,
+      "field_correct": 216,
+      "field_accuracy": 0.6923076923076923,
+      "exact_cases": 27,
+      "exact_case_rate": 0.28125,
+      "false_candidates": 36,
+      "false_candidate_rate": 0.4090909090909091,
+      "omissions": 66,
+      "omission_rate": 0.559322033898305,
+      "conflict_fields": 0,
+      "conflict_options": 0,
+      "conflict_option_mismatches": 0,
+      "latency_ms": {
+        "count": 96,
+        "mean": 0.0727458333333324,
+        "p50": 0.014199999999988222,
+        "p95": 0.6384000000000043
+      },
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_tokens": null,
+        "cases_with_usage": 0
+      },
+      "cost_usd": null,
+      "error_count": 0,
+      "timeout_count": 0,
+      "llm_error_count": 0,
+      "llm_timeout_count": 0,
+      "per_field": {
+        "dates.crew": {
+          "total": 24,
+          "correct": 15,
+          "false_candidates": 0,
+          "omissions": 7,
+          "accuracy": 0.625
+        },
+        "dates.days": {
+          "total": 24,
+          "correct": 14,
+          "false_candidates": 6,
+          "omissions": 8,
+          "accuracy": 0.5833333333333334
+        },
+        "extra.amount": {
+          "total": 24,
+          "correct": 17,
+          "false_candidates": 1,
+          "omissions": 5,
+          "accuracy": 0.7083333333333334
+        },
+        "extra.reason": {
+          "total": 24,
+          "correct": 19,
+          "false_candidates": 0,
+          "omissions": 5,
+          "accuracy": 0.7916666666666666
+        },
+        "extra.title": {
+          "total": 24,
+          "correct": 3,
+          "false_candidates": 20,
+          "omissions": 11,
+          "accuracy": 0.125
+        },
+        "extra.vat": {
+          "total": 24,
+          "correct": 19,
+          "false_candidates": 1,
+          "omissions": 3,
+          "accuracy": 0.7916666666666666
+        },
+        "period.end": {
+          "total": 24,
+          "correct": 16,
+          "false_candidates": 1,
+          "omissions": 5,
+          "accuracy": 0.6666666666666666
+        },
+        "period.excluded": {
+          "total": 24,
+          "correct": 18,
+          "false_candidates": 1,
+          "omissions": 5,
+          "accuracy": 0.75
+        },
+        "period.start": {
+          "total": 24,
+          "correct": 15,
+          "false_candidates": 3,
+          "omissions": 6,
+          "accuracy": 0.625
+        },
+        "quote.amount": {
+          "total": 24,
+          "correct": 17,
+          "false_candidates": 2,
+          "omissions": 5,
+          "accuracy": 0.7083333333333334
+        },
+        "quote.days": {
+          "total": 24,
+          "correct": 19,
+          "false_candidates": 0,
+          "omissions": 4,
+          "accuracy": 0.7916666666666666
+        },
+        "quote.valid": {
+          "total": 24,
+          "correct": 23,
+          "false_candidates": 0,
+          "omissions": 1,
+          "accuracy": 0.9583333333333334
+        },
+        "quote.vat": {
+          "total": 24,
+          "correct": 21,
+          "false_candidates": 1,
+          "omissions": 1,
+          "accuracy": 0.875
+        }
+      },
+      "per_form": {
+        "dates": {
+          "count": 24,
+          "exact_cases": 8,
+          "exact_rate": 0.3333333333333333
+        },
+        "extra": {
+          "count": 24,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "period": {
+          "count": 24,
+          "exact_cases": 7,
+          "exact_rate": 0.2916666666666667
+        },
+        "quote": {
+          "count": 24,
+          "exact_cases": 12,
+          "exact_rate": 0.5
+        }
+      },
+      "per_kind": {
+        "ambiguous": {
+          "count": 8,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "clear": {
+          "count": 8,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "conflict": {
+          "count": 8,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "correction": {
+          "count": 8,
+          "exact_cases": 2,
+          "exact_rate": 0.25
+        },
+        "double_negation": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "multi_field": {
+          "count": 8,
+          "exact_cases": 5,
+          "exact_rate": 0.625
+        },
+        "negation": {
+          "count": 8,
+          "exact_cases": 1,
+          "exact_rate": 0.125
+        },
+        "no_action": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "partial": {
+          "count": 8,
+          "exact_cases": 3,
+          "exact_rate": 0.375
+        },
+        "previous_correction": {
+          "count": 8,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "previous_keep": {
+          "count": 8,
+          "exact_cases": 0,
+          "exact_rate": 0.0
+        },
+        "simple": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        }
+      },
+      "reasoning_effort": null,
+      "raw_sha256": "601681e2b353f2e2f92634cdf1636d6e3e0c799f91960fe5799b31b29033c535"
+    },
+    "gpt-6.1-terra": {
+      "cases": 96,
+      "field_total": 312,
+      "field_correct": 273,
+      "field_accuracy": 0.875,
+      "exact_cases": 59,
+      "exact_case_rate": 0.6145833333333334,
+      "false_candidates": 0,
+      "false_candidate_rate": 0.0,
+      "omissions": 27,
+      "omission_rate": 0.2288135593220339,
+      "conflict_fields": 9,
+      "conflict_options": 18,
+      "conflict_option_mismatches": 9,
+      "latency_ms": {
+        "count": 96,
+        "mean": 3351.875522916847,
+        "p50": 3197.904600005131,
+        "p95": 4900.645599991549
+      },
+      "usage": {
+        "input_tokens": 123285,
+        "output_tokens": 10128,
+        "cached_tokens": 110763,
+        "cases_with_usage": 96
+      },
+      "cost_usd": 0.06870015,
+      "error_count": 0,
+      "timeout_count": 0,
+      "llm_error_count": 0,
+      "llm_timeout_count": 0,
+      "per_field": {
+        "dates.crew": {
+          "total": 24,
+          "correct": 20,
+          "false_candidates": 0,
+          "omissions": 4,
+          "accuracy": 0.8333333333333334
+        },
+        "dates.days": {
+          "total": 24,
+          "correct": 18,
+          "false_candidates": 0,
+          "omissions": 6,
+          "accuracy": 0.75
+        },
+        "extra.amount": {
+          "total": 24,
+          "correct": 23,
+          "false_candidates": 0,
+          "omissions": 1,
+          "accuracy": 0.9583333333333334
+        },
+        "extra.reason": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "extra.title": {
+          "total": 24,
+          "correct": 6,
+          "false_candidates": 0,
+          "omissions": 9,
+          "accuracy": 0.25
+        },
+        "extra.vat": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "period.end": {
+          "total": 24,
+          "correct": 22,
+          "false_candidates": 0,
+          "omissions": 1,
+          "accuracy": 0.9166666666666666
+        },
+        "period.excluded": {
+          "total": 24,
+          "correct": 23,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 0.9583333333333334
+        },
+        "period.start": {
+          "total": 24,
+          "correct": 20,
+          "false_candidates": 0,
+          "omissions": 3,
+          "accuracy": 0.8333333333333334
+        },
+        "quote.amount": {
+          "total": 24,
+          "correct": 21,
+          "false_candidates": 0,
+          "omissions": 3,
+          "accuracy": 0.875
+        },
+        "quote.days": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "quote.valid": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "quote.vat": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        }
+      },
+      "per_form": {
+        "dates": {
+          "count": 24,
+          "exact_cases": 16,
+          "exact_rate": 0.6666666666666666
+        },
+        "extra": {
+          "count": 24,
+          "exact_cases": 5,
+          "exact_rate": 0.20833333333333334
+        },
+        "period": {
+          "count": 24,
+          "exact_cases": 17,
+          "exact_rate": 0.7083333333333334
+        },
+        "quote": {
+          "count": 24,
+          "exact_cases": 21,
+          "exact_rate": 0.875
+        }
+      },
+      "per_kind": {
+        "ambiguous": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "clear": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "conflict": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "correction": {
+          "count": 8,
+          "exact_cases": 3,
+          "exact_rate": 0.375
+        },
+        "double_negation": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "multi_field": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "negation": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "no_action": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "partial": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "previous_correction": {
+          "count": 8,
+          "exact_cases": 1,
+          "exact_rate": 0.125
+        },
+        "previous_keep": {
+          "count": 8,
+          "exact_cases": 2,
+          "exact_rate": 0.25
+        },
+        "simple": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        }
+      },
+      "reasoning_effort": "medium",
+      "raw_sha256": "0f2c0d699c201516e8308e8eb6ba93a819b55d001d282f5532220b7dcba8b316"
+    },
+    "gpt-6-luna": {
+      "cases": 96,
+      "field_total": 312,
+      "field_correct": 272,
+      "field_accuracy": 0.8717948717948718,
+      "exact_cases": 61,
+      "exact_case_rate": 0.6354166666666666,
+      "false_candidates": 1,
+      "false_candidate_rate": 0.010869565217391304,
+      "omissions": 27,
+      "omission_rate": 0.2288135593220339,
+      "conflict_fields": 9,
+      "conflict_options": 18,
+      "conflict_option_mismatches": 9,
+      "latency_ms": {
+        "count": 96,
+        "mean": 2238.3739958331716,
+        "p50": 2063.879299996188,
+        "p95": 3847.9544000001624
+      },
+      "usage": {
+        "input_tokens": 123285,
+        "output_tokens": 13504,
+        "cached_tokens": 113145,
+        "cases_with_usage": 96
+      },
+      "cost_usd": 0.00889745,
+      "error_count": 0,
+      "timeout_count": 0,
+      "llm_error_count": 0,
+      "llm_timeout_count": 0,
+      "per_field": {
+        "dates.crew": {
+          "total": 24,
+          "correct": 20,
+          "false_candidates": 0,
+          "omissions": 4,
+          "accuracy": 0.8333333333333334
+        },
+        "dates.days": {
+          "total": 24,
+          "correct": 19,
+          "false_candidates": 0,
+          "omissions": 5,
+          "accuracy": 0.7916666666666666
+        },
+        "extra.amount": {
+          "total": 24,
+          "correct": 23,
+          "false_candidates": 1,
+          "omissions": 0,
+          "accuracy": 0.9583333333333334
+        },
+        "extra.reason": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "extra.title": {
+          "total": 24,
+          "correct": 6,
+          "false_candidates": 0,
+          "omissions": 9,
+          "accuracy": 0.25
+        },
+        "extra.vat": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "period.end": {
+          "total": 24,
+          "correct": 21,
+          "false_candidates": 0,
+          "omissions": 2,
+          "accuracy": 0.875
+        },
+        "period.excluded": {
+          "total": 24,
+          "correct": 22,
+          "false_candidates": 0,
+          "omissions": 1,
+          "accuracy": 0.9166666666666666
+        },
+        "period.start": {
+          "total": 24,
+          "correct": 20,
+          "false_candidates": 0,
+          "omissions": 3,
+          "accuracy": 0.8333333333333334
+        },
+        "quote.amount": {
+          "total": 24,
+          "correct": 21,
+          "false_candidates": 0,
+          "omissions": 3,
+          "accuracy": 0.875
+        },
+        "quote.days": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "quote.valid": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        },
+        "quote.vat": {
+          "total": 24,
+          "correct": 24,
+          "false_candidates": 0,
+          "omissions": 0,
+          "accuracy": 1.0
+        }
+      },
+      "per_form": {
+        "dates": {
+          "count": 24,
+          "exact_cases": 17,
+          "exact_rate": 0.7083333333333334
+        },
+        "extra": {
+          "count": 24,
+          "exact_cases": 6,
+          "exact_rate": 0.25
+        },
+        "period": {
+          "count": 24,
+          "exact_cases": 17,
+          "exact_rate": 0.7083333333333334
+        },
+        "quote": {
+          "count": 24,
+          "exact_cases": 21,
+          "exact_rate": 0.875
+        }
+      },
+      "per_kind": {
+        "ambiguous": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "clear": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "conflict": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "correction": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "double_negation": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "multi_field": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "negation": {
+          "count": 8,
+          "exact_cases": 7,
+          "exact_rate": 0.875
+        },
+        "no_action": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        },
+        "partial": {
+          "count": 8,
+          "exact_cases": 4,
+          "exact_rate": 0.5
+        },
+        "previous_correction": {
+          "count": 8,
+          "exact_cases": 1,
+          "exact_rate": 0.125
+        },
+        "previous_keep": {
+          "count": 8,
+          "exact_cases": 3,
+          "exact_rate": 0.375
+        },
+        "simple": {
+          "count": 8,
+          "exact_cases": 6,
+          "exact_rate": 0.75
+        }
+      },
+      "reasoning_effort": "medium",
+      "raw_sha256": "4653e0e9f5a696c847bd440b490917a95deb44c2dc860470254bfb83b117dde2"
+    }
+  },
+  "price_usd_per_million_tokens": {
+    "gpt-6.1-terra": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.05,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra"
+    },
+    "gpt-6-luna": {
+      "input": 0.1,
+      "output": 0.5,
+      "cached": 0.01,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna"
+    }
+  },
+  "diagnostic_cost_all_iterations_usd": "0.23025630",
+  "diagnostic_model_requests_all_iterations": 577,
+  "limits": [
+    "정답은 AI 초안으로 사람이 검수하지 않았으며 최종 품질 승인 근거가 아니다.",
+    "단일 적용 후보 오류와 충돌 대안의 정답 불일치는 별도 지표다.",
+    "지연은 파서 또는 해석 서비스 실행 시간이며 브라우저 전체 응답 시간은 아니다.",
+    "두 모델의 진단을 별도 프로세스에서 동시에 실행했다.",
+    "비용은 실제 사용량과 확인된 Standard 단가로 계산했으며 청구서 금액은 아니다.",
+    "#176은 로컬 조합 검증만 수행했고 실제 병합·배포하지 않았다."
+  ],
+  "model_decision": "gpt-6.1-terra/medium 초기 설정 유지. 정답 사람 검수와 held-out 평가 후 최종 결정."
+}

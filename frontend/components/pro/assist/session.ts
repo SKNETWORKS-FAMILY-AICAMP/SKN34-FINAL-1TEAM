@@ -171,7 +171,7 @@ export class AssistSession {
         });
       } catch (error) {
         if (this.disposed || abort.signal.aborted || token !== this.sequence) return;
-        if (error instanceof AssistApiError && [401, 403, 429].includes(error.status)) {
+        if (error instanceof AssistApiError && error.status >= 400 && error.status < 500) {
           this.baselines = null;
           this.validationOptions = null;
           this.publish({ phase: "denied", utterance, response: null, choices: {}, error: error.message, appliedFields: [] });

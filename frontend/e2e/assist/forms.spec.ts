@@ -286,7 +286,7 @@ test("취소한 늦은 응답은 다음 메시지의 후보와 폼 값을 덮어
   expect(writes(await recorded(request))).toHaveLength(0);
 });
 
-for (const status of [401, 403, 429]) {
+for (const status of [401, 403, 404, 409, 422, 429]) {
   test(`HTTP ${status}: 인증·권한·제한 오류를 후보 성공으로 숨기지 않는다`, async ({ page, request }) => {
     const assistant = await open(page, `/vendor/requests/${VISITED}/quote`);
     const message = `시험 HTTP ${status} 오류`;
