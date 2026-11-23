@@ -51,6 +51,10 @@ CLEAR = re.compile(r"(?:지워|지우|삭제|비워|비우|없애|제거|초기�
 CLEAR_NEGATED = re.compile(
     r"(?:지우지|지워지지|삭제하지|비우지|없애지|제거하지|초기화하지|삭제 금지|삭제 말)"
 )
+_CLEAR_DENIAL = re.compile(
+    r"(?:지워서는\s*안|삭제는\s*하지|삭제를\s*하지|삭제\s*안|"
+    r"지우는\s*건\s*안|지우기를\s*하지|지우\s*안|하지\s*않)"
+)
 VAT_WORDS = {
     "included": ("포함", "포함된"),
     "excluded": ("별도", "미포함", "제외"),
@@ -185,7 +189,9 @@ def _boundary_trim_supported(
 
 
 def _deletion_requested(evidence: str) -> bool:
-    return bool(CLEAR.search(evidence)) and not CLEAR_NEGATED.search(evidence)
+    return bool(CLEAR.search(evidence)) and not (
+        CLEAR_NEGATED.search(evidence) or _CLEAR_DENIAL.search(evidence)
+    )
 
 
 _CLEAR_TARGETS: dict[str, tuple[str, ...]] = {
@@ -210,6 +216,36 @@ _DIRECT_REPLACE = re.compile(r"(?:말고|아니고|아니라|대신|→|->)")
 _CHANGE_TARGET = re.compile(
     r"^(?:으로|로)?\s*(?:바꿔|바꾸|변경|수정|고쳐|고치|올려|내려|정정|확정)"
 )
+_CORRECTION_AT_OLD_END = re.compile(r"(?:말고|아니고|아니라|대신|→|->)\s*$")
+_CORRECTION_AT_NEW_START = re.compile(r"^\s*(?:말고|아니고|아니라|대신|→|->)\s*")
+_CORRECTION_FROM = re.compile(r"에서\s*$")
+_CORRECTION_TO = re.compile(
+    r"(?:으로|로)\s*(?:수정|변경|바꿔|바꾸|바꿉|고쳐|고치|정정|확정|올려|내려)"
+)
+_CORRECTION_CLAUSE_BREAK = re.compile(r"[,;.!?？\n]")
+_CORRECTION_UNRELATED = re.compile(r"(?:인원|작업자|기간|일수|시작|종료|항목|사유|이유)")
+_RULE_QUESTION_OR_UNDECIDED = re.compile(
+    r"(?:[?？]|거죠|까요|미정|또는|아니면|혹은|모르|애매|사이|정도|쯤|고민|생각\s*중)"
+)
+_RULE_NEGATED_ACTION = re.compile(
+    r"(?:취소|철회|하지\s*마|하지\s*말|포함하지|보내지|제출하지|입력하지|"
+    r"건드리지|수정하지|변경하지|아니|아닙|아님|말고|빼고|안\s*맞|"
+    r"원하지|거부|잘못|틀렸)"
+)
+_RULE_HISTORICAL = re.compile(r"(?:지난|이전|기존|예전|과거|원래)")
+_RULE_NEGATED_EXCLUSION = re.compile(
+    r"(?:못\s*가|안\s*돼|안\s*되|불가능|제외|빼)[^,;.!?？\n]{0,22}"
+    r"(?:아니|아닙|않|말|없는\s*건\s*아니)"
+)
+_RULE_START_ONLY = re.compile(r"(?:시작일|첫날)\s*만")
+_RULE_END_ONLY = re.compile(r"(?:종료일|끝나는\s*날|마지막\s*날|끝날)\s*만")
+_RULE_DATE_RANGE = re.compile(r"(?:부터.{1,32}까지|~|∼|〜|－|–|—)")
+_RULE_TITLE_ASSIGN = re.compile(
+    r"^\s{0,8}(?:추가\s{1,8})?(?:시공\s{1,8})?"
+    r"(?:항목명|항목|제목|작업명)\s{0,8}(?::|=|은|는|을|를)\s{0,8}"
+)
+_RULE_REASON_ASSIGN = re.compile(r"^\s*(?:사유|이유)\s*(?::|=|은|는|을|를)\s*")
+_RULE_ASSIGN_VERBS = ("적어", "입력", "수정", "변경", "바꿔", "바꾸", "고쳐", "고치")
 
 
 def _intent(item: FieldIntent) -> IntentKind:
@@ -254,12 +290,15 @@ def _target_word(form: FormName, field: str, text: str) -> bool:
 def _targeted_clear(form: FormName, field: str, evidence: str, text: str) -> bool:
     if not _deletion_requested(evidence):
         return False
-    if any(word in evidence for word in ("전부", "모두", "전체")):
-        return True
     # 근거가 '삭제해 주세요'처럼 동사만 있어도, 바로 앞의 목적어로 필드를 확인한다.
     at = normalized(text).find(normalized(evidence))
     before = normalized(text)[max(at - 35, 0) : at] if at >= 0 else ""
-    scope = re.split(r"[,;.!?\n]", before)[-1] + normalized(evidence)
+    after = normalized(text)[at + len(normalized(evidence)) : at + len(normalized(evidence)) + 35]
+    scope = re.split(r"[,;.!?\n]", before)[-1] + normalized(evidence) + after
+    if _CLEAR_DENIAL.search(scope) or CLEAR_NEGATED.search(scope):
+        return False
+    if any(word in evidence for word in ("전부", "모두", "전체")):
+        return True
     return _target_word(form, field, scope)
 
 
@@ -281,6 +320,165 @@ def _targeted_retention(
     if any(word in evidence for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")):
         without_evidence = normalized(text).replace(normalized(evidence), "", 1)
         return not _mentions_field(form, field, without_evidence, context)
+    return False
+
+
+def _rule_local_clauses(
+    form: FormName, field: str, value: Value, text: str, context: AssistContext
+) -> list[str]:
+    """다른 필드에서 나온 '미정'·부정은 독립적으로 확정한 후보에 전파하지 않는다."""
+    clauses = re.split(r"[,;\n]", text)
+    return [
+        clause
+        for clause in clauses
+        if clause.strip() and _grounded(form, field, value, clause, context)
+    ] or [text]
+
+
+def _rule_assignment_suffix(suffix: str) -> bool:
+    """문자열 값 뒤의 '로 입력해 주세요' 같은 긍정 입력 지시만 허용한다."""
+    suffix = suffix.strip().rstrip(".")
+    if not suffix:
+        return True
+    if suffix.startswith("으로"):
+        rest = suffix[2:].strip()
+    elif suffix.startswith("로"):
+        rest = suffix[1:].strip()
+    else:
+        return False
+    return len(rest) <= 36 and rest.startswith(_RULE_ASSIGN_VERBS)
+
+
+def _correction_gap_connector(link: str) -> bool:
+    """선택적인 조사·쉼표를 걷어내고 연결어 자체만 비교한다."""
+    part = link.strip()
+    if part.endswith(","):
+        part = part[:-1].strip()
+    for particle in ("은", "는", "이", "가", "을", "를"):
+        if part.startswith(particle):
+            part = part[len(particle) :].strip()
+            break
+    return part in ("말고", "아니고", "아니라", "대신", "→", "->")
+
+
+def _other_boundary_only(form: FormName, field: str, text: str) -> bool:
+    """'시작일만'이라는 지시로 종료일의 기존 후보를 새 값처럼 보지 않는다."""
+    if form != "period":
+        return False
+    if field == "start":
+        return bool(_RULE_END_ONLY.search(text)) and not _RULE_START_ONLY.search(text)
+    if field == "end":
+        return bool(_RULE_START_ONLY.search(text)) and not _RULE_END_ONLY.search(text)
+    return False
+
+
+def _rule_field_proof(
+    form: FormName, rule: CandidateField, text: str, context: AssistContext
+) -> bool:
+    """모델이 미언급한 필드를 규칙만으로 확정할 때 필요한 독립적인 대상·동작 근거."""
+    if (
+        rule.status != "valid"
+        or rule.action not in ("set", "clear")
+        or not evidence_matches(text, rule.evidence)
+    ):
+        return False
+    field = rule.field
+    clauses = (
+        _rule_local_clauses(form, field, rule.value, text, context)
+        if rule.action == "set"
+        else [text]
+    )
+    if any(
+        _RULE_QUESTION_OR_UNDECIDED.search(clause)
+        or _RULE_NEGATED_ACTION.search(clause)
+        or _RULE_HISTORICAL.search(clause)
+        for clause in clauses
+    ):
+        return False
+    if rule.action == "clear":
+        return _target_word(form, field, text) and _targeted_clear(form, field, rule.evidence, text)
+    value = rule.value
+    if field in ("title", "reason"):
+        assignment = _RULE_TITLE_ASSIGN if field == "title" else _RULE_REASON_ASSIGN
+        for part in re.split(r"[,;\n]", normalized(text)):
+            match = assignment.match(part)
+            if match:
+                remainder = part[match.end() :].strip()
+                selected = normalized(value).strip()
+                if remainder.startswith(selected):
+                    suffix = remainder[len(selected) :].strip()
+                    if _rule_assignment_suffix(suffix):
+                        return True
+        return False
+    if field == "amount":
+        amounts = _amount_mentions(text)
+        return (
+            type(value) is int
+            and amounts == {value}
+            and (form == "quote" or any(word in text for word in ("추가", "금액", "비용")))
+        )
+    if field == "vat":
+        words = normalized(text)
+        modes = {
+            mode
+            for mode, phrases in VAT_WORDS.items()
+            if any(phrase in words for phrase in phrases)
+        }
+        return (
+            type(value) is str
+            and modes == {value}
+            and any(word in words for word in ("부가세", "면세", "vat"))
+        )
+    if form == "quote" and field == "days":
+        remaining = re.sub(r"유효\s*기간", "", text)
+        return (
+            type(value) is int
+            and {int(item) for item in DAYS.findall(remaining)} == {value}
+            and any(word in remaining for word in ("공사", "기간", "일수"))
+        )
+    if field == "crew":
+        return type(value) is int and crew_mentions(text) == {value}
+    if form == "period" and field in ("start", "end"):
+        if type(value) is not str or _other_boundary_only(form, field, text):
+            return False
+        target = (
+            ("시작일", "시작 날짜", "첫날") if field == "start" else ("종료일", "끝날", "마지막 날")
+        )
+        if any(word in text for word in target):
+            return True
+        tokens = date_tokens(text, context)
+        if len(tokens) < 2 or not _RULE_DATE_RANGE.search(text):
+            return False
+        endpoint = tokens[0][2] if field == "start" else tokens[-1][2]
+        return date.fromisoformat(value) == endpoint
+    if form == "period" and field == "excluded":
+        if not isinstance(value, list) or not value:
+            return False
+        for raw in value:
+            day = date.fromisoformat(raw)
+            patterns = (
+                rf"(?<!\d){day.day}\s*일(?!\d)",
+                rf"(?<!\d){day.month}\s*(?:월|/|-)\s*0?{day.day}(?!\d)",
+            )
+            found = False
+            for pattern in patterns:
+                for match in re.finditer(pattern, text):
+                    near = text[match.start() : match.end() + 32]
+                    if _EXCLUDE_DAY.search(near) and not _RULE_NEGATED_EXCLUSION.search(near):
+                        found = True
+                        break
+                if found:
+                    break
+            if not found:
+                return False
+        return True
+    if form == "dates" and field == "days":
+        return (
+            isinstance(value, list)
+            and bool(value)
+            and any(word in text for word in ("공사", "작업", "날짜", "일정"))
+            and set(map(date.fromisoformat, value)) <= date_mentions(text, context, expand=True)
+        )
     return False
 
 
@@ -308,25 +506,46 @@ def _verified_correction(
     after = normalized_text.find(new_text, before + len(old_text))
     if before < 0 or after < before + len(old_text):
         return None
-    clause_end = normalized_text.find(",", after + len(new_text))
-    if clause_end < 0:
-        clause_end = len(normalized_text)
-    clause_start = (
-        max(
-            normalized_text.rfind(",", 0, before),
-            normalized_text.rfind(";", 0, before),
-        )
-        + 1
-    )
-    if _UNCERTAIN_CHANGE.search(normalized_text[clause_start:clause_end]):
-        return None
     link = normalized_text[before + len(old_text) : after]
-    tail = normalized_text[after + len(new_text) : after + len(new_text) + 35]
-    if len(link) > 60 or not (
-        _DIRECT_REPLACE.search(link) or ("에서" in link and _CHANGE_TARGET.search(tail))
-    ):
+    if len(link) > 36 or _CORRECTION_CLAUSE_BREAK.search(link) and link.strip() != ",":
         return None
-    if re.search(r"(?:말고|아니고|아니라)", tail):
+    if re.search(r"\d", link) or _CORRECTION_UNRELATED.search(link):
+        return None
+    if link.strip() not in ("", ",", "에서") and not _correction_gap_connector(link):
+        return None
+    # 채택값 근거가 '555만원 아니고'까지 삼키면 555만원은 중간에 폐기한 값이다.
+    # 맨 앞 연결어('아니고 555만원')는 허용하되 값 뒤의 추가 폐기·교체는 보류한다.
+    accepted_body = _CORRECTION_AT_NEW_START.sub("", new_text, count=1)
+    if _DIRECT_REPLACE.search(accepted_body) or _RULE_NEGATED_ACTION.search(accepted_body):
+        return None
+    # 모델 근거가 '455만 원은 아니고'를 포함하면 연결어가 빈 간격에 남지 않는다.
+    direct = (
+        _CORRECTION_AT_OLD_END.search(old_text)
+        or _correction_gap_connector(link)
+        or _CORRECTION_AT_NEW_START.match(new_text)
+    )
+    end_new = after + len(new_text)
+    change_tail = normalized_text[end_new : end_new + 28]
+    from_to = (
+        _CORRECTION_FROM.search(old_text) or link.strip() == "에서"
+    ) and _CORRECTION_TO.search(new_text + change_tail)
+    if not (direct or from_to):
+        return None
+
+    # 관계 주위의 해당 문장에 미정·질문·선택지가 있으면 채택을 확정할 수 없다.
+    begin = before
+    while begin > 0 and not _CORRECTION_CLAUSE_BREAK.fullmatch(normalized_text[begin - 1]):
+        begin -= 1
+    end = end_new
+    while end < len(normalized_text) and not _CORRECTION_CLAUSE_BREAK.fullmatch(
+        normalized_text[end]
+    ):
+        end += 1
+    if end < len(normalized_text) and normalized_text[end] in "?？":
+        return None
+    if _UNCERTAIN_CHANGE.search(normalized_text[begin:end]):
+        return None
+    if re.search(r"(?:말고|아니고|아니라)", normalized_text[end_new:end]):
         return None
     try:
         check_value(form, item.field, relation.rejected_value)
@@ -337,6 +556,57 @@ def _verified_correction(
     except (ValueError, TypeError, KeyError):
         return None
     return relation
+
+
+def _independent_same_value_rule(
+    item: FieldIntent, data: AssistRequest, context: AssistContext, text: str
+) -> bool:
+    """정정 관계만 입증 실패했을 때 동의하는 유효한 규칙의 값은 별도로 확인한다."""
+    if (
+        item.correction is None
+        or item.correction.kind != "replace"
+        or item.action != "set"
+        or _RULE_QUESTION_OR_UNDECIDED.search(text)
+    ):
+        return False
+    if item.field == "amount" and _amount_mentions(text) != {item.value}:
+        return False
+    for rule in data.rule_fields:
+        if (
+            rule.field != item.field
+            or rule.action != "set"
+            or rule.value != item.value
+            or rule.correction is not None
+            or rule.value_source in ("previous", "current")
+            or not evidence_matches(text, rule.evidence)
+        ):
+            continue
+        if not _grounded(data.form, item.field, rule.value, rule.evidence, context):
+            continue
+        if not _business_ok(
+            data.form, item.field, rule.value, data, context, {item.field: rule.value}
+        ):
+            continue
+        checked = CandidateField(
+            field=item.field,
+            action="set",
+            value=item.value,
+            evidence=rule.evidence,
+            source="rule",
+            status="valid",
+            alternatives=[],
+        )
+        if _rule_field_proof(data.form, checked, text, context):
+            return True
+    return False
+
+
+def _speculative_rule_amount(text: str, value: Value) -> bool:
+    """모델 실패 시에도 미정·질문인 금액을 규칙 단독 확정값으로 채택하지 않는다."""
+    return any(
+        value in _amount_mentions(clause) and bool(_RULE_QUESTION_OR_UNDECIDED.search(clause))
+        for clause in re.split(r"[,;\n]", text)
+    )
 
 
 def _business_ok(
@@ -496,9 +766,19 @@ def _review_one(
             return reject("unsupported_normalization")
         if not _business_ok(data.form, item.field, item.value, data, context, proposed):
             return reject("business_constraint")
+        if (
+            source == "rule"
+            and item.field == "amount"
+            and _speculative_rule_amount(text, item.value)
+        ):
+            return reject("ambiguous_intent", uncertain=True)
 
     correction = _verified_correction(item, data.form, text, context)
-    if item.correction is not None and correction is None:
+    if (
+        item.correction is not None
+        and correction is None
+        and (source != "llm" or not _independent_same_value_rule(item, data, context, text))
+    ):
         return reject("correction_unverified", uncertain=True)
     return CandidateField(
         **common,
@@ -509,6 +789,9 @@ def _review_one(
         intent_kind="explicit_change",
         value_source=item.value_source or "utterance",
         correction=correction,
+        reason_code=(
+            "correction_unverified" if item.correction is not None and correction is None else None
+        ),
     )
 
 
@@ -651,7 +934,8 @@ def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> Cand
         return llm
     if _not_action(llm):
         # 모델의 미언급은 규칙이 실제 값을 추출한 것에 대한 반박이 아니다.
-        return rule if rule is not None else llm
+        # 다만 근거 검증에 실패한 규칙은 '미언급'을 덮어쓸 권한이 없다.
+        return rule if rule is not None and rule.status == "valid" else llm
     if rule is None or _not_action(rule) or rule.status == "invalid":
         return llm
     if rule.status == "uncertain":
@@ -844,9 +1128,26 @@ def merge_candidates(
         r = rule.get(field)
         m = model.get(field) if model is not None else None
         chosen = _merge_pair(r, m) if model is not None else r
+        if model is not None and m is not None and _not_action(m) and r is not None:
+            if r.status == "valid" and r.action in ("set", "clear"):
+                # 원문 숫자가 있다는 사실만으로 대상 필드가 실제로 변경됐다고 단정하지 않는다.
+                chosen = (
+                    r
+                    if _rule_field_proof(data.form, r, data.text, context)
+                    else _hold(field, "ambiguous_intent", "rule")
+                )
+            elif r.status in ("invalid", "uncertain"):
+                chosen = (
+                    m
+                    if _other_boundary_only(data.form, field, data.text)
+                    or not _mentions_field(data.form, field, data.text, context)
+                    else _hold(field, r.reason_code or "ambiguous_intent", "rule")
+                )
         if chosen is None or _not_action(chosen):
             if field in prior:
-                if _mentions_field(data.form, field, data.text, context):
+                if _other_boundary_only(data.form, field, data.text):
+                    chosen = prior[field]
+                elif _mentions_field(data.form, field, data.text, context):
                     chosen = _hold(field, "ambiguous_intent", "llm" if model else "rule")
                 else:
                     chosen = prior[field]
