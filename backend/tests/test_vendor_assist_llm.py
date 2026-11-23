@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app.agent import llm, vendor_assist
 from app.config import settings
+from app.vendor.assist_schemas import ModelFieldIntentV2, ModelInterpretationV2
 
 
 class Reply(BaseModel):
@@ -252,9 +253,50 @@ def test_adapter_dispatches_one_structured_call(monkeypatch, interpretation_sche
     assert result == interpretation_schema(fields=[])
     assert len(observed) == 1
     assert observed[0][0] == "vendor_assist"
-    assert observed[0][1] is interpretation_schema
+    assert observed[0][1] is ModelInterpretationV2
     assert [kind for kind, _ in observed[0][2]] == ["system", "user"]
     assert observed[0][3] is usage
+
+
+def test_vendor_v2_model_schema_is_strict_and_every_property_is_required():
+    """유료 호출 없이 공급자 strict JSON schema 필수·nullable 모양을 확인한다."""
+    schema = ModelInterpretationV2.model_json_schema()
+    defs = schema["$defs"]
+    for component in (schema, defs["ModelFieldIntentV2"], defs["CorrectionRelation"]):
+        assert component["additionalProperties"] is False
+        assert set(component["required"]) == set(component["properties"])
+        assert all("default" not in value for value in component["properties"].values())
+    model_props = defs["ModelFieldIntentV2"]["properties"]
+    for name in ("intent_kind", "value_source", "correction"):
+        nullable = model_props[name]["anyOf"]
+        assert any(part.get("type") == "null" for part in nullable)
+
+
+def test_v2_structured_decision_maps_to_public_field_without_second_call(monkeypatch):
+    calls = []
+
+    async def structured(role, schema, messages, *, usage):
+        calls.append((role, schema))
+        return ModelInterpretationV2(
+            fields=[
+                ModelFieldIntentV2(
+                    field="amount",
+                    action="keep",
+                    value=None,
+                    evidence="금액 그대로",
+                    intent_kind="retain_previous",
+                    value_source="previous",
+                    correction=None,
+                )
+            ]
+        )
+
+    monkeypatch.setattr(llm, "structured", structured)
+    result = asyncio.run(vendor_assist.interpret(_request(), _context()))
+    assert calls == [("vendor_assist", ModelInterpretationV2)]
+    assert result.fields[0].intent_kind == "retain_previous"
+    assert result.fields[0].value_source == "previous"
+    assert result.fields[0].value is None
 
 
 def test_adapter_does_not_retry_model_error(monkeypatch, interpretation_schema):

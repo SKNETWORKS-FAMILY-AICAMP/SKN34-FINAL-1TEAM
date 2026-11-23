@@ -1,5 +1,6 @@
 """업체 도우미 규칙/하이브리드 비교 러너.
 
+    python evaluation/vendor_assist/run.py --mode raw_rule --split dev
     python evaluation/vendor_assist/run.py --mode rule --split dev
     python evaluation/vendor_assist/run.py --mode hybrid --split dev
     python evaluation/vendor_assist/run.py --mode hybrid --split heldout --final
@@ -31,8 +32,10 @@ if str(ROOT) not in sys.path:
 from evaluation.vendor_assist.metrics import (
     FIELDS,
     format_report,
+    is_known_heldout_path,
     load_cases,
     requires_final,
+    requires_final_before_read,
     summarize,
 )
 
@@ -159,19 +162,34 @@ def _instrument_usage(original, original_agent, usage: dict, fault: dict):
 
 
 async def hybrid_outputs(
-    cases: list[dict], rules: list[dict], *, live: bool, timeout: float
+    cases: list[dict],
+    rules: list[dict],
+    *,
+    live: bool,
+    timeout: float,
+    use_model: bool = True,
+    capture_trace: bool = False,
 ) -> list[dict]:
-    """assist_service.interpret를 실제 호출한다. DB 라우터나 저장 동작은 거치지 않는다."""
+    """규칙/하이브리드 모두 동일 서비스의 검증·병합 경로를 실행한다."""
     # 가져오기 전에 명시한다. 외부 환경에 LLM_LIVE=true여도 기본 실행은 오프라인이다.
-    os.environ["LLM_LIVE"] = "true" if live else "false"
+    os.environ["LLM_LIVE"] = "true" if live and use_model else "false"
     backend = str(ROOT / "backend")
     if backend not in sys.path:
         sys.path.insert(0, backend)
-    from app.agent import llm, vendor_assist
     from app.vendor import assist_service
+
+    signature = inspect.signature(assist_service.interpret)
+    if "use_model" not in signature.parameters or "trace" not in signature.parameters:
+        raise RuntimeError(
+            "서버의 interpret(use_model=..., trace=...) 계약 통합이 필요합니다"
+        )
+
+    if use_model:
+        from app.agent import llm, vendor_assist
 
     rows = []
     for case, rule in zip(cases, rules, strict=True):
+        stage_trace: dict | None = {} if capture_trace else None
         if rule.get("error"):
             rows.append(
                 {
@@ -186,23 +204,31 @@ async def hybrid_outputs(
                     "llm_error": None,
                     "llm_timeout": False,
                     "adapter_invoked": False,
+                    "trace": stage_trace,
                 }
             )
             continue
         usage: dict = {}
         fault: dict = {}
-        original = llm.structured
-        original_agent = vendor_assist.interpret
-        measured, measured_agent = _instrument_usage(
-            original, original_agent, usage, fault
-        )
-        llm.structured = measured
-        vendor_assist.interpret = measured_agent
+        if use_model:
+            original = llm.structured
+            original_agent = vendor_assist.interpret
+            measured, measured_agent = _instrument_usage(
+                original, original_agent, usage, fault
+            )
+            llm.structured = measured
+            vendor_assist.interpret = measured_agent
         started = time.perf_counter()
         try:
             request, context = _request(case, rule)
             response = await asyncio.wait_for(
-                assist_service.interpret(request, context), timeout=timeout
+                assist_service.interpret(
+                    request,
+                    context,
+                    use_model=use_model,
+                    trace=stage_trace,
+                ),
+                timeout=timeout,
             )
             fields = [item.model_dump(mode="json") for item in response.fields]
             rows.append(
@@ -215,6 +241,7 @@ async def hybrid_outputs(
                     "error": None,
                     "timeout": False,
                     "source": response.source,
+                    "trace": stage_trace,
                     **fault,
                 }
             )
@@ -229,6 +256,7 @@ async def hybrid_outputs(
                     "error": "TimeoutError",
                     "timeout": True,
                     "source": None,
+                    "trace": stage_trace,
                     **fault,
                 }
             )
@@ -244,13 +272,15 @@ async def hybrid_outputs(
                     "error": f"{type(exc).__name__}: {exc}",
                     "timeout": False,
                     "source": None,
+                    "trace": stage_trace,
                     **fault,
                 }
             )
         finally:
-            llm.structured = original
-            vendor_assist.interpret = original_agent
-        if live and len(rows) % 12 == 0:
+            if use_model:
+                llm.structured = original
+                vendor_assist.interpret = original_agent
+        if live and use_model and len(rows) % 12 == 0:
             print(
                 f"실모델 진단 {len(rows)}/{len(cases)}건 완료",
                 file=sys.stderr,
@@ -276,6 +306,18 @@ def price_flags(args: argparse.Namespace) -> dict[str, Decimal | None] | None:
     return values
 
 
+def _trace_json_default(value: object) -> object:
+    """로컬 trace에서 날짜·Pydantic 값만 JSON으로 변환하며 임의 객체는 숨겨 넣지 않는다."""
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (Decimal, uuid.UUID)):
+        return str(value)
+    raise TypeError(f"trace에 JSON으로 변환할 수 없는 타입: {type(value).__name__}")
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -284,9 +326,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="업체 도우미 #178 고정 평가")
     parser.add_argument(
         "--mode",
-        choices=["rule", "hybrid"],
+        choices=["raw_rule", "rule", "hybrid"],
         default="rule",
-        help="규칙 단독/서비스 하이브리드",
+        help="원본 파서 진단/서비스 규칙 단독/서비스 하이브리드",
     )
     parser.add_argument("--split", choices=["dev", "heldout"], default="dev")
     parser.add_argument("--data", type=Path, help="분할 파일 대신 사용할 JSONL")
@@ -315,7 +357,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--show-wrong", type=int, default=10)
     parser.add_argument("--json", type=Path, help="상세 JSON 평가 결과 저장")
+    parser.add_argument(
+        "--trace-jsonl",
+        type=Path,
+        help="dev 로컬 진단용 단계별 trace JSONL (기본 비활성)",
+    )
     args = parser.parse_args(argv)
+    if (
+        args.trace_jsonl
+        and args.json
+        and args.trace_jsonl.resolve() == args.json.resolve()
+    ):
+        parser.error("--json과 --trace-jsonl은 서로 다른 파일이어야 합니다")
     if args.live and args.mode != "hybrid":
         parser.error("--live는 --mode hybrid에서만 사용합니다")
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.show_wrong < 0:
@@ -323,12 +376,27 @@ def main(argv: list[str] | None = None) -> int:
     try:
         prices = price_flags(args)
         path = args.data or HERE / f"{args.split}.jsonl"
+        # 이름이 알려진 held-out은 파일을 열기 전에 막는다.
+        if requires_final_before_read(path, split=args.split, final=args.final):
+            print(
+                "held-out은 마지막 평가에서 한 번만 봅니다. --final을 명시해 주세요.",
+                file=sys.stderr,
+            )
+            return 2
+        if args.trace_jsonl and (
+            args.split == "heldout" or is_known_heldout_path(path)
+        ):
+            print("단계 trace는 dev 자료에만 허용합니다.", file=sys.stderr)
+            return 2
         cases = load_cases(path)
         if requires_final(path, cases, args.final):
             print(
                 "held-out은 마지막 평가에서 한 번만 봅니다. --final을 명시해 주세요.",
                 file=sys.stderr,
             )
+            return 2
+        if args.trace_jsonl and any(case["split"] != "dev" for case in cases):
+            print("단계 trace는 dev 자료에만 허용합니다.", file=sys.stderr)
             return 2
         if (
             args.live
@@ -348,13 +416,19 @@ def main(argv: list[str] | None = None) -> int:
             if not cases:
                 raise ValueError(f"{args.form}: 평가 문장이 없습니다")
         rules = rule_outputs(cases, parser_path=args.parser_path)
-        outcomes = (
-            rules
-            if args.mode == "rule"
-            else asyncio.run(
-                hybrid_outputs(cases, rules, live=args.live, timeout=args.timeout)
+        if args.mode == "raw_rule":
+            outcomes = rules
+        else:
+            outcomes = asyncio.run(
+                hybrid_outputs(
+                    cases,
+                    rules,
+                    live=args.live,
+                    timeout=args.timeout,
+                    use_model=args.mode == "hybrid",
+                    capture_trace=args.trace_jsonl is not None,
+                )
             )
-        )
         report = summarize(
             cases, outcomes, runner=f"{args.mode}/{path.name}", prices=prices
         )
@@ -373,6 +447,25 @@ def main(argv: list[str] | None = None) -> int:
         args.json.write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    if args.trace_jsonl:
+        args.trace_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        with args.trace_jsonl.open("w", encoding="utf-8") as stream:
+            for case, output in zip(cases, outcomes, strict=True):
+                stages = (
+                    {"rule_raw": output.get("fields")}
+                    if args.mode == "raw_rule"
+                    else output.get("trace") or {}
+                )
+                record = {
+                    "id": case["id"],
+                    "mode": args.mode,
+                    "trace": stages,
+                    "error": output.get("error"),
+                }
+                stream.write(
+                    json.dumps(record, ensure_ascii=False, default=_trace_json_default)
+                    + "\n"
+                )
     return 0
 
 

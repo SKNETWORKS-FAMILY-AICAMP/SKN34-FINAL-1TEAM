@@ -20,7 +20,7 @@ _FIELDS: dict[str, tuple[str, ...]] = {
     "dates": ("days", "crew"),
     "extra": ("title", "reason", "amount", "vat"),
 }
-_PROMPT = Path(__file__).with_name("prompts") / "vendor_assist_v1.md"
+_PROMPT = Path(__file__).with_name("prompts") / "vendor_assist_v2.md"
 
 
 @cache
@@ -74,9 +74,14 @@ def _input(data: AssistRequest, context: AssistContext) -> str:
 async def interpret(
     data: AssistRequest, context: AssistContext, *, usage: dict[str, object] | None = None
 ) -> ModelInterpretation:
-    """하나의 구조화 출력만 요청한다. 실패 시 호출자는 규칙 후보로 복구한다."""
-    # 동시 구현 중인 API 스키마를 이용한다. SDK 호출은 llm.structured 한 곳에서만 한다.
-    from app.vendor.assist_schemas import ModelInterpretation
+    """모델 전용 필수 키 구조를 하나의 호출로 받고 공개 후보 계약으로 옮긴다."""
+    from app.vendor.assist_schemas import FieldIntent, ModelInterpretation, ModelInterpretationV2
 
     messages = [("system", _instructions()), ("user", _input(data, context))]
-    return await llm.structured("vendor_assist", ModelInterpretation, messages, usage=usage)
+    raw = await llm.structured("vendor_assist", ModelInterpretationV2, messages, usage=usage)
+    structured = ModelInterpretationV2.model_validate(
+        raw.model_dump() if hasattr(raw, "model_dump") else raw
+    )
+    return ModelInterpretation(
+        fields=[FieldIntent.model_validate(item.model_dump()) for item in structured.fields]
+    )

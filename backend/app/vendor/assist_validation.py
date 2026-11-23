@@ -9,27 +9,24 @@ from itertools import pairwise
 from app.calc.schedule import JOB_MAX_DAYS
 from app.quote.schemas import AMOUNT_MAX
 from app.schedule.models import EXTRA_AMOUNT_MAX
+from app.vendor.assist_normalize import crew_mentions, date_mentions, date_tokens
 from app.vendor.assist_schemas import (
     FORM_FIELDS,
     Alternative,
     AssistContext,
     AssistRequest,
     CandidateField,
+    CorrectionRelation,
     FieldIntent,
     FormName,
+    IntentKind,
     PreviousCandidate,
+    ReasonCode,
     Source,
     Value,
     check_value,
 )
 
-FULL_DATE = re.compile(
-    r"(?<!\d)(20\d{2})\s*(?:년\s*|[-/.])\s*(\d{1,2})\s*"
-    r"(?:월\s*|[-/.])\s*(\d{1,2})\s*일?(?!\d)"
-)
-MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})\s*(?:월\s*|[-/.])\s*(\d{1,2})\s*일?(?!\d)")
-BARE_DAY = re.compile(r"(?<!\d)([1-9]|[12]\d|3[01])\s*일(?!\d)")
-RANGE_LINK = re.compile(r"(?:부터|에서|~|〜|－|—|–|-|\.{2}|to)")
 MONEY = re.compile(
     r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*"
     r"(천만원|백만원|십만원|억원|만원|천원|백원|억|만|천|백|원)?"
@@ -50,7 +47,6 @@ MONEY_UNIT = {
     "": 1,
 }
 DAYS = re.compile(r"(?<!\d)(\d{1,3})\s*(?:일간|일)(?!\d)")
-CREW = re.compile(r"(?<!\d)(\d{1,2})\s*(?:명|인)(?!\d)")
 CLEAR = re.compile(r"(?:지워|지우|삭제|비워|비우|없애|제거|초기화)")
 CLEAR_NEGATED = re.compile(
     r"(?:지우지|지워지지|삭제하지|비우지|없애지|제거하지|초기화하지|삭제 금지|삭제 말)"
@@ -68,73 +64,6 @@ def normalized(text: str) -> str:
 
 def evidence_matches(text: str, evidence: str) -> bool:
     return bool(evidence.strip()) and normalized(evidence) in normalized(text)
-
-
-def _date(y: int, m: int, d: int) -> date | None:
-    try:
-        return date(y, m, d)
-    except ValueError:
-        return None
-
-
-def _infer_year(month: int, day: int, context: AssistContext) -> int:
-    anchor = context.base_month or context.today
-    if context.base_month is None:
-        candidate = _date(anchor.year, month, day)
-        return (
-            anchor.year if candidate is not None and candidate >= context.today else anchor.year + 1
-        )
-    # 희망 기간이 같은 달 후반이어도 앞쪽 날짜를 1년 뒤로 넘기지 않는다.
-    candidates = [
-        found
-        for year in (anchor.year - 1, anchor.year, anchor.year + 1)
-        if (found := _date(year, month, day)) is not None
-    ]
-    return (
-        min(candidates, key=lambda value: abs((value - anchor).days)).year
-        if candidates
-        else anchor.year
-    )
-
-
-def _date_tokens(
-    evidence: str, context: AssistContext, *, allow_bare: bool = True
-) -> list[tuple[int, int, date]]:
-    found: list[tuple[int, int, date]] = []
-    occupied: list[tuple[int, int]] = []
-
-    def add(start: int, end: int, value: date | None) -> None:
-        if value is None or any(start < b and end > a for a, b in occupied):
-            return
-        found.append((start, end, value))
-        occupied.append((start, end))
-
-    for m in FULL_DATE.finditer(evidence):
-        add(m.start(), m.end(), _date(int(m[1]), int(m[2]), int(m[3])))
-    for m in MONTH_DAY.finditer(evidence):
-        month, day = int(m[1]), int(m[2])
-        add(m.start(), m.end(), _date(_infer_year(month, day, context), month, day))
-    if allow_bare and context.base_month is not None:
-        for m in BARE_DAY.finditer(evidence):
-            anchor = context.base_month
-            add(m.start(), m.end(), _date(anchor.year, anchor.month, int(m[1])))
-    return sorted(found)
-
-
-def _date_mentions(
-    evidence: str, context: AssistContext, *, expand: bool, allow_bare: bool = True
-) -> set[date]:
-    tokens = _date_tokens(evidence, context, allow_bare=allow_bare)
-    found = {item[2] for item in tokens}
-    if expand:
-        for left, right in pairwise(tokens):
-            bridge = evidence[left[1] : right[0]]
-            if not RANGE_LINK.search(bridge):
-                continue
-            span = (right[2] - left[2]).days
-            if 0 <= span <= JOB_MAX_DAYS:
-                found.update(left[2] + timedelta(days=n) for n in range(span + 1))
-    return found
 
 
 def _amount_mentions(evidence: str) -> set[int]:
@@ -194,25 +123,26 @@ def _grounded(
     if field == "amount":
         return type(value) is int and value in _amount_mentions(evidence)
     if field == "crew":
-        return type(value) is int and (
-            value in {int(x) for x in CREW.findall(evidence)}
-            or (
-                ("인원" in evidence or "작업자" in evidence)
-                and value in {int(x) for x in re.findall(r"(?<!\d)\d{1,2}(?!\d)", evidence)}
-            )
-        )
+        return type(value) is int and value in crew_mentions(evidence)
     if form == "quote" and field == "days":
         return type(value) is int and value in {int(x) for x in DAYS.findall(evidence)}
     if field == "vat":
         return type(value) is str and any(word in normalized(evidence) for word in VAT_WORDS[value])
     if field in ("start", "end", "valid"):
-        return type(value) is str and date.fromisoformat(value) in _date_mentions(
-            evidence, context, expand=field in ("start", "end"), allow_bare=field != "valid"
-        )
+        if type(value) is not str:
+            return False
+        date_value = date.fromisoformat(value)
+        tokens = date_tokens(evidence, context, allow_bare=field != "valid")
+        if date_value in {item[2] for item in tokens}:
+            return True
+        if field not in ("start", "end"):
+            return False
+        return _boundary_trim_supported(field, date_value, evidence, context, tokens)
     if field in ("excluded", "days"):
-        return type(value) is list and set(map(date.fromisoformat, value)) <= _date_mentions(
-            evidence, context, expand=True
-        )
+        if type(value) is not list or field == "excluded" and not value:
+            # '추출되지 않음'을 이전 제외 날짜 삭제로 해석하지 않는다.
+            return False
+        return set(map(date.fromisoformat, value)) <= date_mentions(evidence, context, expand=True)
     if field in ("title", "reason"):
         return (
             type(value) is str and bool(value.strip()) and normalized(value) in normalized(evidence)
@@ -220,8 +150,191 @@ def _grounded(
     return False
 
 
+_EXCLUDE_DAY = re.compile(r"(?:안\s*돼|안\s*되|안\s*됨|못\s*가|불가능|제외|빼|어려)")
+
+
+def _boundary_trim_supported(
+    field: str,
+    value: date,
+    evidence: str,
+    context: AssistContext,
+    tokens: list[tuple[int, int, date]],
+) -> bool:
+    """범위 끝날을 제외해 옮긴 날짜는 그 끝날의 명시적 제외 지시가 있어야 한다."""
+    for left, right in pairwise(tokens):
+        start, end = left[2], right[2]
+        if not start < end:
+            continue
+        # 날짜 정규화 모듈이 검증한 실제 범위만 사용한다.
+        span = evidence[left[0] : right[1]]
+        if value not in date_mentions(span, context, expand=True):
+            continue
+        boundary = start if field == "start" else end
+        expected = boundary + timedelta(days=1 if field == "start" else -1)
+        if value != expected:
+            continue
+        for occurrence in tokens:
+            if occurrence in (left, right) or occurrence[2] != boundary:
+                continue
+            nearby = evidence[occurrence[1] : occurrence[1] + 28]
+            if _EXCLUDE_DAY.search(nearby):
+                return True
+    return False
+
+
 def _deletion_requested(evidence: str) -> bool:
     return bool(CLEAR.search(evidence)) and not CLEAR_NEGATED.search(evidence)
+
+
+_CLEAR_TARGETS: dict[str, tuple[str, ...]] = {
+    "start": ("시작", "첫날"),
+    "end": ("종료", "끝", "마지막"),
+    "excluded": ("제외", "빼는", "안 되는 날", "불가능"),
+    "amount": ("금액", "견적", "비용", "가격", "공사비", "총액"),
+    "vat": ("부가세", "면세"),
+    "days": ("기간", "일수", "공사", "날짜", "날"),
+    "crew": ("인원", "작업자", "사람", "명"),
+    "title": ("항목", "제목", "이름"),
+    "reason": ("이유", "사유"),
+    "valid": ("유효기간", "만료"),
+}
+_RETAIN = re.compile(r"(?:그대로|유지|바꾸지|변경하지|수정하지|건드리지)")
+_RETAIN_NEGATED = re.compile(
+    r"(?:그대로|유지).{0,16}(?:말고|두지\s*말|않|아니|취소|빼고)"
+    r"|(?:유지하지|그대로\s*두지)"
+)
+_UNCERTAIN_CHANGE = re.compile(r"(?:미정|모르|애매|정도|였나|일까|혹시|또는|아니면|사이|[?？])")
+_DIRECT_REPLACE = re.compile(r"(?:말고|아니고|아니라|대신|→|->)")
+_CHANGE_TARGET = re.compile(
+    r"^(?:으로|로)?\s*(?:바꿔|바꾸|변경|수정|고쳐|고치|올려|내려|정정|확정)"
+)
+
+
+def _intent(item: FieldIntent) -> IntentKind:
+    if item.intent_kind is not None:
+        return item.intent_kind
+    return {
+        "keep": "no_mention",
+        "set": "explicit_change",
+        "clear": "explicit_change",
+        "uncertain": "ambiguous",
+    }[item.action]
+
+
+def _mentions_field(form: FormName, field: str, text: str, context: AssistContext) -> bool:
+    """규칙 미추출 뒤 이전 값을 되살리지 않기 위한 최소 '언급됨' 검사."""
+    if form == "period" and field == "excluded":
+        # 기간 끝날이 언급됐다는 이유만으로 기존 제외일을 버리지 않는다.
+        return bool(_EXCLUDE_DAY.search(text)) or "제외" in text
+    if form == "quote" and field == "days":
+        # '유효기간'은 견적 효력 날짜이며 공사 일수의 변경 시도가 아니다.
+        remaining = re.sub(r"유효\s*기간", "", text)
+        return bool(DAYS.search(remaining)) or any(
+            word in remaining for word in ("공사", "기간", "일수", "작업 날짜")
+        )
+    if any(word in text for word in _CLEAR_TARGETS[field]):
+        return True
+    if field == "amount":
+        return bool(_amount_mentions(text))
+    if field == "crew":
+        return bool(crew_mentions(text)) or "명" in text or "인원" in text
+    if field in ("start", "end", "valid", "excluded") or form == "dates" and field == "days":
+        return bool(date_tokens(text, context))
+    return False
+
+
+def _target_word(form: FormName, field: str, text: str) -> bool:
+    if form == "quote" and field == "days":
+        text = re.sub(r"유효\s*기간", "", text)
+    return any(word in text for word in _CLEAR_TARGETS[field])
+
+
+def _targeted_clear(form: FormName, field: str, evidence: str, text: str) -> bool:
+    if not _deletion_requested(evidence):
+        return False
+    if any(word in evidence for word in ("전부", "모두", "전체")):
+        return True
+    # 근거가 '삭제해 주세요'처럼 동사만 있어도, 바로 앞의 목적어로 필드를 확인한다.
+    at = normalized(text).find(normalized(evidence))
+    before = normalized(text)[max(at - 35, 0) : at] if at >= 0 else ""
+    scope = re.split(r"[,;.!?\n]", before)[-1] + normalized(evidence)
+    return _target_word(form, field, scope)
+
+
+def _targeted_retention(
+    form: FormName, field: str, evidence: str, text: str, context: AssistContext
+) -> bool:
+    if not evidence_matches(text, evidence):
+        return False
+    raw = normalized(text)
+    at = raw.find(normalized(evidence))
+    scope = raw[max(at - 16, 0) : at + len(normalized(evidence)) + 20]
+    if not _RETAIN.search(evidence) or _RETAIN_NEGATED.search(scope):
+        return False
+    if _target_word(form, field, evidence):
+        return True
+    if form == "period" and field in ("start", "end") and "기간" in evidence:
+        return True
+    # '나머지는 그대로'는 이번 글에서 별도로 바꾼 필드에는 적용하지 않는다.
+    if any(word in evidence for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")):
+        without_evidence = normalized(text).replace(normalized(evidence), "", 1)
+        return not _mentions_field(form, field, without_evidence, context)
+    return False
+
+
+def _verified_correction(
+    item: FieldIntent, form: FormName, text: str, context: AssistContext
+) -> CorrectionRelation | None:
+    """동일 필드의 거절/채택 값과 명시적 정정 연결을 모두 확인한다."""
+    relation = item.correction
+    if relation is None or relation.kind != "replace" or item.action != "set":
+        return None
+    if relation.rejected_value is None:
+        return None
+    old, new = relation.rejected_evidence, relation.accepted_evidence
+    if not evidence_matches(text, old) or not evidence_matches(text, new):
+        return None
+    normalized_text, old_text, new_text = normalized(text), normalized(old), normalized(new)
+    if (
+        item.value == relation.rejected_value
+        or old_text == new_text
+        or normalized_text.count(old_text) != 1
+        or normalized_text.count(new_text) != 1
+    ):
+        return None
+    before = normalized_text.find(old_text)
+    after = normalized_text.find(new_text, before + len(old_text))
+    if before < 0 or after < before + len(old_text):
+        return None
+    clause_end = normalized_text.find(",", after + len(new_text))
+    if clause_end < 0:
+        clause_end = len(normalized_text)
+    clause_start = (
+        max(
+            normalized_text.rfind(",", 0, before),
+            normalized_text.rfind(";", 0, before),
+        )
+        + 1
+    )
+    if _UNCERTAIN_CHANGE.search(normalized_text[clause_start:clause_end]):
+        return None
+    link = normalized_text[before + len(old_text) : after]
+    tail = normalized_text[after + len(new_text) : after + len(new_text) + 35]
+    if len(link) > 60 or not (
+        _DIRECT_REPLACE.search(link) or ("에서" in link and _CHANGE_TARGET.search(tail))
+    ):
+        return None
+    if re.search(r"(?:말고|아니고|아니라)", tail):
+        return None
+    try:
+        check_value(form, item.field, relation.rejected_value)
+        if not _grounded(form, item.field, relation.rejected_value, old, context):
+            return None
+        if not _grounded(form, item.field, item.value, new, context):
+            return None
+    except (ValueError, TypeError, KeyError):
+        return None
+    return relation
 
 
 def _business_ok(
@@ -293,6 +406,7 @@ def _review_one(
     proposed: dict[str, Value],
     *,
     text: str,
+    previous: PreviousCandidate | None = None,
 ) -> CandidateField:
     common = {
         "field": item.field,
@@ -300,46 +414,99 @@ def _review_one(
         "alternatives": [],
         "origin_request_id": data.request_id,
     }
-    if item.action == "keep":
+    intent = _intent(item)
+
+    def reject(reason: ReasonCode, *, uncertain: bool = False) -> CandidateField:
+        return CandidateField(
+            **common,
+            action="uncertain",
+            value=None,
+            evidence=item.evidence if evidence_matches(text, item.evidence) else "",
+            status="uncertain" if uncertain else "invalid",
+            intent_kind="ambiguous",
+            reason_code=reason,
+        )
+
+    if intent == "no_mention" and item.action == "keep":
+        if item.evidence.strip():
+            return reject(
+                "ambiguous_intent" if evidence_matches(text, item.evidence) else "evidence_missing",
+                uncertain=evidence_matches(text, item.evidence),
+            )
         return CandidateField(
             **common,
             action="keep",
             value=None,
-            evidence=item.evidence if evidence_matches(text, item.evidence) else "",
+            evidence="",
+            status="valid",
+            intent_kind="no_mention",
+        )
+    if intent == "retain_current":
+        if item.action != "keep" or not evidence_matches(text, item.evidence):
+            return reject("evidence_missing")
+        if not _targeted_retention(data.form, item.field, item.evidence, text, context):
+            return reject("ambiguous_intent")
+        return CandidateField(
+            **common,
+            action="keep",
+            value=None,
+            evidence=item.evidence,
+            intent_kind="retain_current",
+            value_source="current",
             status="valid",
         )
-    if item.action == "uncertain":
-        return CandidateField(
-            **common,
-            action="uncertain",
-            value=None,
-            evidence=item.evidence if evidence_matches(text, item.evidence) else "",
-            status="uncertain",
+    if intent == "retain_previous":
+        if item.action != "keep" or not evidence_matches(text, item.evidence):
+            return reject("evidence_missing")
+        if not _targeted_retention(data.form, item.field, item.evidence, text, context):
+            return reject("ambiguous_intent")
+        retained = (
+            next((field for field in previous.fields if field.field == item.field), None)
+            if previous
+            else None
         )
+        if retained is None:
+            return reject(
+                "stale_context" if data.previous_candidate is not None else "reference_missing"
+            )
+        return _candidate_from_previous(retained, previous)
+    if intent == "ambiguous" or item.action == "uncertain":
+        if item.evidence and not evidence_matches(text, item.evidence):
+            return reject("evidence_missing")
+        return reject("ambiguous_intent", uncertain=True)
+    if intent != "explicit_change" or item.action not in ("set", "clear"):
+        return reject("ambiguous_intent")
+
     evidence_ok = evidence_matches(text, item.evidence)
-    valid = False
-    if evidence_ok and item.field in FORM_FIELDS[data.form]:
-        if item.action == "clear":
-            valid = _deletion_requested(item.evidence)
-        else:
-            try:
-                check_value(data.form, item.field, item.value)
-                valid = _grounded(data.form, item.field, item.value, item.evidence, context)
-                valid = valid and _business_ok(
-                    data.form, item.field, item.value, data, context, proposed
-                )
-            except (ValueError, TypeError, KeyError):
-                valid = False
-    if not valid:
-        return CandidateField(
-            **common,
-            action="uncertain",
-            value=None,
-            evidence=item.evidence if evidence_ok else "",
-            status="invalid",
-        )
+    if not evidence_ok:
+        return reject("evidence_missing")
+    if item.action == "clear":
+        if not _targeted_clear(data.form, item.field, item.evidence, text):
+            return reject("ambiguous_intent")
+    else:
+        try:
+            check_value(data.form, item.field, item.value)
+        except (ValueError, TypeError, KeyError):
+            return reject("type_mismatch")
+        if item.value_source in ("previous", "current"):
+            return reject("reference_missing")
+        if not _grounded(data.form, item.field, item.value, item.evidence, context):
+            return reject("unsupported_normalization")
+        if not _business_ok(data.form, item.field, item.value, data, context, proposed):
+            return reject("business_constraint")
+
+    correction = _verified_correction(item, data.form, text, context)
+    if item.correction is not None and correction is None:
+        return reject("correction_unverified", uncertain=True)
     return CandidateField(
-        **common, action=item.action, value=item.value, evidence=item.evidence, status="valid"
+        **common,
+        action=item.action,
+        value=item.value,
+        evidence=item.evidence,
+        status="valid",
+        intent_kind="explicit_change",
+        value_source=item.value_source or "utterance",
+        correction=correction,
     )
 
 
@@ -350,6 +517,7 @@ def review_fields(
     context: AssistContext,
     *,
     text: str | None = None,
+    previous: PreviousCandidate | None = None,
 ) -> tuple[dict[str, CandidateField], list[str]]:
     original = text if text is not None else data.text
     proposed: dict[str, Value] = {}
@@ -372,7 +540,9 @@ def review_fields(
         if item.field not in FORM_FIELDS[data.form]:
             warnings.append("화면에서 쓸 수 없는 후보를 제외했어요.")
             continue
-        result = _review_one(item, source, data, context, proposed, text=original)
+        result = _review_one(
+            item, source, data, context, proposed, text=original, previous=previous
+        )
         if item.field in checked:
             checked[item.field] = CandidateField(
                 field=item.field,
@@ -382,6 +552,7 @@ def review_fields(
                 source=source,
                 status="uncertain",
                 alternatives=[],
+                reason_code="ambiguous_intent",
             )
             warnings.append("한 필드의 중복 후보를 확인해 주세요.")
         else:
@@ -391,18 +562,44 @@ def review_fields(
     return checked, list(dict.fromkeys(warnings))
 
 
-def verified_previous(data: AssistRequest, context: AssistContext) -> PreviousCandidate | None:
+def review_previous(
+    data: AssistRequest, context: AssistContext
+) -> tuple[PreviousCandidate | None, dict[str, ReasonCode]]:
+    """이전 원문 근거 실패와 기준값 변경을 서로 다른 사유로 남긴다."""
     previous = data.previous_candidate
     if previous is None:
-        return None
-    checked, _ = review_fields(previous.fields, "rule", data, context, text=previous.text)
+        return None, {}
+    rejections: dict[str, ReasonCode] = {}
+    eligible: list[FieldIntent] = []
+    for item in previous.fields:
+        if item.action not in ("set", "clear"):
+            continue
+        if (
+            item.field not in previous.baselines
+            or item.field not in data.current
+            or previous.baselines[item.field] != data.current[item.field]
+        ):
+            rejections[item.field] = "stale_context"
+        else:
+            eligible.append(item)
+    checked, _ = review_fields(eligible, "rule", data, context, text=previous.text)
+    for field, item in checked.items():
+        if item.status != "valid":
+            rejections[field] = item.reason_code or "reference_missing"
     valid = [
-        FieldIntent(field=item.field, action=item.action, value=item.value, evidence=item.evidence)
+        FieldIntent(
+            field=item.field,
+            action=item.action,
+            value=item.value,
+            evidence=item.evidence,
+            intent_kind="explicit_change",
+            value_source="utterance",
+        )
         for item in checked.values()
         if item.status == "valid" and item.action in ("set", "clear")
     ]
     if not valid:
-        return None
+        return None, rejections
     return PreviousCandidate(
         request_id=previous.request_id,
         text=previous.text,
@@ -411,11 +608,20 @@ def verified_previous(data: AssistRequest, context: AssistContext) -> PreviousCa
         origins={
             item.field: previous.origins.get(item.field, previous.request_id) for item in valid
         },
-    )
+        baselines={item.field: previous.baselines[item.field] for item in valid},
+    ), rejections
+
+
+def verified_previous(data: AssistRequest, context: AssistContext) -> PreviousCandidate | None:
+    return review_previous(data, context)[0]
 
 
 def _not_action(item: CandidateField | None) -> bool:
-    return item is None or item.action == "keep" and item.status == "valid"
+    return item is None or (
+        item.action == "keep"
+        and item.status == "valid"
+        and item.intent_kind in (None, "no_mention")
+    )
 
 
 def _candidate_from_previous(item: FieldIntent, previous: PreviousCandidate) -> CandidateField:
@@ -428,31 +634,25 @@ def _candidate_from_previous(item: FieldIntent, previous: PreviousCandidate) -> 
         origin_request_id=previous.origins.get(item.field, previous.request_id),
         status="valid",
         alternatives=[],
+        intent_kind="retain_previous",
+        value_source="previous",
     )
 
 
 def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> CandidateField | None:
     if llm is None:
         return rule
-    if rule is None or _not_action(rule):
+    if llm.status in ("invalid", "uncertain"):
+        # 새 정정이 실패하거나 사용자가 미정이라면 규칙의 옛 숫자로 대체하지 않는다.
+        return llm
+    if llm.intent_kind == "retain_current" and llm.status == "valid":
         return llm
     if _not_action(llm):
-        if rule.status == "valid" and rule.action in ("set", "clear"):
-            return CandidateField(
-                field=rule.field,
-                action="uncertain",
-                value=None,
-                evidence="",
-                source="llm",
-                status="uncertain",
-                alternatives=[],
-            )
-        return rule
-    if llm.status == "invalid":
-        return rule if rule.status == "valid" else llm
-    if rule.status == "invalid":
+        # 모델의 미언급은 규칙이 실제 값을 추출한 것에 대한 반박이 아니다.
+        return rule if rule is not None else llm
+    if rule is None or _not_action(rule) or rule.status == "invalid":
         return llm
-    if rule.status == "uncertain" or llm.status == "uncertain":
+    if rule.status == "uncertain":
         return CandidateField(
             field=rule.field,
             action="uncertain",
@@ -461,10 +661,27 @@ def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> Cand
             source="llm",
             status="uncertain",
             alternatives=[],
+            intent_kind="ambiguous",
+            reason_code="ambiguous_intent",
         )
     if rule.status == llm.status == "valid":
         if rule.action == llm.action and rule.value == llm.value:
             return llm
+        # 검증한 정정에서 폐기한 값과 규칙 후보가 정확히 일치하면 채택 값만 남긴다.
+        if (
+            llm.correction is not None
+            and llm.correction.kind == "replace"
+            and rule.action == "set"
+            and rule.value == llm.correction.rejected_value
+        ):
+            return llm
+        if (
+            rule.correction is not None
+            and rule.correction.kind == "replace"
+            and llm.action == "set"
+            and llm.value == rule.correction.rejected_value
+        ):
+            return rule
         return CandidateField(
             field=rule.field,
             action="uncertain",
@@ -472,6 +689,8 @@ def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> Cand
             evidence="",
             source="llm",
             status="conflict",
+            intent_kind="ambiguous",
+            reason_code="ambiguous_intent",
             alternatives=[
                 Alternative(
                     action=rule.action, value=rule.value, evidence=rule.evidence, source="rule"
@@ -484,13 +703,135 @@ def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> Cand
     return llm
 
 
+def _hold(field: str, reason: ReasonCode, source: Source = "rule") -> CandidateField:
+    return CandidateField(
+        field=field,
+        action="uncertain",
+        value=None,
+        evidence="",
+        source=source,
+        status="uncertain",
+        alternatives=[],
+        intent_kind="ambiguous",
+        reason_code=reason,
+    )
+
+
+def _final_state(data: AssistRequest, fields: list[CandidateField]) -> dict[str, Value]:
+    combined = dict(data.current)
+    for item in fields:
+        if item.status == "valid" and item.action in ("set", "clear"):
+            combined[item.field] = item.value if item.action == "set" else None
+    return combined
+
+
+def _combined_period_ok(state: dict[str, Value], context: AssistContext) -> bool:
+    start_raw, end_raw = state.get("start"), state.get("end")
+    excluded = state.get("excluded")
+    if start_raw is not None and not isinstance(start_raw, str):
+        return False
+    if end_raw is not None and not isinstance(end_raw, str):
+        return False
+    start = date.fromisoformat(start_raw) if start_raw else None
+    end = date.fromisoformat(end_raw) if end_raw else None
+    if end and not start:
+        return False
+    if start and start <= context.today:
+        return False
+    if start and end and (end < start or (end - start).days > 62):
+        return False
+    if excluded is None:
+        return True
+    if not isinstance(excluded, list) or len(excluded) > 31 or len(set(excluded)) != len(excluded):
+        return False
+    if excluded and (not start or not end):
+        return False
+    return all(start < date.fromisoformat(value) < end for value in excluded)
+
+
+def _period_combination_failures(
+    state: dict[str, Value], active: dict[str, CandidateField], context: AssistContext
+) -> set[str]:
+    """기간 조합을 깬 필드만 보류하고 독립적인 이전 제외일은 보존한다."""
+    start_raw, end_raw = state.get("start"), state.get("end")
+    start = date.fromisoformat(start_raw) if isinstance(start_raw, str) and start_raw else None
+    end = date.fromisoformat(end_raw) if isinstance(end_raw, str) and end_raw else None
+    failures: set[str] = set()
+    if start and start <= context.today:
+        failures.add("start")
+    if end and not start:
+        failures.update(("start", "end"))
+    if start and end and (end < start or (end - start).days > 62):
+        failures.update(("start", "end"))
+    if failures:
+        return failures & active.keys()
+    excluded = state.get("excluded")
+    invalid_excluded = excluded is not None and (
+        not isinstance(excluded, list)
+        or len(excluded) > 31
+        or len(set(excluded)) != len(excluded)
+        or bool(excluded)
+        and (start is None or end is None)
+        or isinstance(excluded, list)
+        and bool(excluded)
+        and start is not None
+        and end is not None
+        and any(not start < date.fromisoformat(day) < end for day in excluded)
+    )
+    if invalid_excluded:
+        changed_edges = {field for field in ("start", "end") if field in active}
+        if changed_edges and (
+            "excluded" not in active or active["excluded"].value_source == "previous"
+        ):
+            failures.update(changed_edges)
+        else:
+            failures.add("excluded")
+    return failures & active.keys()
+
+
+def finalize_candidates(
+    data: AssistRequest, context: AssistContext, fields: list[CandidateField]
+) -> list[CandidateField]:
+    """규칙·모델·이전값을 합친 후 실제 폼 조합을 검증한다."""
+    active = {
+        item.field: item
+        for item in fields
+        if item.status == "valid" and item.action in ("set", "clear")
+    }
+    if not active:
+        return fields
+    state = _final_state(data, fields)
+    failures: set[str] = set()
+    # 개별 검증 뒤 조합이 달라져 달력 조건을 깨뜨릴 수 있으므로 다시 검사한다.
+    if data.form == "period":
+        if not _combined_period_ok(state, context):
+            failures.update(_period_combination_failures(state, active, context))
+    else:
+        proposed = {item.field: item.value for item in active.values() if item.action == "set"}
+        for field, item in active.items():
+            if item.action == "set" and not _business_ok(
+                data.form, field, item.value, data, context, proposed
+            ):
+                failures.add(field)
+    return [
+        _hold(item.field, "combined_constraint", item.source) if item.field in failures else item
+        for item in fields
+    ]
+
+
 def merge_candidates(
     data: AssistRequest,
     context: AssistContext,
     rule: dict[str, CandidateField],
     model: dict[str, CandidateField] | None,
     previous: PreviousCandidate | None,
+    *,
+    decisions: dict[str, dict[str, str | None]] | None = None,
+    merged_out: list[CandidateField] | None = None,
+    previous_rejected: dict[str, ReasonCode] | None = None,
 ) -> list[CandidateField]:
+    if previous_rejected is None:
+        _, previous_rejected = review_previous(data, context)
     prior = (
         {item.field: _candidate_from_previous(item, previous) for item in previous.fields}
         if previous
@@ -502,7 +843,20 @@ def merge_candidates(
         m = model.get(field) if model is not None else None
         chosen = _merge_pair(r, m) if model is not None else r
         if chosen is None or _not_action(chosen):
-            chosen = prior.get(field, chosen)
+            if field in prior:
+                if _mentions_field(data.form, field, data.text, context):
+                    chosen = _hold(field, "ambiguous_intent", "llm" if model else "rule")
+                else:
+                    chosen = prior[field]
+            elif data.previous_candidate and any(
+                item.field == field and item.action in ("set", "clear")
+                for item in data.previous_candidate.fields
+            ):
+                chosen = _hold(
+                    field,
+                    previous_rejected.get(field, "reference_missing"),
+                    "llm" if model else "rule",
+                )
         if chosen is None:
             chosen = CandidateField(
                 field=field,
@@ -512,6 +866,24 @@ def merge_candidates(
                 source="llm" if model is not None else "rule",
                 status="valid",
                 alternatives=[],
+                intent_kind="no_mention",
             )
         out.append(chosen)
-    return out
+        if decisions is not None:
+            decisions[field] = {
+                "rule": r.status if r else None,
+                "model": m.status if m else None,
+                "previous": previous_rejected.get(field) or ("valid" if field in prior else None),
+                "choice": chosen.status,
+                "intent": chosen.intent_kind,
+                "reason_code": chosen.reason_code,
+                "origin_request_id": chosen.origin_request_id,
+            }
+    if merged_out is not None:
+        merged_out.extend(out)
+    final = finalize_candidates(data, context, out)
+    if decisions is not None:
+        for item in final:
+            decisions[item.field]["choice"] = item.status
+            decisions[item.field]["reason_code"] = item.reason_code
+    return final

@@ -19,6 +19,7 @@ type Candidate = {
   source: "llm";
   status: "valid";
   alternatives: [];
+  origin_request_id?: string;
 };
 type RecordedRequest = { method: string; path: string; body: Record<string, unknown> | null };
 type TestState = { requests: RecordedRequest[]; pending: number };
@@ -201,6 +202,122 @@ test("Enter는 한 번 전송하고 Shift+Enter는 줄만 바꾼다", async ({ p
   expect(writes(await recorded(request))).toHaveLength(0);
 });
 
+test("견적 origin baseline: 연속 3회 전송에서 최초 금액·기간 기준값과 출처를 그대로 전달한다", async ({ page, request }) => {
+  const assistant = await open(page, `/vendor/requests/${VISITED}/quote`);
+  const amount = page.getByLabel("견적 금액", { exact: true });
+  const days = page.getByLabel("공사 기간", { exact: true });
+  const valid = page.getByLabel("유효기간", { exact: true });
+  await expect(amount).toHaveValue("2,970,000");
+  await expect(days).toHaveValue("2");
+
+  const firstText = "견적은 455만 원으로 변경해 주세요";
+  await queueAnswer(request, { fields: [set("amount", 4_550_000, "455만 원")] });
+  await send(page, firstText);
+  await expectInterpretCount(request, 1);
+  await expect(assistant.getByRole("checkbox", { name: "금액 적용 선택" })).toBeChecked();
+  const firstCall = interpreted(await recorded(request))[0];
+  const firstId = firstCall.body?.request_id;
+  expect(typeof firstId).toBe("string");
+  expect(firstCall.body?.previous_candidate).toBeNull();
+
+  const secondText = "공사 기간을 3일로 바꿔 주세요";
+  await queueAnswer(request, { fields: [
+    { ...set("amount", 4_550_000, "455만 원"), origin_request_id: String(firstId) },
+    set("days", 3, "공사 기간을 3일"),
+  ] });
+  await send(page, secondText);
+  await expectInterpretCount(request, 2);
+  await expect(assistant.getByRole("checkbox", { name: "공사할 날 적용 선택" })).toBeChecked();
+  const secondCall = interpreted(await recorded(request))[1];
+  const secondId = secondCall.body?.request_id;
+  expect(typeof secondId).toBe("string");
+  expect(secondCall.body?.current).toMatchObject({ amount: 2_970_000, days: 2 });
+  expect(secondCall.body?.previous_candidate).toMatchObject({
+    request_id: firstId,
+    text: firstText,
+    fields: [{ field: "amount", action: "set", value: 4_550_000, evidence: "455만 원" }],
+    baselines: { amount: 2_970_000 },
+    sources: { amount: "llm" },
+    origins: { amount: firstId },
+  });
+
+  await queueAnswer(request, { fields: [
+    { ...set("amount", 4_550_000, "455만 원"), origin_request_id: String(firstId) },
+    { ...set("days", 3, "공사 기간을 3일"), origin_request_id: String(secondId) },
+    set("valid", "2027-12-31", "2027-12-31까지"),
+  ] });
+  await send(page, "유효기간 2027-12-31까지로 해 주세요");
+  await expectInterpretCount(request, 3);
+  await expect(assistant.getByRole("checkbox", { name: "유효기간 적용 선택" })).toBeChecked();
+  const thirdCall = interpreted(await recorded(request))[2];
+  expect(thirdCall.body?.previous_candidate).toMatchObject({
+    request_id: secondId,
+    text: `${firstText}\n${secondText}`,
+    fields: [
+      { field: "amount", action: "set", value: 4_550_000, evidence: "455만 원" },
+      { field: "days", action: "set", value: 3, evidence: "공사 기간을 3일" },
+    ],
+    baselines: { amount: 2_970_000, days: 2 },
+    sources: { amount: "llm", days: "llm" },
+    origins: { amount: firstId, days: secondId },
+  });
+  expect(writes(await recorded(request))).toHaveLength(0);
+  await expect(amount).toHaveValue("2,970,000");
+  await expect(days).toHaveValue("2");
+
+  await assistant.getByRole("button", { name: "폼에 적용" }).click();
+  await expect(amount).toHaveValue("4,550,000");
+  await expect(days).toHaveValue("3");
+  await expect(valid).toHaveValue("2027-12-31");
+  await expect.poll(async () => (await recorded(request)).filter((entry) =>
+    entry.method === "PUT" && entry.path === QUOTE_PATH).length).toBe(1);
+  expect((await recorded(request)).some((entry) => entry.path === `${QUOTE_PATH}/send`)).toBe(false);
+});
+
+test("견적 stale baseline: 금액 수동 변경 뒤 다음 전송은 옛 금액 후보를 제외하고 기간만 적용한다", async ({ page, request }) => {
+  const assistant = await open(page, `/vendor/requests/${VISITED}/quote`);
+  const amount = page.getByLabel("견적 금액", { exact: true });
+  const days = page.getByLabel("공사 기간", { exact: true });
+  await expect(amount).toHaveValue("2,970,000");
+  await expect(days).toHaveValue("2");
+
+  await queueAnswer(request, { fields: [set("amount", 4_550_000, "455만 원")] });
+  await send(page, "견적은 455만 원으로 고쳐 주세요");
+  await expectInterpretCount(request, 1);
+  await expect(assistant.getByRole("checkbox", { name: "금액 적용 선택" })).toBeChecked();
+  expect(writes(await recorded(request))).toHaveLength(0);
+
+  await amount.fill("6000000");
+  await expect(amount).toHaveValue("6,000,000");
+  // 업체가 직접 수정한 값의 정상적인 자동 임시 저장은 허용해요.
+  await expect.poll(async () => (await recorded(request)).filter((entry) =>
+    entry.method === "PUT" && entry.path === QUOTE_PATH && entry.body?.entered_amount === 6_000_000).length).toBe(1);
+
+  await queueAnswer(request, { fields: [set("days", 3, "공사 기간 3일")] });
+  await send(page, "공사 기간만 3일로 바꿔 주세요");
+  await expectInterpretCount(request, 2);
+  const secondCall = interpreted(await recorded(request))[1];
+  expect(secondCall.body?.current).toMatchObject({ amount: 6_000_000, days: 2 });
+  expect(secondCall.body?.previous_candidate).toBeNull();
+  expect(JSON.stringify(secondCall.body)).not.toContain("4550000");
+
+  const preview = assistant.locator('[aria-label="변경 후보"]');
+  await expect(preview).toBeVisible();
+  await expect(assistant.getByRole("checkbox", { name: "금액 적용 선택" })).toHaveCount(0);
+  await expect(preview).not.toContainText("4,550,000");
+  await expect(assistant.getByRole("checkbox", { name: "공사할 날 적용 선택" })).toBeChecked();
+  await expect(amount).toHaveValue("6,000,000");
+  await expect(days).toHaveValue("2");
+
+  await assistant.getByRole("button", { name: "폼에 적용" }).click();
+  await expect(amount).toHaveValue("6,000,000");
+  await expect(days).toHaveValue("3");
+  const all = await recorded(request);
+  expect(all.filter((entry) => entry.method === "PUT" && entry.path === QUOTE_PATH)
+    .every((entry) => entry.body?.entered_amount === 6_000_000)).toBe(true);
+  expect(all.some((entry) => entry.path === `${QUOTE_PATH}/send`)).toBe(false);
+});
+
 test("견적: 800ms가 지나도 후보만으로 PUT이 없고 부분 적용 후에만 자동 저장한다", async ({ page, request }) => {
   const assistant = await open(page, `/vendor/requests/${VISITED}/quote`);
   const amount = page.getByLabel("견적 금액", { exact: true });
@@ -305,7 +422,7 @@ test("HTTP 503: 규칙 후보로 되돌아가도 적용 확인 전에는 저장�
   await queueAnswer(request, { status: 503, message: "시험 모델 장애" });
   await send(page, "견적 455만 원으로 바꿔 주세요");
   await expectInterpretCount(request, 1);
-  await expect(assistant.getByRole("status")).toContainText("규칙으로 읽은 후보만 보여 드려요");
+  await expect(assistant.getByRole("status")).toContainText("규칙으로 읽은 이번 메시지의 후보만 보여 드려요");
   await expect(assistant.getByRole("checkbox", { name: "금액 적용 선택" })).toBeEnabled();
   await expect(page.getByLabel("견적 금액", { exact: true })).toHaveValue("2,970,000");
   expect(writes(await recorded(request))).toHaveLength(0);

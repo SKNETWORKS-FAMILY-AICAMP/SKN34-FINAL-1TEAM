@@ -35,6 +35,51 @@ test("공사 날짜 · 추가 금액", () => {
   assert.deepEqual(x, { amount: 120_000, vat: "included", title: "곰팡이 방지 처리", reason: "벽 안쪽까지 곰팡이가 퍼져서" });
 });
 
+test("날짜 축약 목록은 월을 상속하되 목록을 임의의 기간으로 확장하지 않아요", () => {
+  const expected = ["2026-12-11", "2026-12-12", "2026-12-13"];
+  assert.deepEqual(parseDates("12/11,12,13일", T, "2026-11-01"), { days: expected, crew: undefined });
+  assert.deepEqual(parseDates("12월11,12,13일", T, "2026-11-01"), { days: expected, crew: undefined });
+  assert.deepEqual(parseDates("12/11,13일", T, "2026-11-01"), { days: ["2026-12-11", "2026-12-13"], crew: undefined });
+  assert.equal(parseDates("12/11,32,13일", T, "2026-11-01"), null);
+  assert.equal(parseDates("2/30,31,1일", T, "2026-11-01"), null);
+  assert.deepEqual(parseDates("12월7일부터9일까지, 네 명", T, "2026-11-01"), {
+    days: ["2026-12-07", "2026-12-08", "2026-12-09"], crew: 4,
+  });
+  assert.deepEqual(parsePeriod("12월7일부터9일까지", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("12월7일~9일", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("12/7~9일", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+});
+
+test("한국어 인원 수량만 읽고 응답·애매한 인원 범위를 제외해요", () => {
+  for (const [word, crew] of [["한", 1], ["두", 2], ["세", 3], ["네", 4]] as const) {
+    assert.deepEqual(parseDates(`작업자 ${word} 명`, T), { days: [], crew });
+  }
+  assert.equal(parseDates("네, 일정은 그대로", T), null);
+  assert.equal(parseDates("두세 명", T), null);
+  assert.equal(parseDates("두 세 명", T), null);
+  assert.equal(parseDates("두~세 명", T), null);
+  assert.equal(parseDates("104명", T), null);
+  assert.equal(parseDates("123명", T), null);
+  assert.deepEqual(parseDates("12/8부터 12/10까지, 두세 명", T), {
+    days: ["2026-12-08", "2026-12-09", "2026-12-10"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8부터 12/10까지, 2~3명", T), {
+    days: ["2026-12-08", "2026-12-09", "2026-12-10"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8, 12/9, 2명~3명", T), {
+    days: ["2026-12-08", "2026-12-09"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8, 12/9, 104명", T), {
+    days: ["2026-12-08", "2026-12-09"], crew: undefined,
+  });
+});
+
 test("리뷰 회귀: 부정 · 정정 표현", () => {
   assert.equal(parseQuote("부가세 포함 아닙니다", T).vat, undefined);
   assert.equal(parseQuote("부가세 포함 아닙니다, 부가세 별도예요", T).vat, "excluded");

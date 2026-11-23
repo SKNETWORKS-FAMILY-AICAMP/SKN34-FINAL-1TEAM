@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
-from collections import Counter
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from evaluation.vendor_assist import make_dataset
 from evaluation.vendor_assist.metrics import (
     FIELDS,
     load_cases,
@@ -22,24 +19,20 @@ from evaluation.vendor_assist.metrics import (
     summarize,
     valid_value,
     validate_case,
-    validate_corpus,
 )
 
 DATA = Path(__file__).resolve().parents[1] / "vendor_assist"
 
 
 @pytest.fixture(scope="module")
-def corpus():
-    return load_cases(DATA / "dev.jsonl"), load_cases(DATA / "heldout.jsonl")
+def dev_cases():
+    """개발용 검증은 held-out 파일을 열지 않는다."""
+    return load_cases(DATA / "dev.jsonl")
 
 
-def _case(corpus, *, form="quote", kind="simple"):
+def _case(dev_cases, *, form="quote", kind="simple"):
     return deepcopy(
-        next(
-            x
-            for x in [*corpus[0], *corpus[1]]
-            if x["form"] == form and x["kind"] == kind
-        )
+        next(x for x in dev_cases if x["form"] == form and x["kind"] == kind)
     )
 
 
@@ -55,81 +48,24 @@ def _prediction(case, changes=None):
     }
 
 
-def test_corpus_has_144_distinct_cases_2_to_1_per_form(corpus):
-    dev, heldout = corpus
-    assert validate_corpus(dev, heldout) == {
-        "total": 144,
-        "dev": 96,
-        "heldout": 48,
-        "per_form": {"period": 36, "quote": 36, "dates": 36, "extra": 36},
-    }
-    for form in FIELDS:
-        assert sum(x["form"] == form for x in dev) == 24
-        assert sum(x["form"] == form for x in heldout) == 12
-    assert len({case["text"] for case in [*dev, *heldout]}) == 144
-
-
-def test_all_kinds_and_critical_corrections_covered(corpus):
-    cases = [*corpus[0], *corpus[1]]
-    kinds = Counter(case["kind"] for case in cases)
-    assert len(kinds) == 12
-    assert set(kinds.values()) == {12}
-    tags = {tag for case in cases for tag in case["tags"]}
-    assert {
-        "amount_correction",
-        "duration_correction",
-        "vat_negation",
-        "double_negation",
-        "multi_date_exclusion",
-        "previous_correction",
-        "no_action",
-        "clear",
-    } <= tags
-    assert all(
-        case["human_verified"] is False and case["reviewed_by"] is None
-        for case in cases
-    )
-    assert all(set(case["expected"]) == set(FIELDS[case["form"]]) for case in cases)
-
-
-def test_previous_candidate_has_complete_original_fields_and_evidence(corpus):
-    previous = [x for x in [*corpus[0], *corpus[1]] if x["previous_candidate"]]
-    assert len(previous) >= 24
-    for case in previous:
-        first = case["previous_candidate"]
-        assert len(first["fields"]) == len(FIELDS[case["form"]])
-        for field in first["fields"]:
-            if field["action"] == "set":
-                assert field["evidence"] in first["text"]
-
-
-def test_generator_is_deterministic_and_files_match(corpus):
-    generated = make_dataset.build()
-    for split in ("dev", "heldout"):
-        expected = "".join(
-            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
-            for row in generated[split]
-        )
-        assert (DATA / f"{split}.jsonl").read_text(encoding="utf-8") == expected
-
-
-def test_rejects_boolean_as_amount_and_invalid_dates(corpus):
+def test_rejects_boolean_as_amount_and_invalid_dates(dev_cases):
     assert not valid_value("quote", "amount", True)
     assert not valid_value("quote", "days", 2.0)
     assert not valid_value("period", "start", "2026-02-31")
     assert not valid_value("dates", "days", ["2026-12-02", "2026-12-02"])
-    case = _case(corpus)
+    case = _case(dev_cases)
     case["expected"]["amount"] = {"action": "clear", "value": 3_000_000}
     with pytest.raises(ValueError, match="value는 null"):
         validate_case(case)
 
 
-def test_heldout_guard_uses_internal_metadata_even_if_renamed(corpus):
-    dev, heldout = corpus
-    assert requires_final(Path("renamed.jsonl"), heldout[:1], final=False)
-    assert requires_final(Path("held-out.jsonl"), dev[:1], final=False)
-    assert not requires_final(Path("renamed.jsonl"), heldout[:1], final=True)
-    assert not requires_final(Path("dev.jsonl"), dev[:1], final=False)
+def test_heldout_guard_uses_internal_metadata_even_if_renamed(dev_cases):
+    case = deepcopy(dev_cases[0])
+    case["split"] = "heldout"  # 가상 분할 표기만 사용
+    assert requires_final(Path("renamed.jsonl"), [case], final=False)
+    assert requires_final(Path("held-out.jsonl"), dev_cases[:1], final=False)
+    assert not requires_final(Path("renamed.jsonl"), [case], final=True)
+    assert not requires_final(Path("dev.jsonl"), dev_cases[:1], final=False)
 
 
 def test_rule_missing_fields_are_keep_not_clear():
@@ -165,8 +101,8 @@ def test_unvalidated_conflict_is_not_an_actionable_candidate():
         )
 
 
-def test_wrong_set_is_both_false_candidate_and_omitted_correct_value(corpus):
-    case = _case(corpus)
+def test_wrong_set_is_both_false_candidate_and_omitted_correct_value(dev_cases):
+    case = _case(dev_cases)
     report = summarize(
         [case],
         [_prediction(case, {"amount": {"action": "set", "value": 4_600_000}})],
@@ -180,8 +116,8 @@ def test_wrong_set_is_both_false_candidate_and_omitted_correct_value(corpus):
     assert report["exact_cases"] == 0
 
 
-def test_keep_on_unmentioned_field_is_not_false_candidate(corpus):
-    case = _case(corpus, kind="no_action")
+def test_keep_on_unmentioned_field_is_not_false_candidate(dev_cases):
+    case = _case(dev_cases, kind="no_action")
     report = summarize([case], [_prediction(case)], runner="test")
     assert report["exact_cases"] == 1
     assert report["false_candidates"] == 0
@@ -196,8 +132,8 @@ def test_keep_on_unmentioned_field_is_not_false_candidate(corpus):
     assert changed["omissions"] == 0
 
 
-def test_explicit_clear_matters_and_keep_is_omission(corpus):
-    case = _case(corpus, kind="clear")
+def test_explicit_clear_matters_and_keep_is_omission(dev_cases):
+    case = _case(dev_cases, kind="clear")
     field = next(
         f for f in FIELDS[case["form"]] if case["expected"][f]["action"] == "clear"
     )
@@ -212,8 +148,8 @@ def test_explicit_clear_matters_and_keep_is_omission(corpus):
     assert asserted["exact_cases"] == 1
 
 
-def test_conflict_and_errors_get_no_automatic_apply_credit(corpus):
-    case = _case(corpus)
+def test_conflict_and_errors_get_no_automatic_apply_credit(dev_cases):
+    case = _case(dev_cases)
     field = "amount"
     uncertain = _prediction(
         case, {field: {"action": "uncertain", "value": None, "status": "conflict"}}
@@ -239,9 +175,9 @@ def test_conflict_and_errors_get_no_automatic_apply_credit(corpus):
     assert errored["omissions"] == 1
 
 
-def test_provider_timeout_caught_by_service_is_still_counted_separately(corpus):
+def test_provider_timeout_caught_by_service_is_still_counted_separately(dev_cases):
     """모델 실패를 규칙 후보로 복구하면 필드 점수는 유지하고 오류율에는 반영한다."""
-    case = _case(corpus)
+    case = _case(dev_cases)
     fallback = _prediction(case)
     fallback.update(
         {
@@ -283,8 +219,8 @@ def test_provider_wrapper_records_exception_before_fallback_handles_it():
     assert usage == {}
 
 
-def test_rejects_unexpected_output_as_error_instead_of_crashing(corpus):
-    case = _case(corpus)
+def test_rejects_unexpected_output_as_error_instead_of_crashing(dev_cases):
+    case = _case(dev_cases)
     bad = _prediction(case, {"unexpected": {"action": "set", "value": 10}})
     report = summarize([case], [bad], runner="test")
     assert report["error_count"] == 1
@@ -292,25 +228,36 @@ def test_rejects_unexpected_output_as_error_instead_of_crashing(corpus):
     assert "InvalidCandidate" in report["rows"][0]["error"]
 
 
-def test_tokens_cost_and_latency_never_invent_missing_numbers(corpus):
+def test_tokens_cost_and_latency_never_invent_missing_numbers(dev_cases):
     usage = {"input_tokens": 1000, "cached_tokens": 200, "output_tokens": 400}
     prices = {"input": Decimal(1), "output": Decimal(5), "cached": Decimal("0.05")}
     assert price_for_usage(usage, prices) == pytest.approx(0.00281)
     assert price_for_usage(usage, {**prices, "cached": None}) is None
     assert price_for_usage({"input_tokens": 1000, "output_tokens": 400}, prices) is None
     assert price_for_usage(usage, None) is None
-    case = _case(corpus)
+    case = _case(dev_cases)
     report = summarize([case], [_prediction(case)], runner="test")
     assert report["cost_usd"] is None
     assert report["usage"]["input_tokens"] is None
     assert report["latency_ms"] == {"count": 1, "mean": 3.0, "p50": 3.0, "p95": 3.0}
 
 
-def test_live_unreviewed_heldout_is_blocked_before_any_inference(capsys):
-    from evaluation.vendor_assist.run import main
+def test_live_unreviewed_heldout_is_blocked_before_any_inference(
+    monkeypatch, dev_cases, capsys
+):
+    from evaluation.vendor_assist import run
+
+    synthetic = deepcopy(dev_cases[0])
+    synthetic["split"] = "heldout"
+    monkeypatch.setattr(run, "load_cases", lambda path: [synthetic])
+
+    def fail_before_inference(*args, **kwargs):
+        raise AssertionError("허가 거부 후 파서는 호출되면 안 됩니다")
+
+    monkeypatch.setattr(run, "rule_outputs", fail_before_inference)
 
     assert (
-        main(
+        run.main(
             [
                 "--split",
                 "heldout",
@@ -326,15 +273,20 @@ def test_live_unreviewed_heldout_is_blocked_before_any_inference(capsys):
     assert "미검수" in capsys.readouterr().err
 
 
-def test_heldout_without_final_is_blocked_before_any_inference(capsys):
-    from evaluation.vendor_assist.run import main
+def test_heldout_without_final_is_blocked_before_any_file_read(monkeypatch, capsys):
+    from evaluation.vendor_assist import run
 
-    assert main(["--split", "heldout", "--mode", "rule"]) == 2
+    def no_file_read(*args, **kwargs):
+        raise AssertionError("알려진 held-out 파일을 미리 열면 안 됩니다")
+
+    monkeypatch.setattr(run, "load_cases", no_file_read)
+    assert run.main(["--split", "heldout", "--mode", "rule"]) == 2
+    assert run.main(["--data", str(DATA / "heldout.jsonl"), "--mode", "rule"]) == 2
     assert "--final" in capsys.readouterr().err
 
 
 def test_default_hybrid_mode_is_offline_even_if_host_environment_is_live(
-    monkeypatch, corpus, capsys
+    monkeypatch, dev_cases, capsys
 ):
     from evaluation.vendor_assist import run
 
@@ -344,8 +296,8 @@ def test_default_hybrid_mode_is_offline_even_if_host_environment_is_live(
     def fake_rule(cases, **kwargs):
         return [_prediction(case) for case in cases]
 
-    async def fake_hybrid(cases, rules, *, live, timeout):
-        observed.append(live)
+    async def fake_hybrid(cases, rules, *, live, timeout, use_model, capture_trace):
+        observed.append((live, use_model, capture_trace))
         return rules
 
     monkeypatch.setattr(run, "rule_outputs", fake_rule)
@@ -365,7 +317,7 @@ def test_default_hybrid_mode_is_offline_even_if_host_environment_is_live(
         )
         == 0
     )
-    assert observed == [False]
+    assert observed == [(False, True, False)]
     assert "ai_draft_unreviewed" in capsys.readouterr().out
 
 
@@ -381,11 +333,11 @@ def test_live_on_unreviewed_dev_needs_explicit_diagnostic_flag(monkeypatch, caps
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node 실행기가 없습니다")
-def test_rule_bridge_invokes_existing_typescript_parser(corpus):
+def test_rule_bridge_invokes_existing_typescript_parser(dev_cases):
     from evaluation.vendor_assist.run import rule_outputs
 
-    period = _case(corpus, form="period", kind="simple")
-    quote = _case(corpus, form="quote", kind="simple")
+    period = _case(dev_cases, form="period", kind="simple")
+    quote = _case(dev_cases, form="quote", kind="simple")
     results = rule_outputs([period, quote])
     assert all(x["error"] is None and x["source"] == "rule" for x in results)
     assert normalize_fields("period", results[0]["fields"])["start"] == {
@@ -398,8 +350,8 @@ def test_rule_bridge_invokes_existing_typescript_parser(corpus):
     }
 
 
-def test_conflicting_selectable_options_are_reported_separately(corpus):
-    case = _case(corpus)
+def test_conflicting_selectable_options_are_reported_separately(dev_cases):
+    case = _case(dev_cases)
     expected = case["expected"]["amount"]["value"]
     outcome = _prediction(case)
     outcome["fields"] = [

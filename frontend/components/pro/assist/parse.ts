@@ -223,13 +223,40 @@ export function parseQuote(text: string, today: string): QuoteFill {
 
 export type DatesFill = { days: string[]; crew?: number };
 
+/** 명시적 월 뒤에 압축된 목록("12/11,12,13일")의 중간 숫자만 날짜로 읽어요. */
+function expandDateList(text: string, today: string): string | null {
+  let invalid = false;
+  const rewritten = text.replace(
+    /\d{1,2}\s*(?:\/|\.|월)\s*\d{1,2}\s*일?(?:\s*,\s*\d{1,2})+\s*일(?!\s*(?:간|동안|정도))/g,
+    (list) => {
+      const parts = list.split(",").map((part) => part.trim());
+      const anchor = parts[0].match(/^(\d{1,2})\s*(?:\/|\.|월)\s*(\d{1,2})/);
+      if (!anchor || parts.some((part, i) => {
+        const day = i === 0 ? Number(anchor[2]) : Number(part.match(/^\d{1,2}/)?.[0]);
+        return !iso(Number(anchor[1]), day, today);
+      })) {
+        invalid = true;
+        return list;
+      }
+      return parts.map((part) => part.endsWith("일") ? part : `${part}일`).join(", ");
+    },
+  );
+  return invalid ? null : rewritten;
+}
+
 /** 공사 날짜: "12/8부터 12/10까지, 2명" → 그 사이 날 모두(안 된다고 한 날 · 공휴일 빼고, noWeekend면 토 · 일도 빼고).
  *  "12/8, 12/9, 12/11"처럼 늘어놓으면 그 날만(말한 날은 주말이어도 그대로 두고 서버가 다시 봐요) */
 export function parseDates(text: string, today: string, baseMonth?: string | null, holidays: string[] = [], noWeekend = false): DatesFill | null {
-  // 인원: "2~3명"이나 서로 다른 인원이면 비워요
-  const crews = new Set([...text.matchAll(/(\d)\s*명/g)].map((m) => Number(m[1])));
-  const crew = !/\d\s*[~\-–∼]\s*\d\s*명/.test(text) && crews.size === 1 ? [...crews][0] : undefined;
-  const said = text.replace(/\d\s*(?:[~\-–∼]\s*\d\s*)?명/g, "");
+  // 인원 단위가 있는 "한/두/세/네 명"만 읽어요. "네, ..."는 응답이고 "두세 명"은 범위예요.
+  const native: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4 };
+  const crewTerm = /(?<![가-힣\d])(?:(\d{1,2})|(한|두|세|네))\s*명/g;
+  const ambiguous = /(?:\d{1,2}|한|두|세|네)\s*명\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:\d{1,2}|한|두|세|네)\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:한|두|세|네)\s*(?:한|두|세|네)\s*명/;
+  const crews = new Set([...text.matchAll(crewTerm)].map((m) => m[1] ? Number(m[1]) : native[m[2]]));
+  const crew = !ambiguous.test(text) && crews.size === 1 ? [...crews][0] : undefined;
+  const said = text.replace(
+    /(?:\d{1,2}|한|두|세|네)\s*명\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:\d{1,2}|한|두|세|네)\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:한|두|세|네)\s*(?:한|두|세|네)\s*명|(?<![가-힣\d])(?:\d{1,2}|한|두|세|네)\s*명/g,
+    "",
+  );
   const days: string[] = [];
   if (RANGE.test(said)) {
     const p = parsePeriod(said, today, baseMonth);
@@ -241,7 +268,8 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
   } else {
     const month: Month = { m: Number((baseMonth ?? today).slice(5, 7)) };
     const skip = new Set(holidays);
-    const got = FIX.test(said) ? [] : partsOf(said).filter((x) => !NO.test(x)).flatMap((x) => daysIn(x, today, month, true));
+    const expanded = expandDateList(said, today);
+    const got = FIX.test(said) || expanded === null ? [] : partsOf(expanded).filter((x) => !NO.test(x)).flatMap((x) => daysIn(x, today, month, true));
     if (!month.bad) days.push(...[...new Set(got)].filter((d) => !skip.has(d)).sort());
   }
   if (!days.length && !crew) return null;

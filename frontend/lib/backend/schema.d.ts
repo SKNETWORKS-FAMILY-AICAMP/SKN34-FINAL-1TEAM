@@ -3087,12 +3087,16 @@ export interface components {
             value: components["schemas"]["Value"];
             /** Evidence */
             evidence: string;
+            intent_kind?: components["schemas"]["IntentKind"] | null;
+            value_source?: components["schemas"]["ValueSource"] | null;
+            correction?: components["schemas"]["CorrectionRelation"] | null;
             source: components["schemas"]["Source"];
             status: components["schemas"]["Status"];
             /** Alternatives */
             alternatives: components["schemas"]["Alternative"][];
             /** Origin Request Id */
             origin_request_id?: string | null;
+            reason_code?: components["schemas"]["ReasonCode"] | null;
         };
         /**
          * ChangeOut
@@ -3349,6 +3353,22 @@ export interface components {
             visit_fee: number | null;
             /** Visit Fee Refund */
             visit_fee_refund: boolean;
+        };
+        /**
+         * CorrectionRelation
+         * @description 이번 입력의 폐기 값과 채택 값 사이에 모델이 제안한 관계.
+         */
+        CorrectionRelation: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "replace" | "reject" | "ambiguous";
+            rejected_value: components["schemas"]["Value"];
+            /** Rejected Evidence */
+            rejected_evidence: string;
+            /** Accepted Evidence */
+            accepted_evidence: string;
         };
         /**
          * DateRequestIn
@@ -4098,6 +4118,9 @@ export interface components {
             value: components["schemas"]["Value"];
             /** Evidence */
             evidence: string;
+            intent_kind?: components["schemas"]["IntentKind"] | null;
+            value_source?: components["schemas"]["ValueSource"] | null;
+            correction?: components["schemas"]["CorrectionRelation"] | null;
         };
         /** FileOut */
         FileOut: {
@@ -4566,6 +4589,8 @@ export interface components {
              */
             sched: number;
         };
+        /** @enum {string} */
+        IntentKind: "no_mention" | "retain_current" | "retain_previous" | "explicit_change" | "ambiguous";
         /**
          * JobOut
          * @description 업체 공사 날짜 내기 화면
@@ -5655,6 +5680,10 @@ export interface components {
             origins?: {
                 [key: string]: string;
             };
+            /** Baselines */
+            baselines?: {
+                [key: string]: components["schemas"]["Value"];
+            };
         };
         /**
          * PriceFileIn
@@ -6618,6 +6647,8 @@ export interface components {
             /** License File Id */
             license_file_id?: string | null;
         };
+        /** @enum {string} */
+        ReasonCode: "evidence_missing" | "unsupported_normalization" | "type_mismatch" | "business_constraint" | "stale_context" | "ambiguous_intent" | "combined_constraint" | "reference_missing" | "correction_unverified";
         /** RecentOut */
         RecentOut: {
             /** Requested */
@@ -10236,6 +10267,8 @@ export interface components {
             ctx?: Record<string, never>;
         };
         Value: string | number | string[] | null;
+        /** @enum {string} */
+        ValueSource: "utterance" | "current" | "previous" | "derived";
         /** VendorAdminDetailOut */
         VendorAdminDetailOut: {
             /**

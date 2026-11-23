@@ -3,7 +3,7 @@ import { AssistApiError, interpretAssist } from "./api";
 import {
   type AssistCurrent, type AssistForm, type AssistRequest, type AssistResponse,
   type AssistValue, type CandidateField, type RuleOptions,
-  copyCurrent, formKeys, mergeKeptFields, previousCandidate, readResponse, sameValue, validCombinedPeriod,
+  copyCurrent, formKeys, freshPrevious, mergeKeptFields, previousCandidate, readResponse, sameValue, validCombinedPeriod,
 } from "./protocol";
 import { ruleFields, ruleResponse } from "./rules";
 
@@ -123,11 +123,12 @@ export class AssistSession {
     const priorChoices = this.state.choices;
     const priorBaselines = this.baselines;
     const priorContext = before ? this.contextText : "";
+    // 새 후보는 이번 Send 순간의 폼을 기준으로 삼아요. 이전 후보는 최초 Send의 기준값과 비교해요.
+    const snapshot = copyCurrent(this.form, current);
     // 직전 후보 원문과 새 글을 함께 보낼 수 있는 길이 안에서만 문맥을 잇습니다.
     const keepPrior = !!before && priorContext.length + utterance.length + 1 <= 1000;
-    const previous = keepPrior ? before : null;
+    const previous = keepPrior ? freshPrevious(before, priorBaselines, snapshot) : null;
     const context = previous ? priorContext + "\n" + utterance : utterance;
-    const snapshot = copyCurrent(this.form, current);
     const opts: RuleOptions = {
       ...options, holidays: [...(options.holidays ?? [])], vatModes: [...(options.vatModes ?? [])],
       immutableFields: [...(options.immutableFields ?? [])],
@@ -154,7 +155,8 @@ export class AssistSession {
       resource_id: this.resourceId,
       text: utterance,
       current: snapshot,
-      previous_candidate: previous ? previousCandidate(previous, priorContext) : null,
+      previous_candidate: previous && priorBaselines
+        ? previousCandidate(previous, priorContext, priorBaselines) : null,
       rule_fields: parsed,
     };
     void (async () => {
@@ -162,11 +164,11 @@ export class AssistSession {
         const raw = await this.requester(request, abort.signal);
         if (this.disposed || abort.signal.aborted || token !== this.sequence) return;
         const response = readResponse(raw, request, opts);
-        const merged = mergeKeptFields(previous, response);
+        // 서버의 keep/보류가 이전 후보를 제외했다면 화면에서 다시 되살리지 않아요.
         this.baselines = baselinesFor(response, previous, priorBaselines, snapshot);
         this.publish({
-          phase: "ready", utterance, response: merged,
-          choices: choicesFor(merged, previous, priorChoices),
+          phase: "ready", utterance, response,
+          choices: choicesFor(response, previous, priorChoices),
           error: null, appliedFields: [],
         });
       } catch (error) {
@@ -177,13 +179,22 @@ export class AssistSession {
           this.publish({ phase: "denied", utterance, response: null, choices: {}, error: error.message, appliedFields: [] });
           return;
         }
-        // 연결 장애나 잘못된 응답일 때도 규칙 후보는 적용 전 확인받아요.
+        // 실패한 서버 응답으로는 이전 후보를 재검증할 수 없어요. 이번 글의 규칙 후보만 남겨요.
         const warning = error instanceof AssistApiError ? error.message :
           error instanceof Error ? error.message : "해석 요청에 문제가 생겼어요.";
+        this.contextText = utterance;
+        this.baselines = copyCurrent(this.form, snapshot);
         this.publish({
           phase: "ready", utterance,
-          response: { ...preview, warnings: [...preview.warnings, warning + " 규칙으로 읽은 후보만 보여 드려요."] },
-          choices: choicesFor(preview, previous, priorChoices),
+          response: {
+            ...fallback,
+            warnings: [
+              ...fallback.warnings,
+              warning + " 규칙으로 읽은 이번 메시지의 후보만 보여 드려요.",
+              ...(previous ? ["이전 후보는 서버에서 다시 확인하지 못해 이번 결과에 포함하지 않았어요."] : []),
+            ],
+          },
+          choices: choicesFor(fallback, null, {}),
           error: null, appliedFields: [],
         });
       } finally {

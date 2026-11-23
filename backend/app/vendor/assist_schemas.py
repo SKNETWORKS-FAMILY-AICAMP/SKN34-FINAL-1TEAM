@@ -22,6 +22,21 @@ type Action = Literal["keep", "set", "clear", "uncertain"]
 type Source = Literal["rule", "llm"]
 type Status = Literal["valid", "conflict", "invalid", "uncertain"]
 type Value = StrictStr | StrictInt | list[StrictStr] | None
+type IntentKind = Literal[
+    "no_mention", "retain_current", "retain_previous", "explicit_change", "ambiguous"
+]
+type ValueSource = Literal["utterance", "current", "previous", "derived"]
+type ReasonCode = Literal[
+    "evidence_missing",
+    "unsupported_normalization",
+    "type_mismatch",
+    "business_constraint",
+    "stale_context",
+    "ambiguous_intent",
+    "combined_constraint",
+    "reference_missing",
+    "correction_unverified",
+]
 
 FORM_FIELDS: dict[FormName, tuple[str, ...]] = {
     "period": ("start", "end", "excluded"),
@@ -82,11 +97,23 @@ class StrictObject(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class CorrectionRelation(StrictObject):
+    """이번 입력의 폐기 값과 채택 값 사이에 모델이 제안한 관계."""
+
+    kind: Literal["replace", "reject", "ambiguous"]
+    rejected_value: Value
+    rejected_evidence: StrictStr = Field(max_length=MAX_EVIDENCE)
+    accepted_evidence: StrictStr = Field(max_length=MAX_EVIDENCE)
+
+
 class FieldIntent(StrictObject):
     field: StrictStr
     action: Action
     value: Value
     evidence: StrictStr
+    intent_kind: IntentKind | None = None
+    value_source: ValueSource | None = None
+    correction: CorrectionRelation | None = None
 
     @model_validator(mode="after")
     def check_intent(self) -> "FieldIntent":
@@ -124,6 +151,7 @@ class CandidateField(FieldIntent):
     status: Status
     alternatives: list[Alternative]
     origin_request_id: StrictStr | None = Field(default=None, max_length=80)
+    reason_code: ReasonCode | None = None
 
     @model_validator(mode="after")
     def check_status(self) -> "CandidateField":
@@ -147,14 +175,21 @@ class PreviousCandidate(StrictObject):
     fields: list[FieldIntent]
     sources: dict[StrictStr, Source] = Field(default_factory=dict)
     origins: dict[StrictStr, StrictStr] = Field(default_factory=dict)
+    baselines: dict[StrictStr, Value] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def check_origins(self) -> "PreviousCandidate":
         names = {item.field for item in self.fields}
-        if not self.sources.keys() <= names or not self.origins.keys() <= names:
+        if (
+            not self.sources.keys() <= names
+            or not self.origins.keys() <= names
+            or not self.baselines.keys() <= names
+        ):
             raise ValueError("이전 후보의 출처 필드를 확인해 주세요.")
         if any(not 1 <= len(value) <= 80 for value in self.origins.values()):
             raise ValueError("이전 요청 식별자 길이를 확인해 주세요.")
+        if len(self.baselines) > 4:
+            raise ValueError("이전 후보의 기준 필드가 너무 많아요.")
         return self
 
     @field_validator("text")
@@ -190,6 +225,11 @@ class AssistRequest(StrictObject):
             if field not in allowed:
                 raise ValueError("화면과 맞지 않는 현재 값이에요.")
             check_value(self.form, field, value, allow_empty=True)
+        if self.previous_candidate:
+            for field, value in self.previous_candidate.baselines.items():
+                if field not in allowed:
+                    raise ValueError("화면과 맞지 않는 이전 기준 필드예요.")
+                check_value(self.form, field, value, allow_empty=True)
         for fields in (
             self.rule_fields,
             self.previous_candidate.fields if self.previous_candidate else [],
@@ -229,3 +269,26 @@ class ModelInterpretation(StrictObject):
     """LLM 구조화 출력의 최소 필수 모양."""
 
     fields: list[FieldIntent] = Field(max_length=4)
+
+
+class ModelFieldIntentV2(StrictObject):
+    """공급자 Structured Outputs: 추가 키도 필수이며 null로 비울 수 있다."""
+
+    field: StrictStr
+    action: Action
+    value: Value
+    evidence: StrictStr
+    intent_kind: IntentKind | None
+    value_source: ValueSource | None
+    correction: CorrectionRelation | None
+
+    @model_validator(mode="after")
+    def check_decision(self) -> "ModelFieldIntentV2":
+        FieldIntent.model_validate(self.model_dump())
+        return self
+
+
+class ModelInterpretationV2(StrictObject):
+    """모델 출력 전용 판. 공개 HTTP 구형 계약과 분리한다."""
+
+    fields: list[ModelFieldIntentV2] = Field(max_length=4)

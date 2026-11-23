@@ -303,6 +303,17 @@ def requires_final(path: Path, cases: list[dict], final: bool) -> bool:
     return not final and (is_heldout or any(x["split"] == "heldout" for x in cases))
 
 
+def is_known_heldout_path(path: Path) -> bool:
+    """데이터를 읽지 않고 알려진 held-out 경로/파일명을 판별한다."""
+    normalized = path.name.lower().replace("_", "").replace("-", "")
+    known = Path(__file__).resolve().parent / "heldout.jsonl"
+    return "heldout" in normalized or path.resolve() == known.resolve()
+
+
+def requires_final_before_read(path: Path, *, split: str, final: bool) -> bool:
+    return not final and (split == "heldout" or is_known_heldout_path(path))
+
+
 def normalize_fields(form: str, fields: list[dict] | dict) -> dict[str, dict]:
     """검증 불가·충돌 후보는 적용 가능한 후보로 계산하지 않는다."""
     result = {field: {"action": "keep", "value": None} for field in FIELDS[form]}
@@ -338,6 +349,40 @@ def _same(gold: dict, pred: dict) -> bool:
     if isinstance(a, list) and isinstance(b, list):
         return sorted(a) == sorted(b)
     return type(a) is type(b) and a == b
+
+
+def _form_value_equal(form: str, field: str, left: object, right: object) -> bool:
+    """화면의 빈 값·날짜 배열 표현만 동일시하며 원문 글은 정확히 비교한다."""
+    if field == "excluded" or form == "dates" and field == "days":
+        empty = (None, [])
+        if left in empty and right in empty:
+            return True
+        if isinstance(left, list) and isinstance(right, list):
+            return sorted(left) == sorted(right)
+        return False
+    if left in (None, "") and right in (None, ""):
+        return True
+    return type(left) is type(right) and left == right
+
+
+def _action_target(form: str, field: str, intent: dict) -> object:
+    """명시한 action을 적용했을 때의 폼 값이다. 기존 값을 만들지 않는다."""
+    if intent["action"] == "set":
+        return intent["value"]
+    if intent["action"] != "clear":
+        raise ValueError("적용 가능한 set/clear 액션만 대상값으로 바꿉니다")
+    if field == "excluded" or form == "dates" and field == "days":
+        return []
+    if form == "extra" and field in {"title", "reason"}:
+        return ""
+    return None
+
+
+def _change_kind(form: str, field: str, current: object, intent: dict) -> str:
+    if intent["action"] not in {"set", "clear"}:
+        return "none"
+    target = _action_target(form, field, intent)
+    return "noop" if _form_value_equal(form, field, current, target) else "change"
 
 
 def percentile(values: list[float], p: float) -> float | None:
@@ -408,6 +453,9 @@ def summarize(
     ) = omissions = 0
     errors = timeouts = 0
     conflict_fields = conflict_options = conflict_option_mismatches = 0
+    changes = Counter()
+    statuses = Counter()
+    uncertainties = Counter()
     per_field: dict[str, dict[str, int]] = defaultdict(
         lambda: {"total": 0, "correct": 0, "false_candidates": 0, "omissions": 0}
     )
@@ -454,10 +502,45 @@ def summarize(
                 field: {"action": "keep", "value": None}
                 for field in FIELDS[case["form"]]
             }
+        if isinstance(raw_fields, list):
+            raw_by_name = {
+                item["field"]: item
+                for item in raw_fields
+                if isinstance(item, dict) and isinstance(item.get("field"), str)
+            }
+        elif isinstance(raw_fields, dict):
+            raw_by_name = {
+                name: item
+                for name, item in raw_fields.items()
+                if isinstance(item, dict)
+            }
+        else:
+            raw_by_name = {}
+        current = case.get("current")
+        declared_baselines = current if isinstance(current, dict) else {}
+        previous = case.get("previous_candidate")
+        if isinstance(previous, dict):
+            # 과거 미확정 후보의 생성 시점 baseline은 별개 정보이며 current에서 만들지 않는다.
+            name = (
+                "previous_baselines_present"
+                if isinstance(previous.get("baselines"), dict) and previous["baselines"]
+                else "previous_baselines_missing"
+            )
+            changes[name] += 1
+        gold_changed: list[str] = []
+        predicted_changed: list[str] = []
+        unverified_baselines: list[str] = []
         wrong = []
         for field in FIELDS[case["form"]]:
             gold = case["expected"][field]
             got = pred[field]
+            raw_candidate = raw_by_name.get(field)
+            raw_status = (
+                raw_candidate.get("status", "valid")
+                if raw_candidate and not error
+                else "missing"
+            )
+            statuses[raw_status] += 1
             correct = not error and _same(gold, got)
             is_action_gold = gold["action"] in {"set", "clear"}
             is_action_pred = not error and got["action"] in {"set", "clear"}
@@ -477,6 +560,64 @@ def summarize(
             stats["omissions"] += missing
             if not correct:
                 wrong.append(field)
+            if gold["action"] == "uncertain":
+                uncertainties["gold"] += 1
+                if raw_status == "uncertain":
+                    uncertainties["correct_abstention"] += 1
+                elif raw_status == "conflict":
+                    uncertainties["conflict"] += 1
+                elif raw_status == "invalid":
+                    uncertainties["invalid"] += 1
+                elif is_action_pred:
+                    uncertainties["unsafe_action"] += 1
+                else:
+                    uncertainties["unresolved"] += 1
+
+            # 이전 미확정 후보를 baseline으로 간주하거나 없는 값을 null로 채우지 않는다.
+            if field not in declared_baselines:
+                changes["baseline_missing"] += 1
+                unverified_baselines.append(field)
+                if gold["action"] in {"set", "clear"} or is_action_pred:
+                    changes["actions_unscored_missing_baseline"] += 1
+                continue
+            changes["baseline_declared"] += 1
+            old_value = declared_baselines[field]
+            gold_kind = _change_kind(case["form"], field, old_value, gold)
+            pred_kind = (
+                _change_kind(case["form"], field, old_value, got)
+                if not error
+                else "none"
+            )
+            if gold_kind == "change":
+                changes["gold_changes"] += 1
+                gold_changed.append(field)
+            if pred_kind == "change":
+                changes["predicted_changes"] += 1
+                predicted_changed.append(field)
+            if (
+                gold_kind == "change"
+                and pred_kind == "change"
+                and _form_value_equal(
+                    case["form"],
+                    field,
+                    _action_target(case["form"], field, gold),
+                    _action_target(case["form"], field, got),
+                )
+            ):
+                changes["tp"] += 1
+            else:
+                if pred_kind == "change":
+                    changes["fp"] += 1
+                if gold_kind == "change":
+                    changes["fn"] += 1
+            if gold_kind == "noop":
+                changes["gold_noops"] += 1
+            if pred_kind == "noop":
+                changes["predicted_noops"] += 1
+                if gold_kind == "noop" and _same(gold, got):
+                    changes["matched_noops"] += 1
+                else:
+                    changes["spurious_noops"] += 1
         scored.append(
             {
                 "id": case["id"],
@@ -498,6 +639,9 @@ def summarize(
                 "llm_error": outcome.get("llm_error"),
                 "llm_timeout": bool(outcome.get("llm_timeout")),
                 "adapter_invoked": bool(outcome.get("adapter_invoked")),
+                "gold_actual_change_fields": gold_changed,
+                "predicted_actual_change_fields": predicted_changed,
+                "baseline_missing_fields": unverified_baselines,
             }
         )
     for key in ("input_tokens", "output_tokens", "cached_tokens"):
@@ -511,6 +655,7 @@ def summarize(
         name: {**stats, "accuracy": stats["correct"] / stats["total"]}
         for name, stats in sorted(per_field.items())
     }
+    change_tp, change_fp, change_fn = changes["tp"], changes["fp"], changes["fn"]
     return {
         "runner": runner,
         "cases": len(cases),
@@ -532,6 +677,39 @@ def summarize(
         else None,
         "omissions": omissions,
         "omission_rate": omissions / actionable_gold if actionable_gold else None,
+        "change_true_positive": change_tp,
+        "change_false_positive": change_fp,
+        "change_false_negative": change_fn,
+        "change_precision": change_tp / (change_tp + change_fp)
+        if change_tp + change_fp
+        else None,
+        "change_recall": change_tp / (change_tp + change_fn)
+        if change_tp + change_fn
+        else None,
+        "gold_actual_changes": changes["gold_changes"],
+        "predicted_actual_changes": changes["predicted_changes"],
+        "gold_noop_reconfirmations": changes["gold_noops"],
+        "predicted_noop_reconfirmations": changes["predicted_noops"],
+        "matched_noop_reconfirmations": changes["matched_noops"],
+        "spurious_noop_reconfirmations": changes["spurious_noops"],
+        "baseline_declared_fields": changes["baseline_declared"],
+        "baseline_missing_fields": changes["baseline_missing"],
+        "previous_baselines_present_cases": changes["previous_baselines_present"],
+        "previous_baselines_missing_cases": changes["previous_baselines_missing"],
+        "actions_unscored_missing_baseline": changes[
+            "actions_unscored_missing_baseline"
+        ],
+        "predicted_status_counts": dict(statuses),
+        "gold_uncertain_fields": uncertainties["gold"],
+        "correct_uncertain_abstentions": uncertainties["correct_abstention"],
+        "uncertain_as_conflict": uncertainties["conflict"],
+        "uncertain_as_invalid": uncertainties["invalid"],
+        "uncertain_unsafe_actions": uncertainties["unsafe_action"],
+        "uncertain_unresolved": uncertainties["unresolved"],
+        "uncertain_abstention_rate": uncertainties["correct_abstention"]
+        / uncertainties["gold"]
+        if uncertainties["gold"]
+        else None,
         "latency_ms": {
             "count": len(latency),
             "mean": statistics.fmean(latency) if latency else None,
@@ -588,6 +766,11 @@ def format_report(report: dict, *, show_wrong: int = 10) -> str:
         f"토큰: 입력 {report['usage']['input_tokens']} · 출력 {report['usage']['output_tokens']} · 캐시 {report['usage']['cached_tokens']} (None=미계측)",
         f"비용: {report['cost_usd'] if report['cost_usd'] is not None else 'null (요금/사용량 미확인)'} USD",
         f"해석 출처: {report['source_counts']} (rule=규칙 또는 모델 실패 대체, llm=모델)",
+        f"실제 변경: TP {report['change_true_positive']} · FP {report['change_false_positive']} · FN {report['change_false_negative']} · 정밀도 {n(report['change_precision'])} · 재현율 {n(report['change_recall'])}",
+        f"동일 값 재확인: 정답 {report['gold_noop_reconfirmations']} · 예측 {report['predicted_noop_reconfirmations']} · 일치 {report['matched_noop_reconfirmations']} · 불필요 {report['spurious_noop_reconfirmations']}",
+        f"폼 현재값: 선언 {report['baseline_declared_fields']}필드 · 누락 {report['baseline_missing_fields']} (변경 미채점 {report['actions_unscored_missing_baseline']}) · 직전 후보 생성 당시 baseline 있음 {report['previous_baselines_present_cases']}건 / 없음 {report['previous_baselines_missing_cases']}건",
+        f"미확정 정답 {report['gold_uncertain_fields']}필드: 올바른 보류 {report['correct_uncertain_abstentions']} · 충돌 {report['uncertain_as_conflict']} · 검증 실패 {report['uncertain_as_invalid']} · 위험 후보 {report['uncertain_unsafe_actions']} · 기타 {report['uncertain_unresolved']}",
+        f"후보 검증 상태 분포: {report['predicted_status_counts']} (충돌의 대안은 자동 적용 성공이 아님)",
         f"별도 확인이 필요한 충돌: {report['conflict_fields']}필드 · {report['conflict_options']}대안 · 단일 정답과 다른 대안 {report['conflict_option_mismatches']}개 (단일 적용 후보 오류율과 별도)",
         f"서비스 오류: {report['error_count']}/{report['cases']} (시간초과 {report['timeout_count']}) · 모델 경로 예외: {report['llm_error_count']}/{report['cases']} (시간초과 {report['llm_timeout_count']}, 오프라인 스텁 오류도 포함 가능)",
         "",

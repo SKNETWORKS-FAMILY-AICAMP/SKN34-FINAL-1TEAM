@@ -172,21 +172,44 @@ export function mergeKeptFields(previous: AssistResponse | null, latest: AssistR
   const fields = latest.fields.map((field) => {
     if (field.action !== "keep") return field;
     const old = previous.fields.find((item) => item.field === field.field);
-    return old?.status === "valid" && (old.action === "set" || old.action === "clear") ? old : field;
+    // 규칙 전용 응답에는 origin_request_id가 없을 수 있어요. 최초 요청 ID를 붙여 계승해요.
+    return old?.status === "valid" && (old.action === "set" || old.action === "clear")
+      ? { ...old, origin_request_id: old.origin_request_id ?? previous.request_id }
+      : field;
   });
   return { ...latest, fields };
 }
 
-export function previousCandidate(response: AssistResponse, text: string): PreviousCandidate {
+/** 현재 폼과 후보 생성 당시 값이 같은 미확정 칸만 다음 요청으로 이어요. */
+export function freshPrevious(
+  response: AssistResponse | null, baselines: AssistCurrent | null, current: AssistCurrent,
+): AssistResponse | null {
+  if (!response || !baselines) return null;
+  const fields = response.fields.filter((field) =>
+    field.status === "valid" && (field.action === "set" || field.action === "clear") &&
+    Object.prototype.hasOwnProperty.call(baselines, field.field) &&
+    sameValue(baselines[field.field], current[field.field]));
+  return fields.length ? { ...response, fields } : null;
+}
+
+/** 변경 후보의 원래 Send 기준값·출처를 값마다 보존해요. */
+export function previousCandidate(
+  response: AssistResponse, text: string, baselines: AssistCurrent,
+): PreviousCandidate {
+  const fields = response.fields.filter((field) =>
+    field.status === "valid" && (field.action === "set" || field.action === "clear") &&
+    Object.prototype.hasOwnProperty.call(baselines, field.field));
   return {
     request_id: response.request_id,
     text,
-    sources: Object.fromEntries(response.fields.map((field) => [field.field, field.source])),
-    origins: Object.fromEntries(response.fields.map((field) => [field.field, field.origin_request_id ?? response.request_id])),
-    fields: response.fields.map((field) =>
-      field.status === "valid" && (field.action === "set" || field.action === "clear")
-        ? { field: field.field, action: field.action, value: field.value, evidence: field.evidence }
-        : keepField(field.field)),
+    sources: Object.fromEntries(fields.map((field) => [field.field, field.source])),
+    origins: Object.fromEntries(fields.map((field) => [field.field, field.origin_request_id ?? response.request_id])),
+    baselines: Object.fromEntries(fields.map((field) => {
+      const value = baselines[field.field];
+      return [field.field, Array.isArray(value) ? [...value] : value];
+    })),
+    fields: fields.map((field) =>
+      ({ field: field.field, action: field.action, value: field.value, evidence: field.evidence })),
   };
 }
 

@@ -6,44 +6,98 @@ from app.vendor.assist_schemas import (
     AssistResponse,
     ModelInterpretation,
 )
-from app.vendor.assist_validation import merge_candidates, review_fields, verified_previous
+from app.vendor.assist_validation import merge_candidates, review_fields, review_previous
 
 FALLBACK_WARNING = "AI 해석을 사용할 수 없어 규칙으로 확인한 후보만 보여 드려요."
 
 
-async def interpret(data: AssistRequest, context: AssistContext) -> AssistResponse:
-    """업무 데이터는 수정하지 않는다. 모델 실패 시에도 유효한 규칙 후보를 돌려준다."""
-    previous = verified_previous(data, context)
+async def interpret(
+    data: AssistRequest,
+    context: AssistContext,
+    *,
+    use_model: bool = True,
+    trace: dict | None = None,
+) -> AssistResponse:
+    """규칙 전용과 하이브리드가 동일 검증·병합 경로를 쓴다."""
+    if trace is not None:
+        trace.clear()
+        trace.update(
+            rule_raw=[item.model_dump(mode="json") for item in data.rule_fields],
+            model_raw=None,
+            previous_raw=(
+                data.previous_candidate.model_dump(mode="json")
+                if data.previous_candidate is not None
+                else None
+            ),
+            previous_verified=None,
+            previous_rejected={},
+            rule_reviewed=[],
+            model_reviewed=None,
+            merged=[],
+            final=[],
+            decisions={},
+        )
+    previous, previous_rejected = review_previous(data, context)
+    if trace is not None and previous is not None:
+        trace["previous_verified"] = previous.model_dump(mode="json")
+    if trace is not None:
+        trace["previous_rejected"] = dict(previous_rejected)
     safe_request = data.model_copy(update={"previous_candidate": previous})
-    # 후속 변경의 업무 조건은 검증된 미확정 후보를 포함한 상태에서 검사한다.
+    # 해당 필드 기준값이 아직 같은 이전 후보만 업무 검증의 문맥에 반영한다.
     effective = dict(data.current)
     if previous:
         effective.update({item.field: item.value for item in previous.fields})
     validation_request = safe_request.model_copy(update={"current": effective})
-    rule, warnings = review_fields(data.rule_fields, "rule", validation_request, context)
+    rule, warnings = review_fields(
+        data.rule_fields, "rule", validation_request, context, previous=previous
+    )
+    if trace is not None:
+        trace["rule_reviewed"] = [item.model_dump(mode="json") for item in rule.values()]
 
-    try:
-        # 모델 호출은 에이전트 모듈 한 곳에서 한다. 업로드·고객·업무 ID는 전달하지 않는다.
-        from app.agent import vendor_assist
+    model = None
+    source: str = "rule"
+    if use_model:
+        try:
+            # 모델은 한 번만 호출하고, 수동 적용 전에는 업무 데이터를 바꾸지 않는다.
+            from app.agent import vendor_assist
 
-        result = ModelInterpretation.model_validate(
-            await vendor_assist.interpret(safe_request, context)
-        )
-        model, model_warnings = review_fields(result.fields, "llm", validation_request, context)
-    except Exception:  # noqa: BLE001 - 모델 오류는 검증한 규칙 후보로 복구
-        # 외부 모델·형식·timeout 오류는 기존 규칙 후보로 복구한다. 원문은 로그에 남기지 않는다.
-        return AssistResponse(
-            request_id=data.request_id,
-            form=data.form,
-            source="rule",
-            fields=merge_candidates(data, context, rule, None, previous),
-            warnings=list(dict.fromkeys([*warnings, FALLBACK_WARNING])),
-        )
+            result = ModelInterpretation.model_validate(
+                await vendor_assist.interpret(safe_request, context)
+            )
+            if trace is not None:
+                trace["model_raw"] = [item.model_dump(mode="json") for item in result.fields]
+            model, model_warnings = review_fields(
+                result.fields, "llm", validation_request, context, previous=previous
+            )
+            warnings.extend(model_warnings)
+            source = "llm"
+        except Exception:  # noqa: BLE001 - 외부 오류는 같은 규칙 경로로 복구
+            warnings.append(FALLBACK_WARNING)
+    if trace is not None and model is not None:
+        trace["model_reviewed"] = [item.model_dump(mode="json") for item in model.values()]
 
+    merged_out: list = []
+    decisions: dict = {}
+    fields = merge_candidates(
+        data,
+        context,
+        rule,
+        model,
+        previous,
+        decisions=decisions if trace is not None else None,
+        merged_out=merged_out if trace is not None else None,
+        previous_rejected=previous_rejected,
+    )
+    if any(item.reason_code == "combined_constraint" for item in fields):
+        warnings.append("후보를 함께 적용하면 업무 조건이 맞지 않아 확인이 필요해요.")
+    if trace is not None:
+        trace["merged"] = [item.model_dump(mode="json") for item in merged_out]
+        trace["final"] = [item.model_dump(mode="json") for item in fields]
+        trace["decisions"] = decisions
     return AssistResponse(
         request_id=data.request_id,
         form=data.form,
-        source="llm",
-        fields=merge_candidates(data, context, rule, model, previous),
-        warnings=list(dict.fromkeys([*warnings, *model_warnings])),
+        source=source,
+        fields=fields,
+        warnings=list(dict.fromkeys(warnings)),
     )

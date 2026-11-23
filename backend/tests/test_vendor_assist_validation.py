@@ -132,11 +132,33 @@ def test_previous_candidates_are_revalidated_and_can_be_corrected():
         request_id="old",
         text="견적 455만원, 공사 3일",
         fields=[field("amount", 4_550_000, "455만원"), field("days", 3, "공사 3일")],
+        baselines={"amount": None, "days": None},
     )
-    req = request("quote", "아니 555만원으로 바꾸고 공사 기간은 그대로", previous=previous)
+    req = request(
+        "quote",
+        "아니 555만원으로 바꾸고 공사 기간은 그대로",
+        current={"amount": None, "days": None},
+        previous=previous,
+    )
     safe = verified_previous(req, ctx())
     assert safe is not None
-    llm, _ = review_fields([field("amount", 5_550_000, "555만원")], "llm", req, ctx())
+    llm, _ = review_fields(
+        [
+            field("amount", 5_550_000, "555만원"),
+            FieldIntent(
+                field="days",
+                action="keep",
+                value=None,
+                evidence="기간은 그대로",
+                intent_kind="retain_previous",
+                value_source="previous",
+            ),
+        ],
+        "llm",
+        req,
+        ctx(),
+        previous=safe,
+    )
     merged = {x.field: x for x in merge_candidates(req, ctx(), {}, llm, safe)}
     assert merged["amount"].value == 5_550_000
     assert merged["days"].value == 3

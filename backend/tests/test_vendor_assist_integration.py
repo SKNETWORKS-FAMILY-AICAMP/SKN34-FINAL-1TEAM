@@ -108,7 +108,23 @@ def test_retained_candidates_keep_source_and_ground_later_period_change(monkeypa
     async def model(*args, **kwargs):
         return ModelInterpretation(
             fields=[
-                FieldIntent(field="excluded", action="set", value=["2026-12-04"], evidence="12/4")
+                FieldIntent(field="excluded", action="set", value=["2026-12-04"], evidence="12/4"),
+                FieldIntent(
+                    field="start",
+                    action="keep",
+                    value=None,
+                    evidence="기간 그대로",
+                    intent_kind="retain_previous",
+                    value_source="previous",
+                ),
+                FieldIntent(
+                    field="end",
+                    action="keep",
+                    value=None,
+                    evidence="기간 그대로",
+                    intent_kind="retain_previous",
+                    value_source="previous",
+                ),
             ]
         )
 
@@ -128,6 +144,7 @@ def test_retained_candidates_keep_source_and_ground_later_period_change(monkeypa
                 ],
                 "sources": {"start": "llm", "end": "rule"},
                 "origins": {"start": "first-message", "end": "prior-message"},
+                "baselines": {"start": None, "end": None},
             },
         }
     )

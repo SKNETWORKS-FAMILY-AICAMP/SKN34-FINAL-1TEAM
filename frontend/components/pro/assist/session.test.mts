@@ -6,7 +6,10 @@ import { AssistApiError, interpretAssist } from "./api.ts";
 import { parseDates, parseExtra } from "./parse.ts";
 import { ruleFields } from "./rules.ts";
 import { shouldAutosaveQuote } from "./quoteAutosave.ts";
-import { validSetValue, type AssistCurrent, type AssistRequest, type AssistForm } from "./protocol.ts";
+import {
+  freshPrevious, previousCandidate, readResponse, validSetValue,
+  type AssistCurrent, type AssistRequest, type AssistForm,
+} from "./protocol.ts";
 
 const today = "2026-11-23";
 const quote = { amount: null, vat: null, days: null, valid: null };
@@ -65,7 +68,24 @@ test("기간·제외일·공사 날짜의 한도를 실제 업무 규칙과 맞�
   assert.equal(validSetValue("quote", "valid", today, { today }), true);
 });
 
-test("서버가 유지한 이전 후보도 수동 수정과 선택 해제를 보존해요", async () => {
+test("기준값이 없으면 과거 set/clear는 이어 쓰지 않아요", () => {
+  const req: AssistRequest = {
+    request_id: "origin", form: "quote", resource_id: "visit-id",
+    text: "견적 455만 원", current: { ...quote }, previous_candidate: null,
+    rule_fields: ruleFields("quote", "견적 455만 원", quoteOptions),
+  };
+  const parsed = readResponse(response(req, { amount: { action: "set", value: 4_550_000 } }), req, quoteOptions);
+  assert.equal(freshPrevious(parsed, null, quote), null);
+  assert.equal(freshPrevious(parsed, {}, quote), null);
+  assert.equal(freshPrevious(parsed, { amount: null }, quote)?.fields.length, 1);
+  const wire = previousCandidate(parsed, req.text, {});
+  assert.deepEqual(wire.fields, []);
+  assert.deepEqual(wire.baselines, {});
+  assert.deepEqual(wire.sources, {});
+  assert.deepEqual(wire.origins, {});
+});
+
+test("수동 수정한 이전 금액은 다음 요청·미리보기에서 빼고 다른 필드만 적용해요", async () => {
   const api = pending();
   const session = new AssistSession("quote", "visit-id", api.requester);
   session.send("견적 455만 원", quote, quoteOptions);
@@ -77,14 +97,13 @@ test("서버가 유지한 이전 후보도 수동 수정과 선택 해제를 보
   const manual = { ...quote, amount: 6000000 };
   session.send("유효기간만 12/20까지", manual, quoteOptions);
   const second = api.jobs[1].request;
-  assert.equal(second.previous_candidate?.sources?.amount, "llm");
+  assert.equal(second.current.amount, 6_000_000);
+  assert.equal(second.previous_candidate, null);
+  assert.equal(session.view.response?.fields.some((field) => field.field === "amount" && field.action === "set"), false);
   api.jobs[1].resolve(response(second, {
-    amount: { action: "set", value: 4550000, origin_request_id: first.request_id },
     valid: { action: "set", value: "2026-12-20", origin_request_id: second.request_id },
   }));
   await flush();
-  assert.equal(session.apply(manual, () => assert.fail("수동 금액 덮어쓰기")), false);
-  session.select("amount", false);
   const changes: AssistCurrent[] = [];
   assert.equal(session.apply(manual, (change) => changes.push(change)), true);
   assert.deepEqual(changes, [{ valid: "2026-12-20" }]);
@@ -136,13 +155,173 @@ test("직전 후보를 보내며 다음 keep은 이전 미확정 후보를 유�
   assert.equal(second.previous_candidate?.text, first);
   assert.equal(second.previous_candidate?.fields.find((field) => field.field === "amount")?.value, 4_550_000);
   assert.equal(second.previous_candidate?.fields.find((field) => field.field === "days")?.value, 3);
+  assert.deepEqual(second.previous_candidate?.baselines, { amount: null, days: null });
+  assert.equal(second.previous_candidate?.sources?.amount, "llm");
+  assert.equal(second.previous_candidate?.origins?.amount, api.jobs[0].request.request_id);
+  assert.equal(session.view.response?.fields.find((field) => field.field === "days")?.origin_request_id, api.jobs[0].request.request_id);
+  const serialized = JSON.parse(JSON.stringify(second));
+  assert.deepEqual(serialized.previous_candidate.baselines, { amount: null, days: null });
+  assert.deepEqual(serialized.previous_candidate.fields.map((field: { field: string }) => field.field), ["amount", "days"]);
   assert.equal(session.apply(quote, () => assert.fail("응답 대기 중 반영")), false);
-  api.jobs[1].resolve(response(second, { amount: { action: "set", value: 5_550_000 } }));
+  api.jobs[1].resolve(response(second, {
+    amount: { action: "set", value: 5_550_000, origin_request_id: second.request_id },
+    days: { action: "set", value: 3, origin_request_id: api.jobs[0].request.request_id },
+  }));
   await flush();
   const changed: AssistCurrent[] = [];
   assert.equal(session.apply(quote, (value) => changed.push(value)), true);
   assert.deepEqual(changed, [{ amount: 5_550_000, days: 3 }]);
   assert.equal(api.jobs.length, 2);
+});
+
+test("서버가 keep으로 제외한 과거 후보를 성공 응답 뒤 다시 채우지 않아요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 455만 원", quote, quoteOptions);
+  api.jobs[0].resolve(response(api.jobs[0].request, {
+    amount: { action: "set", value: 4_550_000 },
+  }));
+  await flush();
+  session.send("공사 3일", quote, quoteOptions);
+  assert.deepEqual(api.jobs[1].request.previous_candidate?.baselines, { amount: null });
+  // API 대기 중 표시한 규칙 미리보기에는 이전 후보를 이어 쓸 수 있어요.
+  assert.equal(session.view.response?.fields.find((field) => field.field === "amount")?.value, 4_550_000);
+  api.jobs[1].resolve(response(api.jobs[1].request, { days: { action: "set", value: 3 } }));
+  await flush();
+  // 서버가 최종적으로 keep을 택했다면 오래된 미리보기를 되살리지 않아요.
+  assert.equal(session.view.response?.fields.find((field) => field.field === "amount")?.action, "keep");
+  assert.equal(session.apply(quote, (changes) =>
+    assert.deepEqual(changes, { days: 3 })), true);
+});
+
+test("수동으로 바꾼 사유는 이전 clear에서 빠지고 새 금액만 반영돼요", async () => {
+  const api = pending();
+  const current = { title: null, reason: "기존 이유", amount: null, vat: null };
+  const session = new AssistSession("extra", "deal-id", api.requester);
+  session.send("이유 지워 주세요", current, { today });
+  const first = api.jobs[0].request;
+  api.jobs[0].resolve(response(first, {
+    reason: { action: "clear", value: null, origin_request_id: first.request_id },
+  }));
+  await flush();
+  const edited = { ...current, reason: "직접 새로 쓴 이유" };
+  session.send("추가 금액 12만 원", edited, { today });
+  const second = api.jobs[1].request;
+  assert.equal(second.current.reason, "직접 새로 쓴 이유");
+  assert.equal(second.previous_candidate, null);
+  assert.equal(session.view.response?.fields.some((field) =>
+    field.field === "reason" && field.action === "clear"), false);
+  api.jobs[1].resolve(response(second, { amount: { action: "set", value: 120_000 } }));
+  await flush();
+  assert.equal(session.apply(edited, (changes) =>
+    assert.deepEqual(changes, { amount: 120_000 })), true);
+});
+
+test("이전 clear가 유지되는 동안 최초 사유를 baseline으로 전송하고 선택은 명시적으로 해요", async () => {
+  const api = pending();
+  const current = { title: null, reason: "원래 이유", amount: null, vat: null };
+  const session = new AssistSession("extra", "deal-id", api.requester);
+  session.send("원래 이유를 지워 주세요", current, { today });
+  const first = api.jobs[0].request;
+  api.jobs[0].resolve(response(first, {
+    reason: { action: "clear", value: null, origin_request_id: first.request_id },
+  }));
+  await flush();
+  session.send("금액 12만 원만 추가", current, { today });
+  const second = api.jobs[1].request;
+  assert.deepEqual(second.previous_candidate?.baselines, { reason: "원래 이유" });
+  assert.deepEqual(second.previous_candidate?.fields, [{
+    field: "reason", action: "clear", value: null, evidence: "원문 근거",
+  }]);
+  assert.equal(second.previous_candidate?.sources?.reason, "llm");
+  assert.equal(second.previous_candidate?.origins?.reason, first.request_id);
+  api.jobs[1].resolve(response(second, {
+    reason: { action: "clear", value: null, origin_request_id: first.request_id },
+    amount: { action: "set", value: 120_000, origin_request_id: second.request_id },
+  }));
+  await flush();
+  const applied: AssistCurrent[] = [];
+  assert.equal(session.apply(current, (changes) => applied.push(changes)), true);
+  assert.deepEqual(applied, [{ amount: 120_000 }]); // 삭제는 기본 미선택
+});
+
+test("3회 연속 메시지에서도 물려받은 기준값·원래 요청 ID·출처가 바뀌지 않아요", async () => {
+  const api = pending();
+  const current = { ...quote, amount: 1_000_000 };
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 455만 원", current, quoteOptions);
+  const first = api.jobs[0].request;
+  api.jobs[0].resolve(response(first, {
+    amount: { action: "set", value: 4_550_000, origin_request_id: first.request_id },
+  }));
+  await flush();
+  session.send("공사 3일", current, quoteOptions);
+  const second = api.jobs[1].request;
+  assert.deepEqual(second.previous_candidate?.baselines, { amount: 1_000_000 });
+  api.jobs[1].resolve(response(second, {
+    amount: { action: "set", value: 4_550_000, origin_request_id: first.request_id },
+    days: { action: "set", value: 3, origin_request_id: second.request_id },
+  }));
+  await flush();
+  session.send("부가세 포함", current, quoteOptions);
+  const third = api.jobs[2].request;
+  assert.deepEqual(third.previous_candidate?.baselines, { amount: 1_000_000, days: null });
+  assert.equal(third.previous_candidate?.origins?.amount, first.request_id);
+  assert.equal(third.previous_candidate?.origins?.days, second.request_id);
+  assert.equal(third.previous_candidate?.sources?.amount, "llm");
+  assert.equal(third.previous_candidate?.sources?.days, "llm");
+  assert.equal(third.previous_candidate?.text, "견적 455만 원\n공사 3일");
+  api.jobs[2].resolve(response(third, {
+    amount: { action: "set", value: 4_550_000, origin_request_id: first.request_id },
+    days: { action: "set", value: 3, origin_request_id: second.request_id },
+    vat: { action: "set", value: "included", origin_request_id: third.request_id },
+  }));
+  await flush();
+  assert.equal(session.apply(current, (changes) =>
+    assert.deepEqual(changes, { amount: 4_550_000, days: 3, vat: "included" })), true);
+});
+
+test("API 대기 중 수동 수정해도 과거 응답을 적용할 수 없고 다음 Send에서 제외돼요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 455만 원", quote, quoteOptions);
+  const first = api.jobs[0].request;
+  const manual = { ...quote, amount: 6_000_000 };
+  assert.equal(session.apply(manual, () => assert.fail("대기 중 setter 실행")), false);
+  assert.equal(session.send("공사 3일", manual, quoteOptions), false);
+  assert.equal(api.jobs.length, 1);
+  api.jobs[0].resolve(response(first, {
+    amount: { action: "set", value: 4_550_000, origin_request_id: first.request_id },
+  }));
+  await flush();
+  assert.equal(session.apply(manual, () => assert.fail("수동 수정 덮어쓰기")), false);
+  session.send("공사 3일", manual, quoteOptions);
+  assert.equal(api.jobs[1].request.previous_candidate, null);
+  api.jobs[1].resolve(response(api.jobs[1].request, { days: { action: "set", value: 3 } }));
+  await flush();
+  assert.equal(session.apply(manual, (changes) =>
+    assert.deepEqual(changes, { days: 3 })), true);
+});
+
+test("오래된 후보가 빠져도 현재 메시지에서 추출한 새 금액은 적용할 수 있어요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 455만 원", quote, quoteOptions);
+  api.jobs[0].resolve(response(api.jobs[0].request, {
+    amount: { action: "set", value: 4_550_000 },
+  }));
+  await flush();
+  const manual = { ...quote, amount: 6_000_000 };
+  session.send("견적 650만 원으로 고쳐 주세요", manual, quoteOptions);
+  const second = api.jobs[1].request;
+  assert.equal(second.previous_candidate, null);
+  assert.equal(second.rule_fields.find((field) => field.field === "amount")?.value, 6_500_000);
+  api.jobs[1].resolve(response(second, {
+    amount: { action: "set", value: 6_500_000, origin_request_id: second.request_id },
+  }));
+  await flush();
+  assert.equal(session.apply(manual, (changes) =>
+    assert.deepEqual(changes, { amount: 6_500_000 })), true);
 });
 
 test("충돌은 선택 전 적용하지 않으며 특정 대안을 고른 뒤만 반영해요", async () => {
@@ -266,6 +445,71 @@ test("네트워크 장애는 규칙 미리보기만 남기고 명시적 확인�
   }), true);
 });
 
+test("이전 후보가 있을 때 5xx·네트워크·잘못된 응답이면 새 규칙 후보만 남겨요", async () => {
+  for (const failure of [
+    new AssistApiError(0, "network", "연결 실패"),
+    new AssistApiError(503, "unavailable", "서버 응답 실패"),
+    new Error("응답 구조 오류"),
+  ]) {
+    const api = pending();
+    const session = new AssistSession("quote", "visit-id", api.requester);
+    session.send("견적 500만 원", quote, quoteOptions);
+    api.jobs[0].resolve(response(api.jobs[0].request, {
+      amount: { action: "set", value: 5_000_000 },
+    }));
+    await flush();
+    const text = "금액은 600만 정도였나? 아니면 700만 원인지 모르겠어요";
+    session.send(text, quote, quoteOptions);
+    const next = api.jobs[1].request;
+    assert.equal(next.rule_fields.find((field) => field.field === "amount")?.action, "keep");
+    assert.equal(next.previous_candidate?.fields.find((field) => field.field === "amount")?.value, 5_000_000);
+    assert.equal(session.view.phase, "loading");
+    assert.equal(session.apply(quote, () => assert.fail("대기 중 적용")), false);
+    api.jobs[1].reject(failure);
+    await flush();
+    assert.equal(session.view.response?.source, "rule");
+    assert.equal(session.view.response?.fields.find((field) => field.field === "amount")?.action, "keep");
+    assert.notEqual(session.view.response?.fields.find((field) => field.field === "amount")?.value, 5_000_000);
+    assert.match(session.view.response?.warnings.join(" ") ?? "", /이전 후보는 서버에서 다시 확인하지 못해/);
+    assert.equal(session.apply(quote, () => assert.fail("과거 금액을 적용")), false);
+    session.send("공사 3일", quote, quoteOptions);
+    assert.equal(api.jobs[2].request.previous_candidate, null);
+  }
+});
+
+test("이전 500만 원과 모호한 현재 600만 원 표현을 서버 실패에서 합쳐 승인하지 않아요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 500만 원", quote, quoteOptions);
+  api.jobs[0].resolve(response(api.jobs[0].request, { amount: { action: "set", value: 5_000_000 } }));
+  await flush();
+  session.send("금액은 600만 정도였나?", quote, quoteOptions);
+  api.jobs[1].reject(new AssistApiError(0, "network", "서버 연결 실패"));
+  await flush();
+  assert.notEqual(session.view.response?.fields.find((field) => field.field === "amount")?.value, 5_000_000);
+  assert.equal(session.view.response?.source, "rule");
+  // 규칙이 이번 글에서 새 숫자를 읽었다면 반드시 사용자가 명시적으로 확인해야 적용돼요.
+  assert.equal(session.view.phase, "ready");
+});
+
+test("날짜 배열을 처음 보낸 뒤 원본을 수정해도 전송 기준값이 바뀌지 않아요", async () => {
+  const api = pending();
+  const workDays = ["2026-12-02", "2026-12-03"];
+  const current = { days: workDays, crew: 2 };
+  const session = new AssistSession("dates", "deal-id", api.requester);
+  session.send("12/8부터 12/9까지 공사", current, { today, requiredDays: 2 });
+  const first = api.jobs[0].request;
+  assert.deepEqual(first.current.days, ["2026-12-02", "2026-12-03"]);
+  api.jobs[0].resolve(response(first, {
+    days: { action: "set", value: ["2026-12-08", "2026-12-09"] },
+  }));
+  await flush();
+  workDays.push("2026-12-04");
+  assert.deepEqual(first.current.days, ["2026-12-02", "2026-12-03"]);
+  session.send("인원 3명", current, { today, requiredDays: 2 });
+  assert.equal(api.jobs[1].request.previous_candidate, null);
+});
+
 test("허용 범위 밖 금액·정책 위반 부가세·잘못된 날짜는 후보로 적용하지 않아요", async () => {
   const api = pending();
   const session = new AssistSession("quote", "visit-id", api.requester);
@@ -307,7 +551,13 @@ test("브라우저 API는 정확히 1개 POST 요청을 보내고 인증 오류�
   try {
     const request: AssistRequest = {
       request_id: "test", form: "quote", resource_id: "visit-id", text: "견적 455만 원",
-      current: { ...quote }, previous_candidate: null, rule_fields: ruleFields("quote", "견적 455만 원", quoteOptions),
+      current: { ...quote }, rule_fields: ruleFields("quote", "견적 455만 원", quoteOptions),
+      previous_candidate: {
+        request_id: "prev", text: "견적 500만 원",
+        fields: [{ field: "amount", action: "set", value: 5_000_000, evidence: "500만 원" }],
+        sources: { amount: "llm" }, origins: { amount: "origin-prev" },
+        baselines: { amount: null },
+      },
     };
     await assert.rejects(interpretAssist(request, new AbortController().signal), (error) =>
       error instanceof AssistApiError && error.status === 403 && error.code === "forbidden");
@@ -315,7 +565,11 @@ test("브라우저 API는 정확히 1개 POST 요청을 보내고 인증 오류�
     assert.equal(received[0].path, "/api/vendor/assist/interpret");
     assert.equal(received[0].init.method, "POST");
     assert.equal(received[0].init.credentials, "same-origin");
-    assert.deepEqual(JSON.parse(String(received[0].init.body)), request);
+    const serialized = JSON.parse(String(received[0].init.body));
+    assert.deepEqual(serialized, request);
+    assert.deepEqual(serialized.previous_candidate.baselines, { amount: null });
+    assert.deepEqual(serialized.previous_candidate.sources, { amount: "llm" });
+    assert.deepEqual(serialized.previous_candidate.origins, { amount: "origin-prev" });
   } finally {
     globalThis.fetch = original;
   }
