@@ -68,12 +68,15 @@ function isIsoDate(value: string): boolean {
 export function validSetValue(form: AssistForm, field: string, value: unknown, opts: RuleOptions): value is AssistValue {
   if (!formKeys(form).includes(field) || opts.immutableFields?.includes(field)) return false;
   if (field === "excluded" || (form === "dates" && field === "days")) {
-    if (!Array.isArray(value) || value.length > 62 || !value.every((day) => typeof day === "string" && isIsoDate(day))) return false;
+    const max = form === "dates" ? (opts.daysMax ?? 120) : 31;
+    if (!Array.isArray(value) || value.length > max || !value.every((day) => typeof day === "string" && isIsoDate(day))) return false;
     if (new Set(value).size !== value.length) return false;
     if (form === "dates") {
       if (!value.length || value.some((day) => day <= opts.today || opts.holidays?.includes(day))) return false;
       if (opts.noWeekend && value.some((day) => [0, 6].includes(new Date(day + "T00:00:00Z").getUTCDay()))) return false;
       if (opts.requiredDays && value.length !== opts.requiredDays) return false;
+      const ordered = [...value].sort();
+      if ((Date.parse(ordered.at(-1)!) - Date.parse(ordered[0])) / 86_400_000 > 120) return false;
     }
     return true;
   }
@@ -90,7 +93,8 @@ export function validSetValue(form: AssistForm, field: string, value: unknown, o
       (!opts.vatModes?.length || opts.vatModes.includes(value));
   }
   if (field === "start" || field === "end" || field === "valid") {
-    return typeof value === "string" && isIsoDate(value) && value >= opts.today;
+    return typeof value === "string" && isIsoDate(value) &&
+      (form === "period" ? value > opts.today : value >= opts.today);
   }
   if (field === "title" || field === "reason") {
     const max = field === "title" ? 60 : 200;

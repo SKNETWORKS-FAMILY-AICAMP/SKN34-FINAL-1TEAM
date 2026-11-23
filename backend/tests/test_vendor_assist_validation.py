@@ -289,3 +289,20 @@ def test_month_day_stays_in_base_month_year_even_if_before_anchor_day():
     req = request("period", "12/2부터 12/5까지 돼요")
     got, _ = review_fields([field("start", "2026-12-02", "12/2부터")], "llm", req, context)
     assert got["start"].status == "valid"
+
+
+def test_normalized_period_boundary_is_grounded_in_explicit_range():
+    text = "12/2부터 12/5까지 가능, 12/2는 안 돼요"
+    req = request("period", text)
+    got, _ = review_fields(
+        [
+            field("start", "2026-12-03", text),
+            field("end", "2026-12-05", "12/5"),
+        ],
+        "rule",
+        req,
+        ctx(),
+    )
+    assert got["start"].status == "valid"
+    outside, _ = review_fields([field("start", "2026-12-06", text)], "llm", req, ctx())
+    assert outside["start"].status == "invalid"

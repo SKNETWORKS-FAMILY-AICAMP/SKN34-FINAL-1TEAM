@@ -55,6 +55,16 @@ function pending() {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+test("기간·제외일·공사 날짜의 한도를 실제 업무 규칙과 맞춰요", () => {
+  const days = Array.from({ length: 70 }, (_, index) =>
+    new Date(Date.UTC(2026, 11, 1 + index)).toISOString().slice(0, 10));
+  assert.equal(validSetValue("dates", "days", days, { today, requiredDays: 70 }), true);
+  assert.equal(validSetValue("dates", "days", ["2026-12-01", "2027-12-01"], { today }), false);
+  assert.equal(validSetValue("period", "excluded", days.slice(0, 32), { today }), false);
+  assert.equal(validSetValue("period", "start", today, { today }), false);
+  assert.equal(validSetValue("quote", "valid", today, { today }), true);
+});
+
 test("서버가 유지한 이전 후보도 수동 수정과 선택 해제를 보존해요", async () => {
   const api = pending();
   const session = new AssistSession("quote", "visit-id", api.requester);

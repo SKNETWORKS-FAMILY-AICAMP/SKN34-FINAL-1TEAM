@@ -207,7 +207,7 @@ def _grounded(
         return type(value) is str and any(word in normalized(evidence) for word in VAT_WORDS[value])
     if field in ("start", "end", "valid"):
         return type(value) is str and date.fromisoformat(value) in _date_mentions(
-            evidence, context, expand=False, allow_bare=field != "valid"
+            evidence, context, expand=field in ("start", "end"), allow_bare=field != "valid"
         )
     if field in ("excluded", "days"):
         return type(value) is list and set(map(date.fromisoformat, value)) <= _date_mentions(
