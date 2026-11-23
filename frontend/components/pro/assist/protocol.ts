@@ -109,6 +109,47 @@ function isValue(value: unknown): value is AssistValue {
     (Array.isArray(value) && value.every((item) => typeof item === "string"));
 }
 
+function validDerivedDates(value: unknown, max: number): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= max &&
+    value.every((day) => typeof day === "string" && isIsoDate(day)) &&
+    new Set(value).size === value.length;
+}
+
+/** 서버가 검증해 돌려준 날짜 목록의 유도 근거만 다음 턴에 전달해요. */
+function derivedListMetadata(
+  form: AssistForm, field: string, raw: Record<string, unknown>, opts?: RuleOptions,
+): Pick<FieldIntent, "intent_kind" | "value_source" | "correction"> {
+  const max = form === "dates" ? 120 : 31;
+  if (!((form === "dates" && field === "days") || (form === "period" && field === "excluded")) ||
+    raw.action !== "set" || raw.status !== "valid" || raw.value_source !== "derived" ||
+    typeof raw.evidence !== "string" || !raw.evidence.trim() || raw.evidence.length > 1000 ||
+    !validDerivedDates(raw.value, max) ||
+    (opts && !validSetValue(form, field, raw.value, opts))) return {};
+
+  const result: Pick<FieldIntent, "intent_kind" | "value_source" | "correction"> = {
+    value_source: "derived",
+  };
+  if (raw.intent_kind === "explicit_change") result.intent_kind = "explicit_change";
+  const candidate = raw.correction;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return result;
+  const link = candidate as Record<string, unknown>;
+  const rejected = link.rejected_value;
+  const rejectedValue: AssistValue | undefined = typeof rejected === "string" && isIsoDate(rejected)
+    ? rejected : validDerivedDates(rejected, max) ? [...rejected] : undefined;
+  if (link.kind !== "replace" || rejectedValue === undefined ||
+    typeof link.rejected_evidence !== "string" || !link.rejected_evidence.trim() ||
+    link.rejected_evidence.length > 1000 ||
+    typeof link.accepted_evidence !== "string" || !link.accepted_evidence.trim() ||
+    link.accepted_evidence.length > 1000) return result;
+  result.correction = {
+    kind: "replace",
+    rejected_value: rejectedValue,
+    rejected_evidence: link.rejected_evidence,
+    accepted_evidence: link.accepted_evidence,
+  };
+  return result;
+}
+
 function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleOptions): CandidateField {
   const data = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   const action = ["keep", "set", "clear", "uncertain"].includes(String(data.action)) ? data.action as AssistAction : "uncertain";
@@ -139,7 +180,9 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
   const validAction = action === "set" ? validSetValue(form, field, value, opts) :
     value === null && (action !== "clear" || !opts.immutableFields?.includes(field));
   const safeStatus = validAction && status === "valid" ? "valid" : status === "uncertain" ? "uncertain" : "invalid";
-  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin };
+  const metadata = safeStatus === "valid" && action === "set"
+    ? derivedListMetadata(form, field, data, opts) : {};
+  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin, ...metadata };
 }
 
 // 외부 응답의 형태·필드·값을 재확인하고 중복이나 알 수 없는 필드를 화면에서 버려요.
@@ -208,8 +251,13 @@ export function previousCandidate(
       const value = baselines[field.field];
       return [field.field, Array.isArray(value) ? [...value] : value];
     })),
-    fields: fields.map((field) =>
-      ({ field: field.field, action: field.action, value: field.value, evidence: field.evidence })),
+    fields: fields.map((field) => ({
+      field: field.field,
+      action: field.action,
+      value: Array.isArray(field.value) ? [...field.value] : field.value,
+      evidence: field.evidence,
+      ...derivedListMetadata(response.form, field.field, field as unknown as Record<string, unknown>),
+    })),
   };
 }
 

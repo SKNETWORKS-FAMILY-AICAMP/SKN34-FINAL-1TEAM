@@ -8,7 +8,7 @@ import { ruleFields } from "./rules.ts";
 import { shouldAutosaveQuote } from "./quoteAutosave.ts";
 import {
   freshPrevious, previousCandidate, readResponse, validSetValue,
-  type AssistCurrent, type AssistRequest, type AssistForm,
+  type AssistCurrent, type AssistRequest, type AssistForm, type CandidateField,
 } from "./protocol.ts";
 
 const today = "2026-11-23";
@@ -16,9 +16,14 @@ const quote = { amount: null, vat: null, days: null, valid: null };
 const quoteOptions = { today, daysMax: 40, vatModes: ["included", "excluded", "exempt"] };
 type Data = Partial<Record<string, {
   origin_request_id?: string;
+  evidence?: string;
+  source?: "rule" | "llm";
   action?: "set" | "clear" | "keep" | "uncertain";
   value?: string | number | string[] | null;
   status?: "valid" | "invalid" | "conflict" | "uncertain";
+  intent_kind?: CandidateField["intent_kind"];
+  value_source?: CandidateField["value_source"];
+  correction?: CandidateField["correction"];
   alternatives?: { action: "set" | "clear"; value: string | number | string[] | null; evidence: string; source: "rule" | "llm" }[];
 }>>;
 
@@ -35,9 +40,12 @@ function response(req: AssistRequest, data: Data = {}) {
       const detail = data[field] ?? {};
       return {
         field, action: detail.action ?? "keep", value: detail.value ?? null,
-        evidence: "원문 근거", source: "llm", status: detail.status ?? "valid",
+        evidence: detail.evidence ?? "원문 근거", source: detail.source ?? "llm", status: detail.status ?? "valid",
         alternatives: detail.alternatives ?? [],
         origin_request_id: detail.origin_request_id,
+        ...(detail.intent_kind === undefined ? {} : { intent_kind: detail.intent_kind }),
+        ...(detail.value_source === undefined ? {} : { value_source: detail.value_source }),
+        ...(detail.correction === undefined ? {} : { correction: detail.correction }),
       };
     }),
   };
@@ -279,6 +287,207 @@ test("3회 연속 메시지에서도 물려받은 기준값·원래 요청 ID·�
   await flush();
   assert.equal(session.apply(current, (changes) =>
     assert.deepEqual(changes, { amount: 4_550_000, days: 3, vat: "included" })), true);
+});
+
+test("파생 날짜 목록은 3턴째에도 근거·최초 기준값·출처를 보존해 다시 검증받아요", async () => {
+  const api = pending();
+  const originalDays = ["2026-12-08", "2026-12-09", "2026-12-10"];
+  const derivedDays = ["2026-12-08", "2026-12-10", "2026-12-11"];
+  const current = { days: originalDays, crew: 2 };
+  const opts = { today, requiredDays: 3, daysMax: 30, crewMax: 6 };
+  const correction = {
+    kind: "replace" as const,
+    rejected_value: ["2026-12-09"],
+    rejected_evidence: "9일",
+    accepted_evidence: "11일",
+  };
+  const session = new AssistSession("dates", "deal-id", api.requester);
+
+  session.send("9일 대신 11일, 나머지는 그대로", current, opts);
+  const first = api.jobs[0].request;
+  api.jobs[0].resolve(response(first, {
+    days: {
+      action: "set", value: derivedDays, evidence: "9일 대신 11일",
+      intent_kind: "explicit_change", value_source: "derived",
+      correction, origin_request_id: first.request_id, source: "llm",
+    },
+  }));
+  await flush();
+  const firstDays = session.view.response?.fields.find((field) => field.field === "days");
+  assert.equal(firstDays?.status, "valid");
+  assert.equal(firstDays?.value_source, "derived");
+  assert.deepEqual(firstDays?.correction, correction);
+
+  session.send("투입 인원 3명", current, opts);
+  const second = api.jobs[1].request;
+  const priorDays = second.previous_candidate?.fields.find((field) => field.field === "days");
+  assert.equal(priorDays?.value_source, "derived");
+  assert.equal(priorDays?.intent_kind, "explicit_change");
+  assert.deepEqual(priorDays?.correction, correction);
+  assert.deepEqual(second.previous_candidate?.baselines, { days: originalDays });
+  assert.equal(second.previous_candidate?.origins?.days, first.request_id);
+  assert.equal(second.previous_candidate?.sources?.days, "llm");
+  const secondWire = JSON.parse(JSON.stringify(second));
+  assert.equal(secondWire.previous_candidate.fields[0].value_source, "derived");
+  assert.deepEqual(secondWire.previous_candidate.fields[0].correction, correction);
+
+  api.jobs[1].resolve(response(second, {
+    days: {
+      action: "set", value: derivedDays, evidence: "9일 대신 11일",
+      intent_kind: "explicit_change", value_source: "derived",
+      correction, origin_request_id: first.request_id, source: "llm",
+    },
+    crew: {
+      action: "set", value: 3, evidence: "투입 인원 3명",
+      origin_request_id: second.request_id, source: "rule",
+    },
+  }));
+  await flush();
+
+  session.send("나머지 조건은 그대로", current, opts);
+  const third = api.jobs[2].request;
+  const thirdDays = third.previous_candidate?.fields.find((field) => field.field === "days");
+  assert.deepEqual(thirdDays?.value, derivedDays);
+  assert.equal(thirdDays?.value_source, "derived");
+  assert.deepEqual(thirdDays?.correction, correction);
+  assert.deepEqual(third.previous_candidate?.baselines, { days: originalDays, crew: 2 });
+  assert.equal(third.previous_candidate?.origins?.days, first.request_id);
+  assert.equal(third.previous_candidate?.origins?.crew, second.request_id);
+  assert.equal(third.previous_candidate?.sources?.days, "llm");
+  assert.equal(third.previous_candidate?.sources?.crew, "rule");
+  assert.equal(third.previous_candidate?.text, "9일 대신 11일, 나머지는 그대로\n투입 인원 3명");
+  assert.equal(third.previous_candidate?.fields.find((field) => field.field === "crew")?.correction, undefined);
+  assert.equal(session.apply(current, () => assert.fail("3턴째 응답 전 폼 수정")), false);
+});
+
+test("날짜 제외 목록도 검증된 derived 정정 근거만 다음 요청으로 복사해요", () => {
+  const period = { start: "2026-12-08", end: "2026-12-12", excluded: ["2026-12-09"] };
+  const req: AssistRequest = {
+    request_id: "first-period", resource_id: "visit-id", form: "period",
+    text: "9일 대신 11일을 제외해 주세요", current: period, rule_fields: [],
+    previous_candidate: null,
+  };
+  const correction = {
+    kind: "replace" as const, rejected_value: ["2026-12-09"],
+    rejected_evidence: "9일", accepted_evidence: "11일",
+  };
+  const raw = response(req, {
+    excluded: {
+      action: "set", value: ["2026-12-11"], evidence: req.text,
+      value_source: "derived", correction, intent_kind: "explicit_change",
+      origin_request_id: "origin-period",
+    },
+  });
+  const parsed = readResponse(raw, req, { today });
+  const excluded = parsed.fields.find((field) => field.field === "excluded");
+  assert.equal(excluded?.value_source, "derived");
+  assert.deepEqual(excluded?.correction, correction);
+  const next = previousCandidate(parsed, req.text, period);
+  assert.deepEqual(next.fields, [{
+    field: "excluded", action: "set", value: ["2026-12-11"], evidence: req.text,
+    intent_kind: "explicit_change", value_source: "derived", correction,
+  }]);
+  assert.deepEqual(next.baselines, { excluded: ["2026-12-09"] });
+  assert.deepEqual(next.origins, { excluded: "origin-period" });
+});
+
+test("파생 목록 정정 근거의 날짜 배열은 외부 변경과 직렬화 변경으로 변하지 않아요", () => {
+  const req: AssistRequest = {
+    request_id: "derived-copy", resource_id: "deal-id", form: "dates",
+    text: "9일 대신 11일", current: { days: ["2026-12-08", "2026-12-09"], crew: 2 },
+    previous_candidate: null, rule_fields: [],
+  };
+  const oldDays = ["2026-12-08", "2026-12-09"];
+  const correction = {
+    kind: "replace" as const, rejected_value: oldDays,
+    rejected_evidence: "9일", accepted_evidence: "11일",
+  };
+  const raw = response(req, {
+    days: {
+      action: "set", value: ["2026-12-08", "2026-12-11"], evidence: req.text,
+      value_source: "derived", correction,
+    },
+  });
+  const parsed = readResponse(raw, req, { today, requiredDays: 2 });
+  oldDays.push("2026-12-10");
+  const received = parsed.fields.find((item) => item.field === "days");
+  assert.deepEqual(received?.correction?.rejected_value, ["2026-12-08", "2026-12-09"]);
+  const forwarded = previousCandidate(parsed, req.text, req.current);
+  const original = forwarded.fields.find((item) => item.field === "days");
+  assert.deepEqual(original?.correction?.rejected_value, ["2026-12-08", "2026-12-09"]);
+  const carried = original?.correction?.rejected_value;
+  if (Array.isArray(carried)) carried.push("2026-12-12");
+  assert.deepEqual(received?.correction?.rejected_value, ["2026-12-08", "2026-12-09"]);
+});
+
+test("신뢰할 수 없는 날짜 정정 메타데이터는 계승하지 않아요", () => {
+  const originalDays = ["2026-12-08", "2026-12-09"];
+  const req: AssistRequest = {
+    request_id: "unsafe", resource_id: "deal-id", form: "dates",
+    text: "9일 대신 11일", current: { days: originalDays, crew: 2 },
+    previous_candidate: null, rule_fields: [],
+  };
+  const legitimate = response(req, {
+    days: {
+      action: "set", value: ["2026-12-08", "2026-12-11"],
+      value_source: "derived", evidence: req.text,
+    },
+  });
+  const attacks: unknown[] = [
+    { kind: "replace", rejected_value: ["2026-02-31"], rejected_evidence: "9일", accepted_evidence: "11일" },
+    { kind: "replace", rejected_value: ["2026-12-09", "2026-12-09"], rejected_evidence: "9일", accepted_evidence: "11일" },
+    { kind: "ambiguous", rejected_value: ["2026-12-09"], rejected_evidence: "9일", accepted_evidence: "11일" },
+    { kind: "replace", rejected_value: ["2026-12-09"], rejected_evidence: "", accepted_evidence: "11일" },
+    { kind: "replace", rejected_value: ["2026-12-09"], rejected_evidence: "9일", accepted_evidence: "x".repeat(1001) },
+    { kind: "replace", rejected_value: Array.from({ length: 121 }, (_, n) =>
+      new Date(Date.UTC(2026, 11, 1 + n)).toISOString().slice(0, 10)),
+    rejected_evidence: "9일", accepted_evidence: "11일" },
+    { kind: "replace", rejected_value: { forged: true }, rejected_evidence: "9일", accepted_evidence: "11일" },
+  ];
+  for (const correction of attacks) {
+    const raw = {
+      ...legitimate,
+      fields: legitimate.fields.map((field) =>
+        field.field === "days" ? { ...field, correction } : field),
+    };
+    const parsed = readResponse(raw, req, { today, requiredDays: 2 });
+    const candidate = parsed.fields.find((field) => field.field === "days");
+    assert.equal(candidate?.status, "valid");
+    assert.equal(candidate?.value_source, "derived");
+    assert.equal(candidate?.correction, undefined);
+    assert.equal(previousCandidate(parsed, req.text, req.current).fields[0].correction, undefined);
+  }
+
+  const notDerived = {
+    ...legitimate,
+    fields: legitimate.fields.map((field) =>
+      field.field === "days" ? {
+        ...field, value_source: "utterance",
+        correction: { kind: "replace", rejected_value: ["2026-12-09"], rejected_evidence: "9일", accepted_evidence: "11일" },
+      } : field),
+  };
+  const parsed = readResponse(notDerived, req, { today, requiredDays: 2 });
+  assert.equal(parsed.fields.find((field) => field.field === "days")?.value_source, undefined);
+  assert.equal(parsed.fields.find((field) => field.field === "days")?.correction, undefined);
+  const forged = readResponse(response({
+    ...req, form: "extra", current: { title: null, reason: null, amount: null, vat: null },
+  }, {
+    title: {
+      action: "set", value: "누수 보수", value_source: "derived",
+      correction: { kind: "replace", rejected_value: "도배", rejected_evidence: "도배", accepted_evidence: "누수" },
+    },
+  }), { ...req, form: "extra" }, { today });
+  assert.equal(forged.fields.find((field) => field.field === "title")?.value_source, undefined);
+  assert.equal(forged.fields.find((field) => field.field === "title")?.correction, undefined);
+
+  const emptyEvidence = {
+    ...legitimate,
+    fields: legitimate.fields.map((field) =>
+      field.field === "days" ? { ...field, evidence: "", value_source: "derived" } : field),
+  };
+  const noEvidence = readResponse(emptyEvidence, req, { today, requiredDays: 2 });
+  assert.equal(noEvidence.fields.find((field) => field.field === "days")?.value_source, undefined);
+  assert.equal(previousCandidate(noEvidence, req.text, req.current).fields[0].value_source, undefined);
 });
 
 test("API 대기 중 수동 수정해도 과거 응답을 적용할 수 없고 다음 Send에서 제외돼요", async () => {

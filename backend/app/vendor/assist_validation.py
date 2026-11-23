@@ -9,6 +9,7 @@ from itertools import pairwise
 from app.calc.schedule import JOB_MAX_DAYS
 from app.quote.schemas import AMOUNT_MAX
 from app.schedule.models import EXTRA_AMOUNT_MAX
+from app.vendor.assist_date_edit import validated_date_edit
 from app.vendor.assist_normalize import crew_mentions, date_mentions, date_tokens
 from app.vendor.assist_schemas import (
     FORM_FIELDS,
@@ -206,10 +207,15 @@ _CLEAR_TARGETS: dict[str, tuple[str, ...]] = {
     "reason": ("이유", "사유"),
     "valid": ("유효기간", "만료"),
 }
-_RETAIN = re.compile(r"(?:그대로|유지|바꾸지|변경하지|수정하지|건드리지)")
+_RETAIN = re.compile(
+    r"(?:그대로|유지|바꾸지|변경하지|수정하지|건드리지|"
+    r"전과\s*같|이전과\s*같|예전과\s*같|"
+    r"같아요|같습니다|같아|같은\s*상태|동일)"
+)
 _RETAIN_NEGATED = re.compile(
     r"(?:그대로|유지).{0,16}(?:말고|두지\s*말|않|아니|취소|빼고)"
     r"|(?:유지하지|그대로\s*두지)"
+    r"|(?:같지\s*않|같은\s*건\s*아니|같은\s*게\s*아니|동일하지\s*않)"
 )
 _UNCERTAIN_CHANGE = re.compile(r"(?:미정|모르|애매|정도|였나|일까|혹시|또는|아니면|사이|[?？])")
 _DIRECT_REPLACE = re.compile(r"(?:말고|아니고|아니라|대신|→|->)")
@@ -224,6 +230,22 @@ _CORRECTION_TO = re.compile(
 )
 _CORRECTION_CLAUSE_BREAK = re.compile(r"[,;.!?？\n]")
 _CORRECTION_UNRELATED = re.compile(r"(?:인원|작업자|기간|일수|시작|종료|항목|사유|이유)")
+_HISTORICAL_REFERENCE = re.compile(r"(?:아까|앞서|지난번|이전에|예전에|방금|조금\s*전)")
+_HISTORICAL_REPORT_LINK = re.compile(
+    r"(?:이라고|라고|이라|라|으로|로)?\s*"
+    r"(?:했|말했|말씀드렸|적었|썼|입력했|전달했)"
+    r"(?:는데|다가|지만|고)\s*$"
+    r"|(?:이라던|라던)\s*(?:추가\s*금액|추가금|견적|금액|인원|작업자|비용|기간)?"
+    r"(?:은|는|을|를)?\s*$"
+)
+_HISTORICAL_NEW_ACTION = re.compile(
+    r"(?:으로|로)\s*(?:고칠|고치|고쳐|바꾸|바꿔|바꿀|변경|수정|정정|확정|올리|내리)"
+)
+_HISTORICAL_DENIED_NEW = re.compile(
+    r"(?:고치|고쳐|고칠|바꾸|바꿔|바꿀|수정|변경|정정|확정)"
+    r"(?:지\s*(?:말|마|않|못)|지는\s*않|기\s*싫|지\s*안)"
+    r"|(?:수정|변경|정정)\s*(?:은|는|을|를)?\s*(?:하지\s*마|하지\s*않|안\s*하)"
+)
 _RULE_QUESTION_OR_UNDECIDED = re.compile(
     r"(?:[?？]|거죠|까요|미정|또는|아니면|혹은|모르|애매|사이|정도|쯤|고민|생각\s*중)"
 )
@@ -264,6 +286,16 @@ def _mentions_field(form: FormName, field: str, text: str, context: AssistContex
     if form == "period" and field == "excluded":
         # 기간 끝날이 언급됐다는 이유만으로 기존 제외일을 버리지 않는다.
         return bool(_EXCLUDE_DAY.search(text)) or "제외" in text
+    if form == "period" and field in ("start", "end"):
+        if _other_boundary_only(form, field, text):
+            return False
+        # '제외할 날 9일 대신 11일'에 나온 날짜는 start/end 수정 지시가 아니다.
+        if (
+            any(word in text for word in ("제외", "빼는 날", "빼는 날짜", "안 되는 날"))
+            and not _RULE_DATE_RANGE.search(text)
+            and not any(word in text for word in ("시작", "첫날", "종료", "끝날", "마지막", "기간"))
+        ):
+            return False
     if form == "quote" and field == "days":
         # '유효기간'은 견적 효력 날짜이며 공사 일수의 변경 시도가 아니다.
         remaining = re.sub(r"유효\s*기간", "", text)
@@ -310,15 +342,39 @@ def _targeted_retention(
     raw = normalized(text)
     at = raw.find(normalized(evidence))
     scope = raw[max(at - 16, 0) : at + len(normalized(evidence)) + 20]
-    if not _RETAIN.search(evidence) or _RETAIN_NEGATED.search(scope):
+    if (
+        not _RETAIN.search(evidence)
+        or _RETAIN_NEGATED.search(scope)
+        or _RULE_QUESTION_OR_UNDECIDED.search(scope)
+    ):
         return False
     if _target_word(form, field, evidence):
         return True
     if form == "period" and field in ("start", "end") and "기간" in evidence:
         return True
+    # 모델이 '전과 같아요'처럼 동사만 evidence로 잘라도 바로 앞의 명시적
+    # 필드 목적어를 확인한다. 다른 필드가 더 가까우면 유지 의도로 해석하지 않는다.
+    head = re.split(r"[,;.!?？\n]", raw[:at])[-1][-48:]
+    targets: list[tuple[int, int, str]] = []
+    for name in FORM_FIELDS[form]:
+        words = _CLEAR_TARGETS[name]
+        if form == "period" and name in ("start", "end"):
+            words = (*words, "기간")
+        for word in words:
+            for match in re.finditer(re.escape(word), head):
+                targets.append((match.end(), len(word), name))
+    generic_scope = any(
+        word in evidence for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")
+    )
+    if targets and not generic_scope:
+        nearest = max((end, length) for end, length, _ in targets)
+        if any((end, length) == nearest and name == field for end, length, name in targets):
+            return True
     # '나머지는 그대로'는 이번 글에서 별도로 바꾼 필드에는 적용하지 않는다.
-    if any(word in evidence for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")):
+    if generic_scope:
         without_evidence = normalized(text).replace(normalized(evidence), "", 1)
+        if _other_boundary_only(form, field, without_evidence):
+            return True
         return not _mentions_field(form, field, without_evidence, context)
     return False
 
@@ -482,8 +538,138 @@ def _rule_field_proof(
     return False
 
 
+def _verified_historical_scalar(
+    item: FieldIntent,
+    form: FormName,
+    text: str,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+    old_text: str,
+    new_text: str,
+    before: int,
+    after: int,
+) -> bool:
+    """이미 검증된 동일 필드의 옛 값을 명시적으로 정정한 문장만 인정한다.
+
+    '아까 A라고 했는데 B로 고칠게요'처럼 옛 발화와 새 확정 지시가 모두 필요하다.
+    단순한 여러 숫자 나열·마지막 숫자·불확실 문구는 정정 관계가 아니다.
+    """
+    relation = item.correction
+    if (
+        previous is None
+        or relation is None
+        or (form == "period" and item.field == "excluded")
+        or (form == "dates" and item.field == "days")
+    ):
+        return False
+    old = next(
+        (part for part in previous.fields if part.field == item.field and part.action == "set"),
+        None,
+    )
+    if (
+        old is None
+        or type(old.value) is not type(relation.rejected_value)
+        or old.value != relation.rejected_value
+    ):
+        return False
+    raw = normalized(text)
+    start = (
+        max(
+            raw.rfind(".", 0, before),
+            raw.rfind(";", 0, before),
+            raw.rfind("\n", 0, before),
+        )
+        + 1
+    )
+    link = raw[before + len(old_text) : after]
+    tail = raw[after : after + len(new_text) + 36]
+    # 보고 동사가 모델의 rejected_evidence 안에 들어가는 경우도 있다.
+    # '아까' 같은 부사가 없어도 'A라고 했는데 B로 고칠게요' 자체가 과거 참조다.
+    reported = bool(_HISTORICAL_REPORT_LINK.search(old_text + link))
+    if not (
+        reported
+        and len(link) <= 48
+        and _HISTORICAL_NEW_ACTION.search(tail)
+        and not _HISTORICAL_DENIED_NEW.search(tail)
+        and not _UNCERTAIN_CHANGE.search(raw[start : after + len(new_text) + 36])
+    ):
+        return False
+    try:
+        check_value(form, item.field, relation.rejected_value)
+        return _grounded(
+            form, item.field, relation.rejected_value, relation.rejected_evidence, context
+        ) and _grounded(form, item.field, item.value, relation.accepted_evidence, context)
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def _verified_date_replacement(
+    item: FieldIntent,
+    data: AssistRequest,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+) -> tuple[list[str], CorrectionRelation] | None:
+    """검증된 이전 전체 날짜 목록에서 정확히 한 원소만 새날로 바꾼다.
+
+    공급자의 부분 목록은 적용 데이터가 아니다. 검증된 prior와 이번 원문의
+    관계로 서버가 전체 목록을 만들며, 관계에는 재검증용 원래 전체 목록을 보존한다.
+    """
+    if (
+        previous is None
+        or item.action != "set"
+        or item.correction is None
+        or item.correction.kind != "replace"
+        or (data.form, item.field) not in (("dates", "days"), ("period", "excluded"))
+    ):
+        return None
+    old = next(
+        (value for value in previous.fields if value.field == item.field and value.action == "set"),
+        None,
+    )
+    if old is None or not isinstance(old.value, list):
+        return None
+    relation = item.correction
+    if not (
+        evidence_matches(data.text, item.evidence)
+        and evidence_matches(data.text, relation.rejected_evidence)
+        and evidence_matches(data.text, relation.accepted_evidence)
+    ):
+        return None
+    complete = validated_date_edit(item.field, data.text, old.value, context)
+    if complete is None:
+        return None
+    removed = set(old.value) - set(complete)
+    added = set(complete) - set(old.value)
+    if len(removed) != 1 or len(added) != 1:
+        return None
+    rejected, accepted = next(iter(removed)), next(iter(added))
+    # 기존 wire에서는 rejected_value가 교체한 하루 또는 그 하루짜리 배열일 수 있다.
+    # 검증 성공 후 응답에는 이전 *전체* 목록을 넣어 3턴 이후에도 재검증한다.
+    if relation.rejected_value not in (rejected, [rejected], old.value):
+        return None
+    if item.value not in (accepted, [accepted], complete):
+        return None
+    anchor = context.model_copy(update={"base_month": date.fromisoformat(rejected)})
+    if date.fromisoformat(rejected) not in date_mentions(
+        relation.rejected_evidence, anchor, expand=False
+    ) or date.fromisoformat(accepted) not in date_mentions(
+        relation.accepted_evidence, anchor, expand=False
+    ):
+        return None
+    return complete, CorrectionRelation(
+        kind="replace",
+        rejected_value=list(old.value),
+        rejected_evidence=relation.rejected_evidence,
+        accepted_evidence=relation.accepted_evidence,
+    )
+
+
 def _verified_correction(
-    item: FieldIntent, form: FormName, text: str, context: AssistContext
+    item: FieldIntent,
+    form: FormName,
+    text: str,
+    context: AssistContext,
+    previous: PreviousCandidate | None = None,
 ) -> CorrectionRelation | None:
     """동일 필드의 거절/채택 값과 명시적 정정 연결을 모두 확인한다."""
     relation = item.correction
@@ -506,6 +692,10 @@ def _verified_correction(
     after = normalized_text.find(new_text, before + len(old_text))
     if before < 0 or after < before + len(old_text):
         return None
+    if _verified_historical_scalar(
+        item, form, text, context, previous, old_text, new_text, before, after
+    ):
+        return relation
     link = normalized_text[before + len(old_text) : after]
     if len(link) > 36 or _CORRECTION_CLAUSE_BREAK.search(link) and link.strip() != ",":
         return None
@@ -756,6 +946,43 @@ def _review_one(
         if not _targeted_clear(data.form, item.field, item.evidence, text):
             return reject("ambiguous_intent")
     else:
+        if (
+            item.field in ("days", "excluded")
+            and (data.form, item.field) in (("dates", "days"), ("period", "excluded"))
+            and item.correction is not None
+        ):
+            replaced = _verified_date_replacement(item, data, context, previous)
+            if replaced is None:
+                return reject(
+                    "stale_context"
+                    if data.previous_candidate and previous is None
+                    else "correction_unverified",
+                    uncertain=True,
+                )
+            complete, relation = replaced
+            try:
+                check_value(data.form, item.field, complete)
+                if not _business_ok(
+                    data.form,
+                    item.field,
+                    complete,
+                    data,
+                    context,
+                    {**proposed, item.field: complete},
+                ):
+                    return reject("business_constraint")
+            except (ValueError, TypeError, KeyError):
+                return reject("business_constraint")
+            return CandidateField(
+                **common,
+                action="set",
+                value=complete,
+                evidence=item.evidence,
+                status="valid",
+                intent_kind="explicit_change",
+                value_source="derived",
+                correction=relation,
+            )
         try:
             check_value(data.form, item.field, item.value)
         except (ValueError, TypeError, KeyError):
@@ -773,7 +1000,7 @@ def _review_one(
         ):
             return reject("ambiguous_intent", uncertain=True)
 
-    correction = _verified_correction(item, data.form, text, context)
+    correction = _verified_correction(item, data.form, text, context, previous)
     if (
         item.correction is not None
         and correction is None
@@ -847,6 +1074,127 @@ def review_fields(
     return checked, list(dict.fromkeys(warnings))
 
 
+def _reverify_derived_history(
+    item: FieldIntent,
+    history: str,
+    form: FormName,
+    context: AssistContext,
+    data: AssistRequest,
+    verified_siblings: dict[str, CandidateField],
+) -> bool:
+    """이전 대화 원문에서 최초 전체 목록과 정정 체인을 재연한다.
+
+    브라우저가 보낸 derived 값 자체는 믿지 않는다. 최초 날짜 근거와 모든
+    교체 연결이 남아 있고, 마지막 결과가 후보 전체 목록과 일치해야 한다.
+    """
+    relation = item.correction
+    if (
+        item.value_source != "derived"
+        or item.action != "set"
+        or relation is None
+        or relation.kind != "replace"
+        or (form, item.field) not in (("dates", "days"), ("period", "excluded"))
+        or not isinstance(item.value, list)
+        or not isinstance(relation.rejected_value, list)
+        or len(history) > 1000
+    ):
+        return False
+    lines = [line.strip() for line in history.splitlines() if line.strip()]
+    if not 2 <= len(lines) <= 12:
+        return False
+
+    def unverified_change(line: str) -> bool:
+        # 지나간 발화 중 날짜 목록을 다시 바꾸거나 지우려다 실패한 단계가
+        # 있으면, 더 오래된 derived 후보를 다음 턴의 정답으로 되살리지 않는다.
+        field_named = (
+            any(word in line for word in ("공사 날짜", "공사할 날", "공사일", "작업일", "일정"))
+            if item.field == "days"
+            else any(word in line for word in ("제외", "빼는 날", "빼는 날짜", "안 되는 날"))
+        )
+        changed_word = re.search(
+            r"(?:대신|말고|→|->|지워|지우|삭제|비워|비우|초기화|없애|"
+            r"바꾸|바꿔|변경|수정|정정|다시|재설정|미정|보류|[?？])",
+            line,
+        )
+        dates_mentioned = bool(re.search(r"(?:\d{1,2}\s*일|20\d{2}-\d{2}-\d{2})", line))
+        return bool(
+            ("대신" in line or "말고" in line or "→" in line or "->" in line)
+            and dates_mentioned
+            or field_named
+            and (changed_word or dates_mentioned)
+        )
+
+    def initial_dates(line: str) -> list[str] | None:
+        if item.field == "days":
+            if not any(word in line for word in ("공사", "날짜", "일정", "작업")):
+                return None
+            source = line
+        else:
+            if not any(word in line for word in ("제외", "빼", "안 되는")):
+                return None
+            # 기간 경계가 함께 적힌 문장에서는 제외일 절만 증거로 쓴다.
+            source = line.split("가능")[-1].strip(" ,")
+        mentions = date_mentions(source, context, expand=True)
+        if not mentions or len(mentions) > context.days_max:
+            return None
+        return [day.isoformat() for day in sorted(mentions)]
+
+    state: list[str] | None = None
+    seen_edit = False
+    for line in lines:
+        if state is None:
+            state = initial_dates(line)
+            continue
+        changed = validated_date_edit(item.field, line, state, context)
+        if changed is not None:
+            state = changed
+            seen_edit = True
+        elif unverified_change(line):
+            # 모호하거나 검증되지 않은 중간 날짜 변경이 있으면 뒤 값도 신뢰할 수 없다.
+            return False
+    if not seen_edit or state != item.value:
+        return False
+    # 저장한 마지막 교체 전 목록을 확인해 과거 근거를 다른 목록에 전용하지 못한다.
+    last_edit = next(
+        (
+            index
+            for index in reversed(range(len(lines)))
+            if evidence_matches(lines[index], relation.rejected_evidence)
+            and evidence_matches(lines[index], relation.accepted_evidence)
+        ),
+        None,
+    )
+    if last_edit is None or last_edit == 0:
+        return False
+    before_last = initial_dates(lines[0])
+    if before_last is None:
+        return False
+    for line in lines[1:last_edit]:
+        derived = validated_date_edit(item.field, line, before_last, context)
+        if derived is not None:
+            before_last = derived
+        elif unverified_change(line):
+            return False
+    if before_last != relation.rejected_value:
+        return False
+    if validated_date_edit(item.field, lines[last_edit], before_last, context) != item.value:
+        return False
+    if not evidence_matches(lines[last_edit], item.evidence):
+        return False
+    effective = dict(data.current)
+    effective.update(
+        {
+            name: checked.value
+            for name, checked in verified_siblings.items()
+            if checked.status == "valid" and checked.action == "set"
+        }
+    )
+    validation_data = data.model_copy(update={"current": effective})
+    return _business_ok(
+        form, item.field, item.value, validation_data, context, {item.field: item.value}
+    )
+
+
 def review_previous(
     data: AssistRequest, context: AssistContext
 ) -> tuple[PreviousCandidate | None, dict[str, ReasonCode]]:
@@ -867,7 +1215,32 @@ def review_previous(
             rejections[item.field] = "stale_context"
         else:
             eligible.append(item)
-    checked, _ = review_fields(eligible, "rule", data, context, text=previous.text)
+    ordinary = [
+        item
+        for item in eligible
+        if not (item.value_source == "derived" and item.field in ("days", "excluded"))
+    ]
+    derived = [
+        item
+        for item in eligible
+        if item.value_source == "derived" and item.field in ("days", "excluded")
+    ]
+    checked, _ = review_fields(ordinary, "rule", data, context, text=previous.text)
+    for item in derived:
+        if _reverify_derived_history(item, previous.text, data.form, context, data, checked):
+            checked[item.field] = CandidateField(
+                field=item.field,
+                action="set",
+                value=item.value,
+                evidence=item.evidence,
+                source="rule",
+                status="valid",
+                alternatives=[],
+                value_source="derived",
+                correction=item.correction,
+            )
+        else:
+            rejections[item.field] = "reference_missing"
     for field, item in checked.items():
         if item.status != "valid":
             rejections[field] = item.reason_code or "reference_missing"
@@ -878,7 +1251,8 @@ def review_previous(
             value=item.value,
             evidence=item.evidence,
             intent_kind="explicit_change",
-            value_source="utterance",
+            value_source=item.value_source if item.value_source == "derived" else "utterance",
+            correction=item.correction if item.value_source == "derived" else None,
         )
         for item in checked.values()
         if item.status == "valid" and item.action in ("set", "clear")
@@ -920,7 +1294,8 @@ def _candidate_from_previous(item: FieldIntent, previous: PreviousCandidate) -> 
         status="valid",
         alternatives=[],
         intent_kind="retain_previous",
-        value_source="previous",
+        value_source="derived" if item.value_source == "derived" else "previous",
+        correction=item.correction if item.value_source == "derived" else None,
     )
 
 
