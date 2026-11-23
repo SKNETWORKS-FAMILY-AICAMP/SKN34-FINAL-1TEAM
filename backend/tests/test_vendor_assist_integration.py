@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from app.agent import vendor_assist
 from app.db import get_session
 from app.main import app
-from app.vendor import router
-from app.vendor.assist_schemas import AssistContext, FieldIntent, ModelInterpretation
+from app.vendor import assist_service, router
+from app.vendor.assist_schemas import AssistContext, AssistRequest, FieldIntent, ModelInterpretation
 from app.vendor.deps import approved_vendor
 
 
@@ -48,10 +48,13 @@ def boundary(monkeypatch):
     monkeypatch.setattr(router, "load_context", context)
     monkeypatch.setattr(router.ratelimit, "hit", limit)
     monkeypatch.setattr(vendor_assist, "interpret", model)
+    client = TestClient(app)
     try:
-        with TestClient(app) as client:
-            yield client, events
+        # 순수 HTTP 경계 시험은 공용 앱 lifespan을 다시 열거나 닫지 않는다.
+        # 세션 공용 client의 Redis 연결을 다른 이벤트 루프에서 종료하면 안 된다.
+        yield client, events
     finally:
+        client.close()
         app.dependency_overrides.clear()
         app.dependency_overrides.update(before)
 
@@ -97,3 +100,46 @@ def test_long_valid_message_can_include_full_rule_evidence(boundary):
     ]
     response = client.post("/vendor/assist/interpret", json=body)
     assert response.status_code == 200, response.text
+
+
+def test_retained_candidates_keep_source_and_ground_later_period_change(monkeypatch):
+    import asyncio
+
+    async def model(*args, **kwargs):
+        return ModelInterpretation(
+            fields=[
+                FieldIntent(field="excluded", action="set", value=["2026-12-04"], evidence="12/4")
+            ]
+        )
+
+    monkeypatch.setattr(vendor_assist, "interpret", model)
+    data = AssistRequest.model_validate(
+        {
+            **payload(),
+            "form": "period",
+            "text": "기간 그대로, 12/4만 제외해 주세요",
+            "current": {"start": None, "end": None, "excluded": []},
+            "previous_candidate": {
+                "request_id": "prior-message",
+                "text": "12/2부터 12/7까지 가능해요",
+                "fields": [
+                    {"field": "start", "action": "set", "value": "2026-12-02", "evidence": "12/2"},
+                    {"field": "end", "action": "set", "value": "2026-12-07", "evidence": "12/7"},
+                ],
+                "sources": {"start": "llm", "end": "rule"},
+                "origins": {"start": "first-message", "end": "prior-message"},
+            },
+        }
+    )
+    response = asyncio.run(
+        assist_service.interpret(
+            data, AssistContext(today=date(2026, 11, 23), base_month=date(2026, 12, 1))
+        )
+    )
+    fields = {item.field: item for item in response.fields}
+    assert fields["excluded"].status == "valid"
+    assert fields["excluded"].value == ["2026-12-04"]
+    assert fields["start"].source == "llm"
+    assert fields["start"].origin_request_id == "first-message"
+    assert fields["end"].source == "rule"
+    assert fields["excluded"].origin_request_id == data.request_id

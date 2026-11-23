@@ -29,7 +29,8 @@ function choicesFor(
 ): Record<string, FieldChoice> {
   return Object.fromEntries(response.fields.map((field) => {
     const old = previous?.fields.find((item) => item.field === field.field);
-    if (old === field && oldChoices[field.field]) return [field.field, { ...oldChoices[field.field] }];
+    const retained = old && field.origin_request_id && field.origin_request_id !== response.request_id;
+    if ((old === field || retained) && oldChoices[field.field]) return [field.field, { ...oldChoices[field.field] }];
     return [field.field, {
       selected: field.status === "valid" && field.action === "set" &&
         !(Array.isArray(field.value) && field.value.length === 0),
@@ -46,7 +47,8 @@ function baselinesFor(
   if (!previous || !oldBaselines) return snapshot;
   for (const field of incoming.fields) {
     const old = previous.fields.find((item) => item.field === field.field);
-    if (field.action === "keep" && old?.status === "valid" &&
+    const retained = field.origin_request_id && field.origin_request_id !== incoming.request_id;
+    if ((field.action === "keep" || retained) && old?.status === "valid" &&
       (old.action === "set" || old.action === "clear")) {
       const value = oldBaselines[field.field];
       snapshot[field.field] = Array.isArray(value) ? [...value] : value;

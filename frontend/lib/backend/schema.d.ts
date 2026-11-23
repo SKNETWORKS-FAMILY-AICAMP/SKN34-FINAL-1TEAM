@@ -3091,6 +3091,8 @@ export interface components {
             status: components["schemas"]["Status"];
             /** Alternatives */
             alternatives: components["schemas"]["Alternative"][];
+            /** Origin Request Id */
+            origin_request_id?: string | null;
         };
         /**
          * ChangeOut
@@ -5645,6 +5647,14 @@ export interface components {
             text: string;
             /** Fields */
             fields: components["schemas"]["FieldIntent"][];
+            /** Sources */
+            sources?: {
+                [key: string]: components["schemas"]["Source"];
+            };
+            /** Origins */
+            origins?: {
+                [key: string]: string;
+            };
         };
         /**
          * PriceFileIn

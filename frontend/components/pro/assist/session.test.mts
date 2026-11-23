@@ -12,6 +12,7 @@ const today = "2026-11-23";
 const quote = { amount: null, vat: null, days: null, valid: null };
 const quoteOptions = { today, daysMax: 40, vatModes: ["included", "excluded", "exempt"] };
 type Data = Partial<Record<string, {
+  origin_request_id?: string;
   action?: "set" | "clear" | "keep" | "uncertain";
   value?: string | number | string[] | null;
   status?: "valid" | "invalid" | "conflict" | "uncertain";
@@ -33,6 +34,7 @@ function response(req: AssistRequest, data: Data = {}) {
         field, action: detail.action ?? "keep", value: detail.value ?? null,
         evidence: "원문 근거", source: "llm", status: detail.status ?? "valid",
         alternatives: detail.alternatives ?? [],
+        origin_request_id: detail.origin_request_id,
       };
     }),
   };
@@ -52,6 +54,31 @@ function pending() {
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("서버가 유지한 이전 후보도 수동 수정과 선택 해제를 보존해요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  session.send("견적 455만 원", quote, quoteOptions);
+  const first = api.jobs[0].request;
+  api.jobs[0].resolve(response(first, {
+    amount: { action: "set", value: 4550000, origin_request_id: first.request_id },
+  }));
+  await flush();
+  const manual = { ...quote, amount: 6000000 };
+  session.send("유효기간만 12/20까지", manual, quoteOptions);
+  const second = api.jobs[1].request;
+  assert.equal(second.previous_candidate?.sources?.amount, "llm");
+  api.jobs[1].resolve(response(second, {
+    amount: { action: "set", value: 4550000, origin_request_id: first.request_id },
+    valid: { action: "set", value: "2026-12-20", origin_request_id: second.request_id },
+  }));
+  await flush();
+  assert.equal(session.apply(manual, () => assert.fail("수동 금액 덮어쓰기")), false);
+  session.select("amount", false);
+  const changes: AssistCurrent[] = [];
+  assert.equal(session.apply(manual, (change) => changes.push(change)), true);
+  assert.deepEqual(changes, [{ valid: "2026-12-20" }]);
+});
 
 test("기존 채팅 전송은 규칙+API 1회, 결과 확인 전 setter 0회, 부분 적용만 한 번", async () => {
   const api = pending();

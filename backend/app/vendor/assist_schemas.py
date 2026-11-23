@@ -123,6 +123,7 @@ class CandidateField(FieldIntent):
     source: Source
     status: Status
     alternatives: list[Alternative]
+    origin_request_id: StrictStr | None = Field(default=None, max_length=80)
 
     @model_validator(mode="after")
     def check_status(self) -> "CandidateField":
@@ -144,6 +145,17 @@ class PreviousCandidate(StrictObject):
     request_id: StrictStr = Field(min_length=1, max_length=80)
     text: StrictStr = Field(min_length=1, max_length=MAX_TEXT)
     fields: list[FieldIntent]
+    sources: dict[StrictStr, Source] = Field(default_factory=dict)
+    origins: dict[StrictStr, StrictStr] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def check_origins(self) -> "PreviousCandidate":
+        names = {item.field for item in self.fields}
+        if not self.sources.keys() <= names or not self.origins.keys() <= names:
+            raise ValueError("이전 후보의 출처 필드를 확인해 주세요.")
+        if any(not 1 <= len(value) <= 80 for value in self.origins.values()):
+            raise ValueError("이전 요청 식별자 길이를 확인해 주세요.")
+        return self
 
     @field_validator("text")
     @classmethod

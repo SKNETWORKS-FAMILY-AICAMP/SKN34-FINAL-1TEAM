@@ -13,9 +13,14 @@ FALLBACK_WARNING = "AI 해석을 사용할 수 없어 규칙으로 확인한 후
 
 async def interpret(data: AssistRequest, context: AssistContext) -> AssistResponse:
     """업무 데이터는 수정하지 않는다. 모델 실패 시에도 유효한 규칙 후보를 돌려준다."""
-    rule, warnings = review_fields(data.rule_fields, "rule", data, context)
     previous = verified_previous(data, context)
     safe_request = data.model_copy(update={"previous_candidate": previous})
+    # 후속 변경의 업무 조건은 검증된 미확정 후보를 포함한 상태에서 검사한다.
+    effective = dict(data.current)
+    if previous:
+        effective.update({item.field: item.value for item in previous.fields})
+    validation_request = safe_request.model_copy(update={"current": effective})
+    rule, warnings = review_fields(data.rule_fields, "rule", validation_request, context)
 
     try:
         # 모델 호출은 에이전트 모듈 한 곳에서 한다. 업로드·고객·업무 ID는 전달하지 않는다.
@@ -24,7 +29,7 @@ async def interpret(data: AssistRequest, context: AssistContext) -> AssistRespon
         result = ModelInterpretation.model_validate(
             await vendor_assist.interpret(safe_request, context)
         )
-        model, model_warnings = review_fields(result.fields, "llm", data, context)
+        model, model_warnings = review_fields(result.fields, "llm", validation_request, context)
     except Exception:  # noqa: BLE001 - 모델 오류는 검증한 규칙 후보로 복구
         # 외부 모델·형식·timeout 오류는 기존 규칙 후보로 복구한다. 원문은 로그에 남기지 않는다.
         return AssistResponse(

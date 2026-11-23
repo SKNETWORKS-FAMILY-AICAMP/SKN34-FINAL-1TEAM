@@ -251,7 +251,11 @@ async def hybrid_outputs(
             llm.structured = original
             vendor_assist.interpret = original_agent
         if live and len(rows) % 12 == 0:
-            print(f"실모델 진단 {len(rows)}/{len(cases)}건 완료", file=sys.stderr, flush=True)
+            print(
+                f"실모델 진단 {len(rows)}/{len(cases)}건 완료",
+                file=sys.stderr,
+                flush=True,
+            )
     return rows
 
 

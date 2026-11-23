@@ -59,6 +59,8 @@ python evaluation/vendor_assist/run.py --mode hybrid --split dev --live --allow-
 
 ## 지표 의미
 
+단일 적용 후보 오류율은 `status=valid`인 `set/clear`를 센다. 충돌 대안은 별도 확인 대상이므로 충돌 필드 수·대안 수·단일 정답과 다른 대안 수도 따로 기록한다. 단일 후보 오류가 0건이어도 모든 충돌 대안이 정답이라는 뜻은 아니다.
+
 | 지표 | 계산 |
 | --- | --- |
 | 필드 정확도 | 필드별 `action`과 `value`를 함께 맞힌 수 / 전체 필드 수 |

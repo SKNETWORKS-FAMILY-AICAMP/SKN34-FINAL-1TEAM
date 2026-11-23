@@ -396,3 +396,28 @@ def test_rule_bridge_invokes_existing_typescript_parser(corpus):
         "action": "set",
         "value": 4_550_000,
     }
+
+
+def test_conflicting_selectable_options_are_reported_separately(corpus):
+    case = _case(corpus)
+    expected = case["expected"]["amount"]["value"]
+    outcome = _prediction(case)
+    outcome["fields"] = [
+        {"field": name, **value, "status": "valid"}
+        for name, value in case["expected"].items()
+    ]
+    amount = next(item for item in outcome["fields"] if item["field"] == "amount")
+    amount.update(
+        action="uncertain",
+        value=None,
+        status="conflict",
+        alternatives=[
+            {"action": "set", "value": expected},
+            {"action": "set", "value": expected + 1},
+        ],
+    )
+    report = summarize([case], [outcome], runner="conflict-test")
+    assert report["false_candidates"] == 0
+    assert report["conflict_fields"] == 1
+    assert report["conflict_options"] == 2
+    assert report["conflict_option_mismatches"] == 1

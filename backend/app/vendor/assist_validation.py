@@ -294,7 +294,12 @@ def _review_one(
     *,
     text: str,
 ) -> CandidateField:
-    common = {"field": item.field, "source": source, "alternatives": []}
+    common = {
+        "field": item.field,
+        "source": source,
+        "alternatives": [],
+        "origin_request_id": data.request_id,
+    }
     if item.action == "keep":
         return CandidateField(
             **common,
@@ -398,20 +403,29 @@ def verified_previous(data: AssistRequest, context: AssistContext) -> PreviousCa
     ]
     if not valid:
         return None
-    return PreviousCandidate(request_id=previous.request_id, text=previous.text, fields=valid)
+    return PreviousCandidate(
+        request_id=previous.request_id,
+        text=previous.text,
+        fields=valid,
+        sources={item.field: previous.sources.get(item.field, "rule") for item in valid},
+        origins={
+            item.field: previous.origins.get(item.field, previous.request_id) for item in valid
+        },
+    )
 
 
 def _not_action(item: CandidateField | None) -> bool:
     return item is None or item.action == "keep" and item.status == "valid"
 
 
-def _candidate_from_previous(item: FieldIntent) -> CandidateField:
+def _candidate_from_previous(item: FieldIntent, previous: PreviousCandidate) -> CandidateField:
     return CandidateField(
         field=item.field,
         action=item.action,
         value=item.value,
         evidence=item.evidence,
-        source="rule",
+        source=previous.sources.get(item.field, "rule"),
+        origin_request_id=previous.origins.get(item.field, previous.request_id),
         status="valid",
         alternatives=[],
     )
@@ -478,7 +492,9 @@ def merge_candidates(
     previous: PreviousCandidate | None,
 ) -> list[CandidateField]:
     prior = (
-        {item.field: _candidate_from_previous(item) for item in previous.fields} if previous else {}
+        {item.field: _candidate_from_previous(item, previous) for item in previous.fields}
+        if previous
+        else {}
     )
     out = []
     for field in FORM_FIELDS[data.form]:

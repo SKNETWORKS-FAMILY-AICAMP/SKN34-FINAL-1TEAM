@@ -407,6 +407,7 @@ def summarize(
         false_candidates
     ) = omissions = 0
     errors = timeouts = 0
+    conflict_fields = conflict_options = conflict_option_mismatches = 0
     per_field: dict[str, dict[str, int]] = defaultdict(
         lambda: {"total": 0, "correct": 0, "false_candidates": 0, "omissions": 0}
     )
@@ -414,6 +415,22 @@ def summarize(
     scored = []
     usage_totals: dict[str, int | None] = {}
     for case, outcome in zip(cases, outcomes, strict=True):
+        raw_fields = outcome.get("fields")
+        for candidate in raw_fields if isinstance(raw_fields, list) else []:
+            if not isinstance(candidate, dict) or candidate.get("status") != "conflict":
+                continue
+            conflict_fields += 1
+            gold = case["expected"].get(candidate.get("field"))
+            alternatives = candidate.get("alternatives")
+            for option in alternatives if isinstance(alternatives, list) else []:
+                if not isinstance(option, dict):
+                    continue
+                conflict_options += 1
+                if gold and gold["action"] in {"set", "clear"}:
+                    conflict_option_mismatches += not _same(
+                        gold,
+                        {"action": option.get("action"), "value": option.get("value")},
+                    )
         error = outcome.get("error")
         errors += bool(error)
         timeouts += bool(outcome.get("timeout"))
@@ -477,6 +494,7 @@ def summarize(
                 "timeout": bool(outcome.get("timeout")),
                 "warnings": outcome.get("warnings", []),
                 "source": outcome.get("source"),
+                "candidate_fields": raw_fields,
                 "llm_error": outcome.get("llm_error"),
                 "llm_timeout": bool(outcome.get("llm_timeout")),
                 "adapter_invoked": bool(outcome.get("adapter_invoked")),
@@ -506,6 +524,9 @@ def summarize(
         "actionable_gold": actionable_gold,
         "actionable_predicted": actionable_pred,
         "false_candidates": false_candidates,
+        "conflict_fields": conflict_fields,
+        "conflict_options": conflict_options,
+        "conflict_option_mismatches": conflict_option_mismatches,
         "false_candidate_rate": false_candidates / actionable_pred
         if actionable_pred
         else None,
@@ -567,6 +588,7 @@ def format_report(report: dict, *, show_wrong: int = 10) -> str:
         f"토큰: 입력 {report['usage']['input_tokens']} · 출력 {report['usage']['output_tokens']} · 캐시 {report['usage']['cached_tokens']} (None=미계측)",
         f"비용: {report['cost_usd'] if report['cost_usd'] is not None else 'null (요금/사용량 미확인)'} USD",
         f"해석 출처: {report['source_counts']} (rule=규칙 또는 모델 실패 대체, llm=모델)",
+        f"별도 확인이 필요한 충돌: {report['conflict_fields']}필드 · {report['conflict_options']}대안 · 단일 정답과 다른 대안 {report['conflict_option_mismatches']}개 (단일 적용 후보 오류율과 별도)",
         f"서비스 오류: {report['error_count']}/{report['cases']} (시간초과 {report['timeout_count']}) · 모델 경로 예외: {report['llm_error_count']}/{report['cases']} (시간초과 {report['llm_timeout_count']}, 오프라인 스텁 오류도 포함 가능)",
         "",
         "| 화면 | 문장 수 | 문장 전체 정확률 |",

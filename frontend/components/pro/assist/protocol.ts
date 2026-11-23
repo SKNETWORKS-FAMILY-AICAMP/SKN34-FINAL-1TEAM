@@ -111,6 +111,8 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
   const status = ["valid", "conflict", "invalid", "uncertain"].includes(String(data.status))
     ? data.status as CandidateField["status"] : "invalid";
   const source: AssistSource = data.source === "llm" ? "llm" : "rule";
+  const origin = typeof data.origin_request_id === "string" && data.origin_request_id.length <= 80
+    ? data.origin_request_id : null;
   const evidence = typeof data.evidence === "string" ? data.evidence.slice(0, 1000) : "";
   const value = isValue(data.value) ? data.value : null;
   const alternatives: Alternative[] = Array.isArray(data.alternatives)
@@ -128,12 +130,12 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
       }];
     }).slice(0, 8) : [];
   if (status === "conflict") {
-    return { field, action: "uncertain", value: null, evidence, source, status: alternatives.length ? "conflict" : "uncertain", alternatives };
+    return { field, action: "uncertain", value: null, evidence, source, status: alternatives.length ? "conflict" : "uncertain", alternatives, origin_request_id: origin };
   }
   const validAction = action === "set" ? validSetValue(form, field, value, opts) :
     value === null && (action !== "clear" || !opts.immutableFields?.includes(field));
   const safeStatus = validAction && status === "valid" ? "valid" : status === "uncertain" ? "uncertain" : "invalid";
-  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [] };
+  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin };
 }
 
 // 외부 응답의 형태·필드·값을 재확인하고 중복이나 알 수 없는 필드를 화면에서 버려요.
@@ -175,6 +177,8 @@ export function previousCandidate(response: AssistResponse, text: string): Previ
   return {
     request_id: response.request_id,
     text,
+    sources: Object.fromEntries(response.fields.map((field) => [field.field, field.source])),
+    origins: Object.fromEntries(response.fields.map((field) => [field.field, field.origin_request_id ?? response.request_id])),
     fields: response.fields.map((field) =>
       field.status === "valid" && (field.action === "set" || field.action === "clear")
         ? { field: field.field, action: field.action, value: field.value, evidence: field.evidence }
