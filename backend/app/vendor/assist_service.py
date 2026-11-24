@@ -6,7 +6,12 @@ from app.vendor.assist_schemas import (
     AssistResponse,
     ModelInterpretation,
 )
-from app.vendor.assist_validation import merge_candidates, review_fields, review_previous
+from app.vendor.assist_validation import (
+    merge_candidates,
+    review_fields,
+    review_previous,
+    reviewed_date_edit,
+)
 
 FALLBACK_WARNING = "AI 해석을 사용할 수 없어 규칙으로 확인한 후보만 보여 드려요."
 
@@ -33,6 +38,7 @@ async def interpret(
             previous_rejected={},
             rule_reviewed=[],
             model_reviewed=None,
+            date_edit_reviewed=[],
             merged=[],
             final=[],
             decisions={},
@@ -55,6 +61,7 @@ async def interpret(
         trace["rule_reviewed"] = [item.model_dump(mode="json") for item in rule.values()]
 
     model = None
+    rejected_relations: set[str] = set()
     source: str = "rule"
     if use_model:
         try:
@@ -69,6 +76,13 @@ async def interpret(
             model, model_warnings = review_fields(
                 result.fields, "llm", validation_request, context, previous=previous
             )
+            rejected_relations = {
+                item.field
+                for item in result.fields
+                if item.correction is not None
+                and item.field in model
+                and model[item.field].status != "valid"
+            }
             warnings.extend(model_warnings)
             source = "llm"
         except Exception:  # noqa: BLE001 - 외부 오류는 같은 규칙 경로로 복구
@@ -76,6 +90,12 @@ async def interpret(
     if trace is not None and model is not None:
         trace["model_reviewed"] = [item.model_dump(mode="json") for item in model.values()]
 
+    date_edits = reviewed_date_edit(data, context, previous, previous_rejected)
+    for field in rejected_relations:
+        # 모델이 구체적으로 지목한 교체 관계가 틀렸다면 별도 규칙으로 덮지 않는다.
+        date_edits.pop(field, None)
+    if trace is not None:
+        trace["date_edit_reviewed"] = [item.model_dump(mode="json") for item in date_edits.values()]
     merged_out: list = []
     decisions: dict = {}
     fields = merge_candidates(
@@ -84,6 +104,7 @@ async def interpret(
         rule,
         model,
         previous,
+        date_edits=date_edits,
         decisions=decisions if trace is not None else None,
         merged_out=merged_out if trace is not None else None,
         previous_rejected=previous_rejected,

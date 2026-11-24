@@ -376,6 +376,8 @@ def _targeted_retention(
                 words = (*words, "세금 조건", "세금조건", "세금 방식")
             if name == "valid":
                 words = (*words, "유효 기간")
+            if (form, name) == ("dates", "days"):
+                words = (*words, "작업일")
             if form == "period" and name in ("start", "end"):
                 words = (*words, "기간", "시작일" if name == "start" else "종료일")
             for word in words:
@@ -759,6 +761,142 @@ def _verified_date_replacement(
         rejected_evidence=relation.rejected_evidence,
         accepted_evidence=relation.accepted_evidence,
     )
+
+
+_DATE_EDIT_PRIOR_REFERENCE = re.compile(
+    r"(?:앞에서\s*말한|앞서|아까|이전|예전|지난번|방금|조금\s*전|"
+    r"먼저\s*말한|전에\s*(?:말한|정한|제안한)|기존\s*제안|"
+    r"(?:지금|방금|직전)\s*제안(?:한|했던)\s*(?:날짜?|일|일정|목록)|"
+    r"그\s*(?:날짜들?|제안|목록)(?:\s*중)?)"
+)
+_DATE_EDIT_CURRENT_REFERENCE = re.compile(
+    r"(?:현재|지금)\s*(?:폼|화면|입력|등록|설정|선택|저장|달력|캘린더|"
+    r"공사\s*날짜|작업\s*날짜|제외\s*날짜)|"
+    r"(?:폼|화면|달력|캘린더)에\s*(?:있는|입력된|적힌)|"
+    r"직접\s*(?:입력|등록|설정)한"
+)
+_DATE_EDIT_TOKEN = re.compile(
+    r"(?<!\d)(?:20\d{2}\s*(?:년|[-/.])\s*\d{1,2}\s*"
+    r"(?:월|[-/.])\s*\d{1,2}\s*일?|"
+    r"\d{1,2}\s*(?:월|[-/.])\s*\d{1,2}\s*일?|"
+    r"(?:[1-9]|[12]\d|3[01])\s*일)(?!\d)"
+)
+
+
+def _date_edit_reference(text: str) -> str | None:
+    """교체 절의 출처 지시만 읽고 뒤따르는 다른 필드의 참조는 배제한다."""
+    connector = re.search(r"대신|말고|→|->|일\s*에서", text)
+    if connector:
+        prefix = text[: connector.start()]
+    else:
+        first_day = _DATE_EDIT_TOKEN.search(text)
+        prefix = text[: first_day.start()] if first_day else text
+    clause = re.split(r"[,;.!?？\n]", prefix)[-1]
+    markers = [
+        (match.start(), "previous") for match in _DATE_EDIT_PRIOR_REFERENCE.finditer(clause)
+    ] + [(match.start(), "current") for match in _DATE_EDIT_CURRENT_REFERENCE.finditer(clause)]
+    return max(markers)[1] if markers else None
+
+
+def reviewed_date_edit(
+    data: AssistRequest,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+    previous_rejected: dict[str, ReasonCode],
+) -> dict[str, CandidateField]:
+    """확정된 단일 날짜 교체를 모델 판단과 독립적으로 검증해 병합 직전에 제공한다.
+
+    이전 제안을 지칭하면 검증된 이전 목록만 사용한다. 현재 폼을 지칭하면
+    실제 현재 목록을 사용한다. 둘 다 명시하지 않은 상황에서 두 목록이 다르면
+    대상이 불분명하므로 제안을 만들지 않는다.
+    """
+    field = {"dates": "days", "period": "excluded"}.get(data.form)
+    if field is None:
+        return {}
+
+    earlier = (
+        next(
+            (item for item in previous.fields if item.field == field and item.action == "set"),
+            None,
+        )
+        if previous
+        else None
+    )
+    current = data.current.get(field)
+    tokens = _DATE_EDIT_TOKEN.findall(data.text)
+    reference = _date_edit_reference(data.text)
+    if reference == "previous":
+        # 이전 후보가 없거나 기준값이 변경됐을 때 현재 폼으로 대체하지 않는다.
+        bases = [earlier.value] if earlier is not None else []
+    elif reference == "current":
+        bases = [current]
+    elif field in previous_rejected:
+        return {}
+    else:
+        # 명시된 옛날이 어느 쪽에만 있는지 확인한다. 둘 모두에 적용되되
+        # 목록이 다르면 사용자가 어느 목록을 뜻하는지 확정할 수 없다.
+        bases = [current]
+        if earlier is not None and earlier.value != current:
+            bases.append(earlier.value)
+    matches = []
+    for base in bases:
+        if not isinstance(base, list):
+            continue
+        complete = validated_date_edit(field, data.text, base, context, require_affirmative=True)
+        if complete is not None:
+            matches.append((base, complete))
+    if len(matches) != 1:
+        return {}
+    base, complete = matches[0]
+    removed, added = set(base) - set(complete), set(complete) - set(base)
+    if len(removed) != 1 or len(added) != 1:
+        return {}
+
+    # 두 날짜 표현은 이미 validated_date_edit가 유일성과 순서를 확인했다.
+    old_day = date.fromisoformat(next(iter(removed))).day
+    new_day = date.fromisoformat(next(iter(added))).day
+    old_evidence = [token for token in tokens if int(re.findall(r"\d+", token)[-1]) == old_day]
+    new_evidence = [token for token in tokens if int(re.findall(r"\d+", token)[-1]) == new_day]
+    if not old_evidence or not new_evidence:
+        return {}
+    # 여러 번 나온 표기를 임의로 고르지 않는다. 서버가 검증한 전체 문장으로
+    # 출처를 묶고, 다음 턴에는 날짜 교체 함수를 다시 재연해 확인한다.
+    rejected_text = old_evidence[0] if len(old_evidence) == 1 else data.text
+    accepted_text = new_evidence[0] if len(new_evidence) == 1 else data.text
+    try:
+        check_value(data.form, field, complete)
+        effective = dict(data.current)
+        if previous:
+            effective.update(
+                {item.field: item.value for item in previous.fields if item.action == "set"}
+            )
+        validation_data = data.model_copy(update={"current": effective})
+        if not _business_ok(
+            data.form, field, complete, validation_data, context, {field: complete}
+        ):
+            return {}
+    except (ValueError, TypeError, KeyError):
+        return {}
+    return {
+        field: CandidateField(
+            field=field,
+            action="set",
+            value=complete,
+            evidence=data.text,
+            source="rule",
+            status="valid",
+            alternatives=[],
+            origin_request_id=data.request_id,
+            intent_kind="explicit_change",
+            value_source="derived",
+            correction=CorrectionRelation(
+                kind="replace",
+                rejected_value=list(base),
+                rejected_evidence=rejected_text,
+                accepted_evidence=accepted_text,
+            ),
+        )
+    }
 
 
 def _verified_correction(
@@ -1203,7 +1341,7 @@ def _reverify_derived_history(
     ):
         return False
     lines = [line.strip() for line in history.splitlines() if line.strip()]
-    if not 2 <= len(lines) <= 12:
+    if not 1 <= len(lines) <= 12:
         return False
 
     def unverified_change(line: str) -> bool:
@@ -1242,22 +1380,6 @@ def _reverify_derived_history(
             return None
         return [day.isoformat() for day in sorted(mentions)]
 
-    state: list[str] | None = None
-    seen_edit = False
-    for line in lines:
-        if state is None:
-            state = initial_dates(line)
-            continue
-        changed = validated_date_edit(item.field, line, state, context)
-        if changed is not None:
-            state = changed
-            seen_edit = True
-        elif unverified_change(line):
-            # 모호하거나 검증되지 않은 중간 날짜 변경이 있으면 뒤 값도 신뢰할 수 없다.
-            return False
-    if not seen_edit or state != item.value:
-        return False
-    # 저장한 마지막 교체 전 목록을 확인해 과거 근거를 다른 목록에 전용하지 못한다.
     last_edit = next(
         (
             index
@@ -1267,22 +1389,38 @@ def _reverify_derived_history(
         ),
         None,
     )
-    if last_edit is None or last_edit == 0:
+    if last_edit is None or not evidence_matches(lines[last_edit], item.evidence):
         return False
-    before_last = initial_dates(lines[0])
-    if before_last is None:
-        return False
-    for line in lines[1:last_edit]:
-        derived = validated_date_edit(item.field, line, before_last, context)
-        if derived is not None:
-            before_last = derived
-        elif unverified_change(line):
+
+    def replay(seed: list[str] | None, start: int) -> bool:
+        if seed is None:
             return False
-    if before_last != relation.rejected_value:
-        return False
-    if validated_date_edit(item.field, lines[last_edit], before_last, context) != item.value:
-        return False
-    if not evidence_matches(lines[last_edit], item.evidence):
+        state = list(seed)
+        before_last: list[str] | None = None
+        seen_edit = False
+        for index in range(start, len(lines)):
+            line = lines[index]
+            changed = validated_date_edit(item.field, line, state, context)
+            if changed is not None:
+                if index == last_edit:
+                    before_last = list(state)
+                state = changed
+                seen_edit = True
+            elif unverified_change(line):
+                # 실패한 중간 교체가 있으면 오래된 값을 되살리지 않는다.
+                return False
+        return seen_edit and state == item.value and before_last == relation.rejected_value
+
+    # 최초 제안이 대화에 있던 경우: 최초 원문으로 전체 목록을 재구성한다.
+    verified = len(lines) > 1 and last_edit > 0 and replay(initial_dates(lines[0]), 1)
+    # 최초 기준이 화면의 목록인 경우: 동일 필드의 원래 baseline이 지금도
+    # 그대로일 때에만 검증한다. correction의 rejected_value를 기준으로 믿지 않는다.
+    previous_data = data.previous_candidate
+    if not verified and previous_data is not None:
+        base = data.current.get(item.field)
+        if isinstance(base, list) and base and previous_data.baselines.get(item.field) == base:
+            verified = replay(base, 0)
+    if not verified:
         return False
     effective = dict(data.current)
     effective.update(
@@ -1590,6 +1728,7 @@ def merge_candidates(
     model: dict[str, CandidateField] | None,
     previous: PreviousCandidate | None,
     *,
+    date_edits: dict[str, CandidateField] | None = None,
     decisions: dict[str, dict[str, str | None]] | None = None,
     merged_out: list[CandidateField] | None = None,
     previous_rejected: dict[str, ReasonCode] | None = None,
@@ -1649,6 +1788,31 @@ def merge_candidates(
                 alternatives=[],
                 intent_kind="no_mention",
             )
+        # 검증한 전체 목록은 모델의 모호함·부분 배열 때문에 잃지 않는다.
+        # 독립적인 명시적 반대 지시가 충돌하면 확인을 요구한다.
+        edit = (date_edits or {}).get(field)
+        if edit is not None:
+            if chosen.status == "conflict":
+                pass  # 서로 다른 명시적 대안은 임의로 한 쪽을 선택하지 않는다.
+            elif chosen.status in ("uncertain", "invalid"):
+                chosen = edit
+            elif chosen.action == "keep":
+                chosen = (
+                    _hold(field, "ambiguous_intent", "rule")
+                    if chosen.intent_kind == "retain_current"
+                    else edit
+                )
+            elif chosen.action == "set":
+                # 모델이 교체된 하루만 반환해도 나머지 확정 날짜를 지킨다.
+                added = set(edit.value) - set(edit.correction.rejected_value)
+                partial = isinstance(chosen.value, list) and set(chosen.value) == added
+                chosen = (
+                    edit
+                    if chosen.value == edit.value or partial
+                    else _hold(field, "ambiguous_intent", "rule")
+                )
+            else:
+                chosen = _hold(field, "ambiguous_intent", "rule")
         out.append(chosen)
         if decisions is not None:
             decisions[field] = {
