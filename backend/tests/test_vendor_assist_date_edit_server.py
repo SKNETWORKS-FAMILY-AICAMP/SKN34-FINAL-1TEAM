@@ -10,6 +10,7 @@ from app.agent import vendor_assist
 from app.vendor.assist_schemas import (
     AssistContext,
     AssistRequest,
+    CorrectionRelation,
     FieldIntent,
     ModelInterpretation,
     PreviousCandidate,
@@ -49,13 +50,13 @@ def _model_field(field, action="uncertain", evidence=""):
     )
 
 
-def _run(monkeypatch, request, model_fields):
+def _run(monkeypatch, request, model_fields, *, context=None):
     async def fake_model(_request, _context):
         return ModelInterpretation(fields=model_fields)
 
     monkeypatch.setattr(vendor_assist, "interpret", fake_model)
     trace = {}
-    response = asyncio.run(interpret(request, _context(request.form), trace=trace))
+    response = asyncio.run(interpret(request, context or _context(request.form), trace=trace))
     return {item.field: item for item in response.fields}, trace
 
 
@@ -349,3 +350,230 @@ def test_normalized_first_turn_list_requires_exact_grounding(monkeypatch, third,
     assert (result["days"].status == "valid") is valid
     if valid:
         assert result["days"].value == ["2026-12-10", "2026-12-13", "2026-12-12"]
+
+
+def test_current_date_single_replacement_with_stored_model_relation(monkeypatch):
+    current = {"days": ["2026-12-09", "2026-12-15"], "crew": 2}
+    utterance = (
+        "아, 날짜 하나 잘못 말씀드렸네요. 12월 15일 대신 16일로 고쳐주세요. 9일은 그대로고요."
+    )
+    replacement = ["2026-12-09", "2026-12-16"]
+    fields, trace = _run(
+        monkeypatch,
+        _request("dates", utterance, current),
+        [
+            FieldIntent(
+                field="days",
+                action="set",
+                value=replacement,
+                evidence="12월 15일 대신 16일로 고쳐주세요. 9일은 그대로고요.",
+                intent_kind="explicit_change",
+                value_source="utterance",
+                correction=CorrectionRelation(
+                    kind="replace",
+                    rejected_value=["2026-12-15"],
+                    rejected_evidence="12월 15일 대신",
+                    accepted_evidence="16일로 고쳐주세요",
+                ),
+            ),
+            _model_field("crew", "keep"),
+        ],
+        context=_context("dates").model_copy(update={"required_days": 2}),
+    )
+    assert fields["days"].status == "valid", trace
+    assert fields["days"].value == replacement
+    assert fields["days"].value_source == "derived"
+    assert fields["days"].correction.rejected_value == current["days"]
+    assert fields["crew"].action == "keep"
+
+
+def test_previous_dates_shift_preserves_neighbors_with_stored_model_fields(monkeypatch):
+    current = {"days": ["2026-12-09", "2026-12-15"], "crew": 2}
+    prior_days = ["2026-12-07", "2026-12-14", "2026-12-21"]
+    previous = PreviousCandidate(
+        request_id="earlier",
+        text=(
+            "이번 작업은 12월 7일, 14일, 21일 이렇게 세 번 나갑니다. 날짜는 이 세 개로 잡아주세요."
+        ),
+        fields=[
+            FieldIntent(
+                field="days",
+                action="set",
+                value=prior_days,
+                evidence="12월 7일, 14일, 21일",
+            )
+        ],
+        sources={"days": "llm"},
+        origins={"days": "earlier"},
+        baselines={"days": current["days"]},
+    )
+    utterance = "아까 말한 14일만 하루 밀려서 12월 15일로요. 7일이랑 21일은 그대로입니다."
+    fields, trace = _run(
+        monkeypatch,
+        _request("dates", utterance, current, previous=previous),
+        [
+            FieldIntent(
+                field="days",
+                action="set",
+                value=["2026-12-07", "2026-12-15", "2026-12-21"],
+                evidence="14일만 하루 밀려서 12월 15일로요. 7일이랑 21일은 그대로입니다.",
+                intent_kind="explicit_change",
+                value_source="utterance",
+            ),
+            _model_field("crew", "keep"),
+        ],
+    )
+    assert trace["previous_rejected"] == {}
+    assert trace["date_edit_reviewed"], trace
+    assert fields["days"].status == "valid", trace
+    assert fields["days"].value == ["2026-12-07", "2026-12-15", "2026-12-21"]
+    assert fields["days"].correction.rejected_value == prior_days
+    assert fields["days"].source == "rule"
+
+
+def test_previous_period_exclusion_replacement_with_stored_model_abstention(monkeypatch):
+    current = {"start": "2026-12-05", "end": "2026-12-18", "excluded": []}
+    prior_days = ["2026-12-09", "2026-12-16"]
+    previous = PreviousCandidate(
+        request_id="earlier",
+        text="12/9, 12/16 작업 불가입니다",
+        fields=[
+            FieldIntent(
+                field="excluded",
+                action="set",
+                value=prior_days,
+                evidence="12/9, 12/16 작업 불가",
+            )
+        ],
+        sources={"excluded": "llm"},
+        origins={"excluded": "earlier"},
+        baselines={"excluded": []},
+    )
+    utterance = "아 16일 대신 17일 쉬는 걸로요 나머진 그대로"
+    fields, trace = _run(
+        monkeypatch,
+        _request("period", utterance, current, previous=previous),
+        [
+            FieldIntent(
+                field="start",
+                action="keep",
+                value=None,
+                evidence="나머진 그대로",
+                intent_kind="retain_current",
+                value_source="current",
+            ),
+            FieldIntent(
+                field="end",
+                action="keep",
+                value=None,
+                evidence="나머진 그대로",
+                intent_kind="retain_current",
+                value_source="current",
+            ),
+            _model_field("excluded", "uncertain", "16일 대신 17일 쉬는 걸로요 나머진 그대로"),
+        ],
+    )
+    assert trace["previous_rejected"] == {}
+    assert trace["date_edit_reviewed"], trace
+    assert fields["excluded"].status == "valid", trace
+    assert fields["excluded"].value == ["2026-12-09", "2026-12-17"]
+    assert fields["excluded"].correction.rejected_value == prior_days
+    assert fields["excluded"].origin_request_id == "new-edit"
+
+
+def test_current_model_incorrect_rejected_date_cannot_override_local_list(monkeypatch):
+    current = {"days": ["2026-12-09", "2026-12-15"], "crew": 2}
+    text = "12월 15일 대신 16일로 고쳐주세요. 9일은 그대로고요."
+    fields, trace = _run(
+        monkeypatch,
+        _request("dates", text, current),
+        [
+            FieldIntent(
+                field="days",
+                action="set",
+                value=["2026-12-09", "2026-12-16"],
+                evidence=text,
+                intent_kind="explicit_change",
+                correction=CorrectionRelation(
+                    kind="replace",
+                    rejected_value=["2026-12-09"],
+                    rejected_evidence="9일은 그대로",
+                    accepted_evidence="16일로 고쳐주세요",
+                ),
+            )
+        ],
+        context=_context("dates").model_copy(update={"required_days": 2}),
+    )
+    assert fields["days"].action == "uncertain", trace
+    assert trace["date_edit_reviewed"] == []
+
+
+def test_stale_previous_date_reference_does_not_fall_back_to_current(monkeypatch):
+    current = {"days": ["2026-12-09", "2026-12-15"], "crew": 2}
+    previous = PreviousCandidate(
+        request_id="earlier",
+        text="작업일은 12월 9일, 15일입니다",
+        fields=[
+            FieldIntent(
+                field="days",
+                action="set",
+                value=current["days"],
+                evidence="12월 9일, 15일",
+            )
+        ],
+        baselines={"days": ["2026-12-08", "2026-12-15"]},
+    )
+    text = "아까 제안한 작업일 15일 대신 16일로 고쳐주세요. 9일은 그대로고요."
+    fields, trace = _run(
+        monkeypatch,
+        _request("dates", text, current, previous=previous),
+        [_model_field("days", "uncertain", text)],
+        context=_context("dates").model_copy(update={"required_days": 2}),
+    )
+    assert trace["previous_rejected"]["days"] == "stale_context"
+    assert trace["date_edit_reviewed"] == []
+    assert fields["days"].status != "valid"
+
+
+def test_partially_stale_previous_with_valid_crew_cannot_restore_date_edit(monkeypatch):
+    current = {"days": ["2026-12-09", "2026-12-15"], "crew": 2}
+    previous = PreviousCandidate(
+        request_id="earlier",
+        text="작업 날짜는 12월 9일, 15일이고 인원은 3명입니다.",
+        fields=[
+            FieldIntent(
+                field="days",
+                action="set",
+                value=current["days"],
+                evidence="12월 9일, 15일",
+            ),
+            FieldIntent(field="crew", action="set", value=3, evidence="인원은 3명"),
+        ],
+        baselines={"days": ["2026-12-08", "2026-12-15"], "crew": 2},
+    )
+    text = "12월 15일 대신 16일로 고쳐주세요. 9일은 그대로고요."
+    fields, trace = _run(
+        monkeypatch,
+        _request("dates", text, current, previous=previous),
+        [
+            FieldIntent(
+                field="days",
+                action="set",
+                value=["2026-12-09", "2026-12-16"],
+                evidence=text,
+                intent_kind="explicit_change",
+                correction=CorrectionRelation(
+                    kind="replace",
+                    rejected_value=["2026-12-15"],
+                    rejected_evidence="12월 15일 대신",
+                    accepted_evidence="16일로 고쳐주세요",
+                ),
+            ),
+            _model_field("crew", "keep"),
+        ],
+        context=_context("dates").model_copy(update={"required_days": 2}),
+    )
+    assert trace["previous_rejected"]["days"] == "stale_context"
+    assert trace["previous_verified"]["fields"][0]["field"] == "crew"
+    assert trace["date_edit_reviewed"] == []
+    assert fields["days"].status != "valid"

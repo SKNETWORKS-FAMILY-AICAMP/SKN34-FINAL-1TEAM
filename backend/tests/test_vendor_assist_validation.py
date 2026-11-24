@@ -49,6 +49,14 @@ def ctx(**changes) -> AssistContext:
     )
 
 
+@pytest.mark.parametrize("unit", ["명", " 만 원", "0"])
+def test_short_range_cannot_truncate_quantity(unit):
+    text = "12/14~19" + unit
+    candidate = field("end", "2026-12-19", "12/14~19")
+    reviewed, _ = review_fields([candidate], "llm", request("period", text), ctx())
+    assert reviewed["end"].status != "valid"
+
+
 @pytest.mark.parametrize(
     ("form", "field_name", "value"),
     [

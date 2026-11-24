@@ -152,3 +152,81 @@ def test_retained_day_needs_unique_prior_and_exclusion_has_correct_scope(ctx):
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "phrase", "prior", "expected"),
+    [
+        (
+            "days",
+            "아까 말한 14일만 하루 밀려서 12월 15일로요. 7일이랑 21일은 그대로입니다.",
+            ["2026-12-07", "2026-12-14", "2026-12-21"],
+            ["2026-12-07", "2026-12-15", "2026-12-21"],
+        ),
+        (
+            "excluded",
+            "아 16일 대신 17일 쉬는 걸로요 나머진 그대로",
+            ["2026-12-09", "2026-12-16"],
+            ["2026-12-09", "2026-12-17"],
+        ),
+    ],
+)
+def test_explicit_single_change_with_neighbor_retention(ctx, field, phrase, prior, expected):
+    assert validated_date_edit(field, phrase, prior, ctx, require_affirmative=True) == expected
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "14일만 하루 밀려서 12월 16일로요. 7일이랑 21일은 그대로입니다.",
+        "15일만 하루 밀려서 12월 14일로요. 7일이랑 21일은 그대로입니다.",
+        "14일만 하루 당겨서 12월 13일로요. 7일이랑 21일은 그대로입니다.",
+        "14일만 하루 밀려서 12월 15일로 가능할까요? 7일이랑 21일은 그대로입니다.",
+        "14일만 하루 밀려서 12월 15일로요. 7일이랑 22일은 그대로입니다.",
+        "14일만 하루 밀려서 12월 15일로요. 7일이랑 21일은 그대로가 아니에요.",
+        "14일만 하루 밀려서 12월 15일로요. 7일은 그대로고 21일은 22일로 바꿔요.",
+    ],
+)
+def test_shift_requires_exact_one_day_and_true_retention(ctx, phrase):
+    assert (
+        validated_date_edit(
+            "days",
+            phrase,
+            ["2026-12-07", "2026-12-14", "2026-12-21"],
+            ctx,
+            require_affirmative=True,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "16일 대신 17일 쉬는 걸로요 나머진 그대로?",
+        "16일 대신 17일 쉬는 걸로요. 9일은 제외하지 않을게요.",
+        "작업일 16일 대신 17일 쉬는 걸로요 나머진 그대로",
+        "시작일 16일 대신 17일 쉬는 걸로요 나머진 그대로",
+        "16일 대신 17일 쉬는 걸로요. 20일도 그대로",
+    ],
+)
+def test_exclusion_result_does_not_hide_conflicting_clauses(ctx, phrase):
+    assert (
+        validated_date_edit(
+            "excluded", phrase, ["2026-12-09", "2026-12-16"], ctx, require_affirmative=True
+        )
+        is None
+    )
+
+
+def test_exclusion_result_cannot_be_mistaken_for_workday_edit(ctx):
+    assert (
+        validated_date_edit(
+            "days",
+            "16일 대신 17일 쉬는 걸로요 나머진 그대로",
+            ["2026-12-09", "2026-12-14", "2026-12-16"],
+            ctx,
+            require_affirmative=True,
+        )
+        is None
+    )

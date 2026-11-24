@@ -15,6 +15,7 @@ from app.vendor.assist_schemas import (
     PreviousCandidate,
 )
 from app.vendor.assist_service import interpret
+from app.vendor.assist_validation import review_fields
 
 
 def _field(name, action, value, evidence, **attrs):
@@ -32,12 +33,16 @@ def _retain(name, evidence):
     )
 
 
-def _run(monkeypatch, form, current, old_text, old_fields, text, intents):
+def _run(monkeypatch, form, current, old_text, old_fields, text, intents, *, baselines=None):
     previous = PreviousCandidate(
         request_id="known-prior",
         text=old_text,
         fields=old_fields,
-        baselines={part.field: current[part.field] for part in old_fields},
+        baselines=(
+            {part.field: current[part.field] for part in old_fields}
+            if baselines is None
+            else baselines
+        ),
         sources={part.field: "rule" for part in old_fields},
         origins={part.field: "known-prior" for part in old_fields},
     )
@@ -193,3 +198,207 @@ def test_field_within_prior_reference_phrase(monkeypatch):
     )
     _valid(result["amount"], 5_900_000)
     _not_restored(result["vat"])
+
+
+def _period_request(text, current=None):
+    return AssistRequest(
+        request_id="period-turn",
+        resource_id=UUID("00000000-0000-4000-8000-000000000179"),
+        form="period",
+        text=text,
+        current=current
+        or {
+            "start": "2026-12-05",
+            "end": "2026-12-18",
+            "excluded": ["2026-12-10", "2026-12-12"],
+        },
+        previous_candidate=None,
+        rule_fields=[],
+    )
+
+
+def _checked_period_clear(text, evidence, field="excluded"):
+    data = _period_request(text)
+    verified, _ = review_fields(
+        [_field(field, "clear", None, evidence, intent_kind="explicit_change")],
+        "llm",
+        data,
+        AssistContext(today=date(2026, 11, 23), base_month=date(2026, 12, 1)),
+    )
+    return verified[field]
+
+
+@pytest.mark.parametrize(
+    ("text", "evidence"),
+    [
+        ("전에 빼둔 날짜 다 풀어줘요 이제 기간 내내 가능해요", "전에 빼둔 날짜 다 풀어줘요"),
+        ("기존 제외했던 날 모두 풀어 주세요", "기존 제외했던 날 모두 풀어 주세요"),
+        ("쉬는 날은 전부 풀어줘요", "쉬는 날은 전부 풀어줘요"),
+    ],
+)
+def test_explicit_all_exclusion_release_clears_only_excluded_days(text, evidence):
+    cleared = _checked_period_clear(text, evidence)
+    assert (cleared.action, cleared.status, cleared.value) == ("clear", "valid", None)
+    assert cleared.source == "llm"
+    assert _checked_period_clear(text, evidence, field="start").status != "valid"
+    assert _checked_period_clear(text, evidence, field="end").status != "valid"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "전에 빼둔 날짜 중 10일만 풀어줘요",
+        "전에 빼둔 날짜 다 풀지 마세요",
+        "전에 빼둔 날짜 다 풀어줘요. 아, 그 요청은 취소합니다.",
+        "전에 빼둔 날짜 다 풀어줘요라고 말한 적은 없어요",
+        "전에 빼둔 날짜 다 풀어줄까요?",
+        "전에 빼둔 날짜 다 풀어주는 건 아니에요",
+        "전에 빼둔 날짜 다 풀어줄지 아직 고민 중이에요",
+        "현재 기간에 제외된 날짜 다 기억해 줘요",
+        "전에 빼둔 날짜는 유지하고 자재 묶음 다 풀어줘요",
+        "전에 빼둔 날짜는 그대로 두고 자재 묶음은 모두 풀어 주세요",
+        "전에 빼둔 날짜 다 풀면 연락 주세요",
+        "전에 빼둔 날짜 다 풀어줘야 하면 연락 주세요",
+        "전에 빼둔 날짜 다 풀어주면 검토할게요",
+        "전에 빼둔 날짜 다 풀어 주세요 말고 그대로 유지해 주세요",
+        "전에 빼둔 날짜 다 풀어줘요 취소할게요",
+    ],
+)
+def test_partial_negated_or_uncertain_exclusion_release_never_clears_everything(text):
+    cleared = _checked_period_clear(text, text)
+    assert not (cleared.status == "valid" and cleared.action == "clear"), cleared
+
+
+def test_exclusion_release_checks_question_outside_clipped_evidence():
+    text = "전에 빼둔 날짜 다 풀어줘요? 확실할까요?"
+    cleared = _checked_period_clear(text, "전에 빼둔 날짜 다 풀어줘요")
+    assert not (cleared.status == "valid" and cleared.action == "clear"), cleared
+
+
+def test_exclusion_release_allows_uncertain_other_field_in_separate_clause():
+    text = "전에 빼둔 날짜 다 풀어 주세요, 종료일은 아직 미정입니다."
+    cleared = _checked_period_clear(text, "전에 빼둔 날짜 다 풀어 주세요")
+    assert (cleared.action, cleared.status) == ("clear", "valid")
+
+
+def test_period_clear_service_does_not_change_other_fields(monkeypatch):
+    text = "전에 빼둔 날짜 다 풀어줘요 이제 기간 내내 가능해요"
+    data = _period_request(text)
+
+    async def fake_model(_safe_request, _context):
+        return ModelInterpretation(
+            fields=[
+                _field("excluded", "clear", None, "전에 빼둔 날짜 다 풀어줘요"),
+            ]
+        )
+
+    monkeypatch.setattr(vendor_assist, "interpret", fake_model)
+    response = asyncio.run(
+        interpret(data, AssistContext(today=date(2026, 11, 23), base_month=date(2026, 12, 1)))
+    )
+    fields = {part.field: part for part in response.fields}
+    assert (fields["excluded"].action, fields["excluded"].status) == ("clear", "valid")
+    assert all(fields[name].action == "keep" for name in ("start", "end"))
+
+
+def test_period_prior_exclusion_retention_preserves_provenance_with_end_change(monkeypatch):
+    text = "아까 쉰다고 한 날은 그대로 두고 21일까지만 할게요"
+    result, trace = _run(
+        monkeypatch,
+        "period",
+        {"start": "2026-12-05", "end": "2026-12-18", "excluded": []},
+        "12월 24일까지 가능하고 중간에 12일 하루만 쉽니다.",
+        [
+            _field("end", "set", "2026-12-24", "12월 24일까지 가능"),
+            _field("excluded", "set", ["2026-12-12"], "12일 하루만 쉽니다"),
+        ],
+        text,
+        [
+            _field("end", "set", "2026-12-21", "21일까지만 할게요"),
+            _retain("excluded", "아까 쉰다고 한 날은 그대로 두고"),
+        ],
+    )
+    assert trace["previous_verified"] is not None
+    assert {part["field"] for part in trace["previous_verified"]["fields"]} == {
+        "end",
+        "excluded",
+    }
+    _valid(result["excluded"], ["2026-12-12"])
+    assert result["excluded"].value_source == "previous"
+    assert (result["end"].status, result["end"].value) == ("valid", "2026-12-21")
+
+
+def test_period_retention_of_excluded_days_ignores_unrelated_uncertainty(monkeypatch):
+    text = "아까 쉰다고 한 날은 그대로 두고, 종료일은 20일인지 21일인지 미정이에요."
+    result, _ = _run(
+        monkeypatch,
+        "period",
+        {"start": "2026-12-05", "end": "2026-12-18", "excluded": []},
+        "12일은 쉬어요.",
+        [_field("excluded", "set", ["2026-12-12"], "12일은 쉬어요")],
+        text,
+        [
+            _retain("excluded", "아까 쉰다고 한 날은 그대로 두고"),
+            _field("end", "uncertain", None, "종료일은 20일인지 21일인지 미정"),
+        ],
+    )
+    _valid(result["excluded"], ["2026-12-12"])
+    assert result["end"].status != "valid"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "아까 쉰다고 한 날은 그대로 두지 마세요",
+        "아까 쉰다고 한 날은 그대로 둘까요?",
+        "아까 쉰다고 한 날은 아직 미정이에요",
+        "인원은 앞서 제안대로 유지해 주세요",
+    ],
+)
+def test_period_prior_exclusion_requires_affirmative_same_field_retention(monkeypatch, text):
+    result, _ = _run(
+        monkeypatch,
+        "period",
+        {"start": "2026-12-05", "end": "2026-12-18", "excluded": []},
+        "12일은 쉬어요.",
+        [_field("excluded", "set", ["2026-12-12"], "12일은 쉬어요")],
+        text,
+        [_retain("excluded", text)],
+    )
+    _not_restored(result["excluded"])
+
+
+def test_period_prior_exclusion_manual_change_fails_closed(monkeypatch):
+    text = "아까 쉰다고 한 날은 그대로 두고 싶어요"
+    result, trace = _run(
+        monkeypatch,
+        "period",
+        {"start": "2026-12-05", "end": "2026-12-18", "excluded": ["2026-12-13"]},
+        "12일은 쉬어요.",
+        [_field("excluded", "set", ["2026-12-12"], "12일은 쉬어요")],
+        text,
+        [_retain("excluded", text)],
+        baselines={"excluded": []},
+    )
+    assert trace["previous_rejected"]["excluded"] == "stale_context"
+    _not_restored(result["excluded"])
+
+
+def test_stale_end_does_not_erase_independently_verified_excluded_days(monkeypatch):
+    text = "전에 쉰다고 한 날은 그대로 두겠습니다."
+    result, trace = _run(
+        monkeypatch,
+        "period",
+        {"start": "2026-12-05", "end": "2026-12-20", "excluded": []},
+        "12월 24일까지 가능하고 12일은 쉽니다.",
+        [
+            _field("end", "set", "2026-12-24", "12월 24일까지 가능"),
+            _field("excluded", "set", ["2026-12-12"], "12일은 쉽니다"),
+        ],
+        text,
+        [_retain("excluded", text)],
+        baselines={"end": "2026-12-18", "excluded": []},
+    )
+    assert trace["previous_rejected"]["end"] == "stale_context"
+    _valid(result["excluded"], ["2026-12-12"])
+    assert result["end"].status != "valid"

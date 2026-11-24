@@ -9,8 +9,14 @@ from itertools import pairwise
 from app.calc.schedule import JOB_MAX_DAYS
 from app.quote.schemas import AMOUNT_MAX
 from app.schedule.models import EXTRA_AMOUNT_MAX
+from app.vendor.assist_boundary import affirmative_end_deadline, explicit_prior_end_reference
 from app.vendor.assist_date_edit import validated_date_edit
-from app.vendor.assist_normalize import crew_mentions, date_mentions, date_tokens
+from app.vendor.assist_normalize import (
+    complete_range_evidence,
+    crew_mentions,
+    date_mentions,
+    date_tokens,
+)
 from app.vendor.assist_schemas import (
     FORM_FIELDS,
     Alternative,
@@ -125,7 +131,13 @@ def _amount_mentions(evidence: str) -> set[int]:
 
 
 def _grounded(
-    form: FormName, field: str, value: Value, evidence: str, context: AssistContext
+    form: FormName,
+    field: str,
+    value: Value,
+    evidence: str,
+    context: AssistContext,
+    *,
+    text: str | None = None,
 ) -> bool:
     if field == "amount":
         return type(value) is int and value in _amount_mentions(evidence)
@@ -135,6 +147,12 @@ def _grounded(
         return type(value) is int and value in {int(x) for x in DAYS.findall(evidence)}
     if field == "vat":
         return type(value) is str and any(word in normalized(evidence) for word in VAT_WORDS[value])
+    if (
+        text is not None
+        and field in ("start", "end", "days", "excluded", "valid")
+        and not complete_range_evidence(normalized(evidence), normalized(text))
+    ):
+        return False
     if field in ("start", "end", "valid"):
         if type(value) is not str:
             return False
@@ -158,6 +176,30 @@ def _grounded(
 
 
 _EXCLUDE_DAY = re.compile(r"(?:안\s*돼|안\s*되|안\s*됨|못\s*가|불가능|제외|빼|어려)")
+# 이전에 쉬거나 빼기로 한 날짜는 '제외일'이라는 단어가 없어도 같은 필드를 가리킨다.
+# 날짜/날과 연결된 표현만 인정해 공사 시작·종료일의 일반 언급과 구분한다.
+_EXCLUDED_DAY_REFERENCE = re.compile(
+    r"(?:빼(?:둔|놓은|놨던|기로\s*한|는)|뺀|뺐던|"
+    r"제외(?:한|했던|된|해\s*둔)?|안\s*되는|"
+    r"쉬(?:는|기로\s*한|기로\s*했던)|"
+    r"쉰다고\s*(?:한|했던)|못\s*간다고\s*(?:한|했던))"
+    r"\s*(?:날짜|날|일자|일)"
+)
+_EXCLUDED_RELEASE_ALL = re.compile(
+    r"(?:다|전부|모두|몽땅)\s*풀|"
+    r"(?:전체|모든)\s*(?:제외|빼|쉬)[^,;.!?？\n]{0,24}풀"
+)
+_EXCLUDED_RELEASE_DIRECT = re.compile(
+    r"(?:\s*[은는을를도])?\s*(?:이제\s*)?"
+    r"(?:다|전부|모두|몽땅)\s*"
+    r"풀어\s*(?:줘(?:요)?|주(?:세요|셔요)|요)(?=\s|$|[.,;!])"
+)
+_EXCLUDED_RELEASE_DENIAL = re.compile(
+    r"풀(?:어\s*주)?(?:지|지는|면)\s*(?:말|마|않|안|못)|"
+    r"풀(?:어\s*주)?는\s*건\s*아니|"
+    r"풀(?:어\s*주)?는\s*것은\s*아니|"
+    r"풀어\s*(?:줘(?:요)?|주(?:세요|셔요)|요)\s*(?:말고|취소|보류|아니)"
+)
 
 
 def _boundary_trim_supported(
@@ -291,7 +333,7 @@ def _mentions_field(form: FormName, field: str, text: str, context: AssistContex
     """규칙 미추출 뒤 이전 값을 되살리지 않기 위한 최소 '언급됨' 검사."""
     if form == "period" and field == "excluded":
         # 기간 끝날이 언급됐다는 이유만으로 기존 제외일을 버리지 않는다.
-        return bool(_EXCLUDE_DAY.search(text)) or "제외" in text
+        return bool(_EXCLUDE_DAY.search(text) or _EXCLUDED_DAY_REFERENCE.search(text))
     if form == "period" and field in ("start", "end"):
         if _other_boundary_only(form, field, text):
             return False
@@ -322,20 +364,60 @@ def _mentions_field(form: FormName, field: str, text: str, context: AssistContex
 def _target_word(form: FormName, field: str, text: str) -> bool:
     if form == "quote" and field == "days":
         text = re.sub(r"유효\s*기간", "", text)
+    if form == "period" and field == "excluded" and _EXCLUDED_DAY_REFERENCE.search(text):
+        return True
     return any(word in text for word in _CLEAR_TARGETS[field])
 
 
+def _explicit_all_exclusions_release(evidence: str, text: str) -> bool:
+    """기존 제외일 전체가 '풀어 주세요'의 직접 목적어인 확정 요청만 인정한다."""
+    if not _EXCLUDED_RELEASE_ALL.search(evidence):
+        return False
+    raw, needle = normalized(text), normalized(evidence)
+    if not needle or raw.count(needle) != 1:
+        return False
+    at = raw.find(needle)
+    left = max((part.end() for part in re.finditer(r"[,;.!?？\n]", raw[:at])), default=0)
+    end = re.search(r"[,;.!?？\n]", raw[at:])
+    if end and end.group() in ("?", "？"):
+        return False
+    right = at + end.start() if end else len(raw)
+    clause = raw[left:right]
+    if (
+        _RULE_QUESTION_OR_UNDECIDED.search(clause)
+        or _EXCLUDED_RELEASE_DENIAL.search(clause)
+        or _RETAIN_NEGATED.search(clause)
+        or re.search(r"(?:그거|그\s*요청|제외일\s*해제)(?:는|를|은)?\s*(?:취소|철회)", raw[at:])
+    ):
+        return False
+    for mention in _EXCLUDED_DAY_REFERENCE.finditer(clause):
+        directive = _EXCLUDED_RELEASE_DIRECT.match(clause, mention.end())
+        # '풀어줘야 하면'처럼 요청형 어미 뒤에 조건이 붙는 문장을 배제한다.
+        if directive and (directive.end() == len(clause) or not clause[directive.end()].isalpha()):
+            return True
+    return False
+
+
 def _targeted_clear(form: FormName, field: str, evidence: str, text: str) -> bool:
-    if not _deletion_requested(evidence):
+    released_exclusions = (
+        form == "period"
+        and field == "excluded"
+        and _explicit_all_exclusions_release(evidence, text)
+    )
+    if not (released_exclusions or _deletion_requested(evidence)):
         return False
     # 근거가 '삭제해 주세요'처럼 동사만 있어도, 바로 앞의 목적어로 필드를 확인한다.
     at = normalized(text).find(normalized(evidence))
     before = normalized(text)[max(at - 35, 0) : at] if at >= 0 else ""
     after = normalized(text)[at + len(normalized(evidence)) : at + len(normalized(evidence)) + 35]
     scope = re.split(r"[,;.!?\n]", before)[-1] + normalized(evidence) + after
-    if _CLEAR_DENIAL.search(scope) or CLEAR_NEGATED.search(scope):
+    if (
+        _CLEAR_DENIAL.search(scope)
+        or CLEAR_NEGATED.search(scope)
+        or (released_exclusions and _EXCLUDED_RELEASE_DENIAL.search(scope))
+    ):
         return False
-    if any(word in evidence for word in ("전부", "모두", "전체")):
+    if not released_exclusions and any(word in evidence for word in ("전부", "모두", "전체")):
         return True
     return _target_word(form, field, scope)
 
@@ -383,6 +465,11 @@ def _targeted_retention(
             for word in words:
                 for match in re.finditer(re.escape(word), prefix):
                     targets.append((match.start(), match.end(), name))
+        if form == "period":
+            targets.extend(
+                (match.start(), match.end(), "excluded")
+                for match in _EXCLUDED_DAY_REFERENCE.finditer(prefix)
+            )
 
         scope_start = left
         bound = False
@@ -714,18 +801,11 @@ def _verified_date_replacement(
     관계로 서버가 전체 목록을 만들며, 관계에는 재검증용 원래 전체 목록을 보존한다.
     """
     if (
-        previous is None
-        or item.action != "set"
+        item.action != "set"
         or item.correction is None
         or item.correction.kind != "replace"
         or (data.form, item.field) not in (("dates", "days"), ("period", "excluded"))
     ):
-        return None
-    old = next(
-        (value for value in previous.fields if value.field == item.field and value.action == "set"),
-        None,
-    )
-    if old is None or not isinstance(old.value, list):
         return None
     relation = item.correction
     if not (
@@ -734,17 +814,27 @@ def _verified_date_replacement(
         and evidence_matches(data.text, relation.accepted_evidence)
     ):
         return None
-    complete = validated_date_edit(item.field, data.text, old.value, context)
-    if complete is None:
+    matches = [
+        (base, complete)
+        for base in _date_edit_bases(data, item.field, previous)
+        if (
+            complete := validated_date_edit(
+                item.field, data.text, base, context, require_affirmative=True
+            )
+        )
+        is not None
+    ]
+    if len(matches) != 1:
         return None
-    removed = set(old.value) - set(complete)
-    added = set(complete) - set(old.value)
+    base, complete = matches[0]
+    removed = set(base) - set(complete)
+    added = set(complete) - set(base)
     if len(removed) != 1 or len(added) != 1:
         return None
     rejected, accepted = next(iter(removed)), next(iter(added))
     # 기존 wire에서는 rejected_value가 교체한 하루 또는 그 하루짜리 배열일 수 있다.
     # 검증 성공 후 응답에는 이전 *전체* 목록을 넣어 3턴 이후에도 재검증한다.
-    if relation.rejected_value not in (rejected, [rejected], old.value):
+    if relation.rejected_value not in (rejected, [rejected], base):
         return None
     if item.value not in (accepted, [accepted], complete):
         return None
@@ -757,7 +847,7 @@ def _verified_date_replacement(
         return None
     return complete, CorrectionRelation(
         kind="replace",
-        rejected_value=list(old.value),
+        rejected_value=list(base),
         rejected_evidence=relation.rejected_evidence,
         accepted_evidence=relation.accepted_evidence,
     )
@@ -798,6 +888,46 @@ def _date_edit_reference(text: str) -> str | None:
     return max(markers)[1] if markers else None
 
 
+def _date_edit_bases(
+    data: AssistRequest,
+    field: str,
+    previous: PreviousCandidate | None,
+    previous_rejected: dict[str, ReasonCode] | None = None,
+) -> list[list[str]]:
+    """검증된 이전 목록과 실제 폼 목록에서 출처가 확정된 후보만 고른다."""
+    earlier = (
+        next(
+            (item for item in previous.fields if item.field == field and item.action == "set"),
+            None,
+        )
+        if previous
+        else None
+    )
+    # 서비스의 업무 검증 문맥에는 이전 후보가 합쳐져 있다. 검증된 baseline은
+    # 원래 폼 값과 일치하므로 이 값으로 폼 참조를 복원한다.
+    current = (
+        previous.baselines[field]
+        if previous is not None and field in previous.baselines
+        else data.current.get(field)
+    )
+    reference = _date_edit_reference(data.text)
+    if reference == "previous":
+        return [earlier.value] if earlier is not None and isinstance(earlier.value, list) else []
+    if reference == "current":
+        return [current] if isinstance(current, list) else []
+    if field in (previous_rejected or {}) or (
+        data.previous_candidate is not None
+        and any(item.field == field for item in data.previous_candidate.fields)
+        and (previous is None or not any(item.field == field for item in previous.fields))
+    ):
+        # 출처 지시가 없을 때 거부된 이전 후보를 현재 폼으로 재해석하지 않는다.
+        return []
+    bases = [current] if isinstance(current, list) else []
+    if earlier is not None and isinstance(earlier.value, list) and earlier.value != current:
+        bases.append(earlier.value)
+    return bases
+
+
 def reviewed_date_edit(
     data: AssistRequest,
     context: AssistContext,
@@ -814,34 +944,9 @@ def reviewed_date_edit(
     if field is None:
         return {}
 
-    earlier = (
-        next(
-            (item for item in previous.fields if item.field == field and item.action == "set"),
-            None,
-        )
-        if previous
-        else None
-    )
-    current = data.current.get(field)
     tokens = _DATE_EDIT_TOKEN.findall(data.text)
-    reference = _date_edit_reference(data.text)
-    if reference == "previous":
-        # 이전 후보가 없거나 기준값이 변경됐을 때 현재 폼으로 대체하지 않는다.
-        bases = [earlier.value] if earlier is not None else []
-    elif reference == "current":
-        bases = [current]
-    elif field in previous_rejected:
-        return {}
-    else:
-        # 명시된 옛날이 어느 쪽에만 있는지 확인한다. 둘 모두에 적용되되
-        # 목록이 다르면 사용자가 어느 목록을 뜻하는지 확정할 수 없다.
-        bases = [current]
-        if earlier is not None and earlier.value != current:
-            bases.append(earlier.value)
     matches = []
-    for base in bases:
-        if not isinstance(base, list):
-            continue
+    for base in _date_edit_bases(data, field, previous, previous_rejected):
         complete = validated_date_edit(field, data.text, base, context, require_affirmative=True)
         if complete is not None:
             matches.append((base, complete))
@@ -1368,7 +1473,7 @@ def _review_one(
             return reject("type_mismatch")
         if item.value_source in ("previous", "current"):
             return reject("reference_missing")
-        if not _grounded(data.form, item.field, item.value, item.evidence, context):
+        if not _grounded(data.form, item.field, item.value, item.evidence, context, text=text):
             return reject("unsupported_normalization")
         if not _business_ok(data.form, item.field, item.value, data, context, proposed):
             return reject("business_constraint")
@@ -1422,7 +1527,9 @@ def review_fields(
         ):
             try:
                 check_value(data.form, item.field, item.value)
-                if _grounded(data.form, item.field, item.value, item.evidence, context):
+                if _grounded(
+                    data.form, item.field, item.value, item.evidence, context, text=original
+                ):
                     proposed[item.field] = item.value
             except (ValueError, TypeError, KeyError):
                 pass
@@ -1696,6 +1803,61 @@ def _candidate_from_previous(item: FieldIntent, previous: PreviousCandidate) -> 
     )
 
 
+def _verified_period_end(
+    data: AssistRequest, context: AssistContext, previous: PreviousCandidate | None
+) -> CandidateField | None:
+    """명시적 마감 허용이나 검증된 이전 종료일 유지에만 독립 근거를 부여한다."""
+    if data.form != "period":
+        return None
+    deadline = affirmative_end_deadline(data.text, context)
+    if deadline is not None:
+        evidence, day = deadline
+        value = day.isoformat()
+        if not _grounded("period", "end", value, evidence, context) or not _business_ok(
+            "period", "end", value, data, context, {"end": value}
+        ):
+            return None
+        return CandidateField(
+            field="end",
+            action="set",
+            value=value,
+            evidence=evidence,
+            source="rule",
+            status="valid",
+            alternatives=[],
+            intent_kind="explicit_change",
+            value_source="utterance",
+            origin_request_id=data.request_id,
+        )
+    reference = explicit_prior_end_reference(data.text, context)
+    if previous is None or reference is None:
+        return None
+    retained = next(
+        (item for item in previous.fields if item.field == "end" and item.action == "set"), None
+    )
+    if (
+        retained is None
+        or not _targeted_retention("period", "end", reference, data.text, context)
+        or _retention_has_different_value("period", "end", retained.value, reference, context)
+    ):
+        return None
+    first_deadline = affirmative_end_deadline(retained.evidence, context)
+    original = _candidate_from_previous(retained, previous)
+    # 과거의 단순 날짜 언급이나 추측을 '이전 제안'으로 위장해 되살리지 않는다.
+    if not (
+        first_deadline is not None
+        and first_deadline[1].isoformat() == retained.value
+        or any(
+            _rule_field_proof("period", original, clause, context)
+            for clause in _rule_local_clauses(
+                "period", "end", retained.value, previous.text, context
+            )
+        )
+    ):
+        return None
+    return original
+
+
 def _merge_pair(rule: CandidateField | None, llm: CandidateField | None) -> CandidateField | None:
     if llm is None:
         return rule
@@ -1896,11 +2058,33 @@ def merge_candidates(
         if previous
         else {}
     )
+    independent_end = _verified_period_end(data, context, previous)
     out = []
     for field in FORM_FIELDS[data.form]:
         r = rule.get(field)
         m = model.get(field) if model is not None else None
         chosen = _merge_pair(r, m) if model is not None else r
+        if field == "end" and independent_end is not None:
+            # 모델의 모호함을 날짜 근거가 독립 검증된 이 두 표현에 한해서만 복구한다.
+            model_is_ambiguous = (
+                m is not None
+                and m.action == "uncertain"
+                and m.status == "uncertain"
+                and m.reason_code == "ambiguous_intent"
+            )
+            model_did_not_mention = m is None or _not_action(m)
+            conflicting_rule = (
+                r is not None
+                and r.status == "valid"
+                and r.action in ("set", "clear")
+                and (r.action != independent_end.action or r.value != independent_end.value)
+            )
+            if (
+                (model is None or model_is_ambiguous or model_did_not_mention)
+                and not conflicting_rule
+                and (chosen is None or chosen.status == "uncertain" or _not_action(chosen))
+            ):
+                chosen = independent_end
         if model is not None and m is not None and _not_action(m) and r is not None:
             if r.status == "valid" and r.action in ("set", "clear"):
                 # 원문 숫자가 있다는 사실만으로 대상 필드가 실제로 변경됐다고 단정하지 않는다.

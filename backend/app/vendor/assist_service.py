@@ -53,7 +53,9 @@ async def interpret(
     effective = dict(data.current)
     if previous:
         effective.update({item.field: item.value for item in previous.fields})
-    validation_request = safe_request.model_copy(update={"current": effective})
+    # 검증 단계에는 원래 previous_candidate를 보존해 거부된 이력의 존재도 확인한다.
+    # 모델에 보내는 safe_request는 계속 검증된 후보만 포함한다.
+    validation_request = data.model_copy(update={"current": effective})
     rule, warnings = review_fields(
         data.rule_fields, "rule", validation_request, context, previous=previous
     )

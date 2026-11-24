@@ -25,10 +25,16 @@ _BARE_DAY = re.compile(
     r"(?<!\d)([1-9]|[12]\d|3[01])\s*일"
     r"(?!\s*(?:간|동안|정도|째|걸|소요|후|전|차|뒤))"
 )
-# 단독 숫자는 앞선 명시적 월로 이어진 날짜 목록의 *중간* 항목으로만 인정한다.
+# 단독 숫자는 앞에서 월을 명시한 목록의 중간이나 기호 범위의 끝에서만 인정한다.
 _SHORT_DAY = re.compile(r"(?<![\d/.월\-])([1-9]|[12]\d|3[01])(?![\d/.\-가-힣])")
-_LIST_GAP = re.compile(r"^\s*(?:까지\s*)?(?:(?:[,，、·]|과|와|랑|및|하고|그리고)\s*)+$")
+_LIST_GAP = re.compile(r"^\s*(?:까지\s*)?(?:(?:[,，、·]|과|와|이랑|랑|및|하고|그리고)\s*)+$")
 _RANGE_GAP = re.compile(r"^\s*(?:부터|에서|~|∼|〜|－|—|–|-|\.{2}|to)\s*$", re.IGNORECASE)
+_SHORT_RANGE_GAP = re.compile(r"^\s*[~∼〜－—–-]\s*$")
+_SHORT_RANGE_TAIL = re.compile(
+    r"^\s*(?:$|(?:현장|공사|작업|시공|방문|일정|가능|불가능|까지|예정)(?=\s|$|[가-힣.,]))"
+)
+
+
 _CREW = re.compile(r"(?<![가-힣\d])(?:(\d{1,2})|(한|두|세|네))\s*(?:명|인)(?!\d)")
 _CREW_RANGE = re.compile(
     r"(?:\d{1,2}|한|두|세|네)\s*(?:명|인)\s*[~\-–∼]\s*"
@@ -46,6 +52,16 @@ class _Token:
     day: int
     value: date | None
     kind: str  # 명시적 날짜, 'N일', 목록 중간의 숫자
+
+
+def complete_range_evidence(evidence: str, text: str) -> bool:
+    """근거가 '12/14~19명'의 단위 앞에서 잘리면 19를 날짜로 승격하지 않는다."""
+    if evidence == text or not re.search(r"(?:[~∼〜－—–]\s*|-\s+)\d{1,2}$", evidence):
+        return True
+    return any(
+        _SHORT_RANGE_TAIL.match(text[match.end() :])
+        for match in re.finditer(re.escape(evidence), text)
+    )
 
 
 def _date(year: int, month: int, day: int) -> date | None:
@@ -137,15 +153,22 @@ def date_tokens(
 
         left = nearest_explicit(i, -1)
         right = nearest_explicit(i, 1)
-        # 단독 숫자는 목록 중간에서만 사용한다. 인원·금액 등의 숫자를 날짜로 빌리지 않는다.
-        if token.kind == "short" and (
-            left is None
-            or i == 0
-            or i == len(tokens) - 1
-            or links[i - 1] != "list"
-            or links[i] != "list"
-        ):
-            continue
+        # 단독 숫자는 목록 중간 또는 명시 날짜 바로 뒤의 기호 범위 끝에서만 사용한다.
+        if token.kind == "short":
+            list_middle = (
+                left is not None and 0 < i < len(tokens) - 1 and links[i - 1] == links[i] == "list"
+            )
+            range_end = (
+                i > 0
+                and tokens[i - 1].kind == "explicit"
+                and left is not None
+                and left.value is not None
+                and token.day >= left.value.day
+                and _SHORT_RANGE_GAP.fullmatch(evidence[left.end : token.start])
+                and _SHORT_RANGE_TAIL.match(evidence[token.end :])
+            )
+            if not (list_middle or range_end):
+                continue
         if left and left.value is None or right and right.value is None:
             continue
         if (

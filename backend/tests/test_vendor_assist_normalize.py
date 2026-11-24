@@ -135,6 +135,46 @@ def test_ranges_only_expand_when_both_endpoints_and_bounded_span_are_grounded():
     }
 
 
+@pytest.mark.parametrize("text", ["12/14~19 현장 가능", "12/14~19", "12월14일 ~ 19"])
+def test_short_symbolic_range_endpoint(text):
+    tokens = date_tokens(text, context())
+    assert [(text[a:b], day.day) for a, b, day in tokens] == [
+        (text[: tokens[0][1]], 14),
+        ("19", 19),
+    ]
+    assert date_mentions(text, context(), expand=True) == {
+        date(2026, 12, day) for day in range(14, 20)
+    }
+
+
+@pytest.mark.parametrize("text", ["12월 10일이랑 11일 이틀이고", "12월 10일이랑 11일 이틀"])
+def test_colloquial_date_list(text):
+    assert [(text[a:b], day) for a, b, day in date_tokens(text, context())] == [
+        ("12월 10일", date(2026, 12, 10)),
+        ("11일", date(2026, 12, 11)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "12/14~19명",
+        "12/14~19 명",
+        "12/14~19 만 원",
+        "12/14~19 일간",
+        "12/14~19 평",
+        "12/14~19 시",
+        "12/14~19 % valor",
+        "12/14부터 19",
+        "12/14,19",
+        "12/14~19, 2명",
+        "12/14~13",
+    ],
+)
+def test_short_endpoint_rejects_quantities_and_unclear_ranges(text):
+    assert date_mentions(text, context(), expand=True) == {date(2026, 12, 14)}
+
+
 def test_year_anchor_policy_matches_existing_validator():
     dec = AssistContext(today=date(2026, 11, 23), base_month=date(2026, 12, 10))
     assert date_tokens("12/2부터12/5까지", dec)[0][2] == date(2026, 12, 2)

@@ -28,7 +28,12 @@ _EDIT_GAP = re.compile(r"^(?:을|를|은|는|에서|(?:을|를|은|는)?만)$")
 _EDIT_SUFFIX = re.compile(
     r"^\s*(?:로|으로)\s*(?:바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|옮기)"
 )
+_SHIFT_GAP = re.compile(r"^(?:은|는)?만?하루밀려서$")
 _DIRECTION = frozenset(("->", "→"))
+_KEEP_OTHERS_TRAILER = re.compile(
+    r"(?:나머지(?:는|도)?|나머진|다른날(?:은|도)?)"
+    r"(?:그대로|유지)(?:요|입니다)?$"
+)
 _CONFIRMED_ENDINGS = frozenset(
     (
         "넣을게요",
@@ -48,19 +53,31 @@ _CONFIRMED_ENDINGS = frozenset(
         ),
     )
 )
+_CONFIRMED_EXCLUSION_ENDINGS = frozenset(
+    ("제외해주세요", "제외해요", "제외할게요", "제외하겠습니다", "빼주세요", "뺄게요")
+)
 
 
-def _confirmed_suffix(text: str) -> bool:
+def _confirmed_suffix(text: str, field: str, *, shifted: bool) -> bool:
     """교체 절의 끝이 확정 지시인지 확인한다. 문의·인용·조건부 요청은 보류한다."""
     clause = re.split(r"[.,;。!，\n]", text, maxsplit=1)[0]
     ending = "".join(clause.split())
+    ending = _KEEP_OTHERS_TRAILER.sub("", ending)
     if not ending:
+        return True
+    if field == "excluded" and ending == "쉬는걸로요":
         return True
     for particle in ("으로", "로", "을", "를", "에"):
         if ending.startswith(particle):
             ending = ending[len(particle) :]
             break
-    return ending in _CONFIRMED_ENDINGS
+    return (
+        ending in _CONFIRMED_ENDINGS
+        or field == "excluded"
+        and ending in _CONFIRMED_EXCLUSION_ENDINGS
+        or shifted
+        and ending == "요"
+    )
 
 
 _EDIT_WORD = (
@@ -80,7 +97,7 @@ _POST_BOUNDARY_KEEP = re.compile(
     r"\s*(?:(?:은|는|이|가)\s*)?"
     r"(?:그대로|유지|기존대로|원래대로|변함\s*없|변경\s*없|건드리지\s*마|손대지\s*마)"
 )
-_KEEP_JOIN = re.compile(r"^\s*(?:,|，|과|와|랑|하고|및)\s*$")
+_KEEP_JOIN = re.compile(r"^\s*(?:,|，|과|와|이랑|랑|하고|및)\s*$")
 _CLAUSE_BREAK = re.compile(r"[,，.;。!?！？\n]|그대로\s*두고|유지하고")
 # 본 파서가 누락하는 0일/32일 같은 날짜 표기가 문장 안에 있으면 보류한다.
 _DAY_SHAPE = re.compile(
@@ -121,9 +138,11 @@ _NEGATED_EDIT = re.compile(
 _EXCLUDED_SCOPE = re.compile(
     r"제외\s*(?:(?:할|하는)\s*)?(?:일|날짜?|날|할\s*날)|"
     r"빼\s*(?:는|야\s*하는|야\s*할|줄)\s*날|"
+    r"(?:쉬는|휴무)\s*(?:날|날짜?)|"
     r"(?:못\s*(?:가|하는)|빠지는)\s*날|"
     r"불가\s*(?:일|날)|일정에서\s*제외"
 )
+_EXCLUDED_RESULT = re.compile(r"^\s*(?:은|는)?\s*쉬는\s*걸로요(?=\s|[.,;。!，\n]|$)")
 _DAY_SCOPE = re.compile(r"작업\s*(?:일|날짜?)|공사\s*(?:일|날짜?)|시공\s*(?:일|날짜?)")
 _OTHER_SCOPE = re.compile(r"시작\s*(?:일|날짜?)|종료\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간")
 
@@ -156,16 +175,17 @@ def _mentions(text: str) -> list[_Mention]:
     return sorted(found, key=lambda item: item.start)
 
 
-def _targeted(field: str, prefix: str) -> bool:
+def _targeted(field: str, prefix: str, suffix: str) -> bool:
     """교체의 옛 날짜 앞에서 가장 가까운 필드 언급만 유효하다."""
     marks = sorted(
         [(m.start(), "excluded") for m in _EXCLUDED_SCOPE.finditer(prefix)]
         + [(m.start(), "days") for m in _DAY_SCOPE.finditer(prefix)]
         + [(m.start(), "other") for m in _OTHER_SCOPE.finditer(prefix)]
     )
+    exclusion_result = bool(_EXCLUDED_RESULT.match(suffix))
     if field == "excluded":
-        return bool(marks) and marks[-1][1] == "excluded"
-    return not marks or marks[-1][1] == "days"
+        return marks[-1][1] == "excluded" if marks else exclusion_result
+    return not exclusion_result and (not marks or marks[-1][1] == "days")
 
 
 def _local_prefix(text: str, start: int) -> str:
@@ -236,15 +256,17 @@ def _single_replacement(text: str, mentions: list[_Mention], field: str) -> tupl
         suffix = text[new.end :]
         if (
             _REPLACE_GAP.fullmatch(gap)
-            or _EDIT_GAP.fullmatch(gap)
-            and _EDIT_SUFFIX.match(suffix)
+            or (_EDIT_GAP.fullmatch(gap) and _EDIT_SUFFIX.match(suffix))
+            or _SHIFT_GAP.fullmatch(gap)
             or gap in _DIRECTION
         ):
             candidates.append((index, index + 1))
     if len(candidates) != 1:
         return None
     old_index, new_index = candidates[0]
-    if not _targeted(field, _local_prefix(text, mentions[old_index].start)):
+    if not _targeted(
+        field, _local_prefix(text, mentions[old_index].start), text[mentions[new_index].end :]
+    ):
         return None
     return old_index, new_index
 
@@ -319,7 +341,9 @@ def validated_date_edit(
     if pair is None:
         return None
     old, new = (mentions[index] for index in pair)
-    if require_affirmative and not _confirmed_suffix(text[new.end :]):
+    gap = "".join(text[old.end : new.start].split())
+    shifted = bool(_SHIFT_GAP.fullmatch(gap))
+    if require_affirmative and not _confirmed_suffix(text[new.end :], field, shifted=shifted):
         return None
     if not _retained_elsewhere(text, mentions, set(pair), before, context):
         return None
@@ -350,6 +374,8 @@ def validated_date_edit(
     try:
         replacement = date(existing.year, existing.month, new.day)
     except ValueError:
+        return None
+    if shifted and replacement != existing + timedelta(days=1):
         return None
     if replacement == existing or replacement in before:
         return None
