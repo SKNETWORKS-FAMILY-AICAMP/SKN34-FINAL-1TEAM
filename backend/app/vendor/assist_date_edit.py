@@ -142,7 +142,7 @@ _EXCLUDED_SCOPE = re.compile(
     r"(?:못\s*(?:가|하는)|빠지는)\s*날|"
     r"불가\s*(?:일|날)|일정에서\s*제외"
 )
-_EXCLUDED_RESULT = re.compile(r"^\s*(?:은|는)?\s*쉬는\s*걸로요(?=\s|[.,;。!，\n]|$)")
+_EXCLUDED_RESULT = re.compile(r"(?:[은는]\s*)?쉬는\s*걸로요(?=\s|[.,;。!，\n]|$)")
 _DAY_SCOPE = re.compile(r"작업\s*(?:일|날짜?)|공사\s*(?:일|날짜?)|시공\s*(?:일|날짜?)")
 _OTHER_SCOPE = re.compile(r"시작\s*(?:일|날짜?)|종료\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간")
 
@@ -182,7 +182,7 @@ def _targeted(field: str, prefix: str, suffix: str) -> bool:
         + [(m.start(), "days") for m in _DAY_SCOPE.finditer(prefix)]
         + [(m.start(), "other") for m in _OTHER_SCOPE.finditer(prefix)]
     )
-    exclusion_result = bool(_EXCLUDED_RESULT.match(suffix))
+    exclusion_result = bool(_EXCLUDED_RESULT.match(suffix.lstrip()))
     if field == "excluded":
         return marks[-1][1] == "excluded" if marks else exclusion_result
     return not exclusion_result and (not marks or marks[-1][1] == "days")
