@@ -372,6 +372,8 @@ const EXTRA_TITLE_TARGET = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*
 const EXTRA_TITLE_PREFIX = /^(?:추가금|추가금액)?(?:사유|이유)[은는을를]?(?:말고|대신)$/;
 const EXTRA_TITLE_CHANGE = /(?:으로|로)\s*(?:(?:바꿔|고쳐|적어|해)\s*(?:주세요|줘요|주십시오)|(?:변경|수정|정정|입력)\s*해\s*(?:주세요|줘요|주십시오)|바꿀게요|고칠게요)$/;
 const EXTRA_TITLE_UNCERTAIN = /[?？]|아마|혹시|미정|모르|애매|일까|할까|고민|예정|생각\s*중|검토\s*중|것\s*같|가능하면|(?:바꾸|고치|수정|변경|정정)려고|또는|아니면/;
+// 이전 내용을 가리키는 표현 자체를 새 항목 이름으로 쓰지 않아요.
+const EXTRA_TITLE_REFERENCE = /^(?:방금|아까|앞서|좀\s*전에|조금\s*전에|이전에|지난번에|그때|전에)\s*(?:말씀드린|말한|얘기한|알려드린|정한|잡은|확정한|제안한|정리한|적은|전달한)/;
 const EXTRA_TITLE_DENIED = /(?:그대로|유지|바꾸지|고치지|수정하지|변경하지|건드리지|손대지|삭제|지우|비우|없애|취소|하지\s*마|주지\s*마|말아\s*주|안\s*(?:할|해|하|바꿔|고쳐|수정|변경)|아니|아닙|말고|대신)/;
 const EXTRA_OTHER_FIELD = /(?:사유|이유|금액|비용|부가세|VAT)\s*(?::|=|은|는|을|를)/i;
 const EXTRA_NOT_FREE_TITLE = /^(?:추가금|추가\s*(?:금액|비용|요금)|금액|비용|가격|공사비|총액|견적|사유|이유|부가세|부가가치세|VAT|면세|제목|항목명|항목|작업명|이름)(?:\s|은|는|이|가|을|를|만|도|:|=|$)/i;
@@ -396,7 +398,8 @@ function targetedExtraTitle(text: string): { targeted: boolean; value?: string }
     }
   }
   const clause = (boundary < 0 ? rest : rest.slice(0, boundary)).trim();
-  if (!clause || EXTRA_TITLE_UNCERTAIN.test(clause) || EXTRA_TITLE_DENIED.test(clause) || EXTRA_OTHER_FIELD.test(clause)) {
+  if (!clause || EXTRA_TITLE_UNCERTAIN.test(clause) || EXTRA_TITLE_DENIED.test(clause) ||
+    EXTRA_TITLE_REFERENCE.test(clause) || EXTRA_OTHER_FIELD.test(clause)) {
     return { targeted: true };
   }
   const action = clause.match(EXTRA_TITLE_CHANGE);
@@ -423,7 +426,7 @@ export function parseExtra(text: string, today: string): ExtraFill {
       // 정정한 뒤 말은 항목 이름이 아니에요("곰팡이 방지 12만 원이 아니라 15만 원")
       const head = (manOf(part) ?? part).split(/아니라|아니고|말고|부가세|부가가치세|VAT|면세/i)[0];
       const t = head.replace(AMOUNT_WORD, "").replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
-      if (t && !/^\d/.test(t) && !EXTRA_TITLE_DENIED.test(t)) out.title = t.slice(0, 60);
+      if (t && !/^\d/.test(t) && !EXTRA_TITLE_DENIED.test(t) && !EXTRA_TITLE_REFERENCE.test(t)) out.title = t.slice(0, 60);
     }
   }
   return out;

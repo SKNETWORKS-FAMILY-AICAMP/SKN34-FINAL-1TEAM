@@ -125,6 +125,33 @@ test("복합 금액은 전체 원 단위로 확인한 뒤에만 견적서에 저
   }
 });
 
+test("문장에 나눠 정정한 견적은 새 금액을 직접 적용한 뒤에만 저장해요", async ({ page, request }) => {
+  const box = await open(page, `/vendor/requests/${VISITED}/quote`);
+  const amount = page.getByLabel("견적 금액", { exact: true });
+  await amount.fill("3200000");
+  await expect.poll(async () => writes(await recorded(request)).map((w) => w.body?.entered_amount)).toEqual([3_200_000]);
+  const message = "아까 총액 320만원이라고 제가 잘못 말씀드렸네요. 정확히는 294만 8천 원이에요. 그 금액으로 정정 부탁해요.";
+  for (const proposed of [3_200_000, 2_948_000]) {
+    await queueAnswer(request, { fields: [set("amount", proposed, message)] });
+    await send(page, message);
+    const apply = box.getByRole("button", { name: "폼에 적용" });
+    if (proposed === 3_200_000) {
+      await expect(box.getByText("변경할 칸을 고른 뒤 폼에 적용해 주세요.", { exact: true })).toBeVisible();
+      await expect(box.getByRole("checkbox", { name: "금액 적용 선택" })).toHaveCount(0);
+      await expect(apply).toBeDisabled();
+    } else {
+      await expect(apply).toBeEnabled();
+    }
+    await page.getByRole("button", { name: "임시 저장", exact: true }).click();
+    await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+    expect(writes(await recorded(request))).toHaveLength(1);
+    if (proposed === 2_948_000) await apply.click();
+  }
+  await expect(amount).toHaveValue("2,948,000");
+  await expect.poll(async () => writes(await recorded(request)).map((w) => [w.method, w.body?.entered_amount]))
+    .toEqual([["PUT", 3_200_000], ["PUT", 2_948_000]]);
+});
+
 test("예약된 견적 자동 저장을 멈추고 같은 금액을 다시 확인하면 한 번 저장해요", async ({ page, request }) => {
   await open(page, `/vendor/requests/${VISITED}/quote`);
   const amount = page.getByLabel("견적 금액", { exact: true });

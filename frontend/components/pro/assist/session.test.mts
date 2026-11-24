@@ -1096,3 +1096,57 @@ test("한글 미확정 금액·추측한 복합 금액은 서버 응답과 연�
     }
   }
 });
+
+test("문장을 나눈 견적 정정은 새 금액 확인 전 저장을 막고 서버의 정확한 새 값만 적용해요", async () => {
+  const original = "아까 총액 320만원이라고 제가 잘못 말씀드렸네요. 정확히는 294만 8천 원이에요. 그 금액으로 정정 부탁해요.";
+  const current = { amount: 3_200_000, vat: "included", days: 4, valid: "2026-12-20" };
+  for (const text of [original, original.replace("총액", "견적")]) for (const answer of [2_948_000, 3_200_000, 2_940_000, null]) {
+    const api = pending();
+    const session = new AssistSession("quote", "visit-id", api.requester);
+    let held = false;
+    session.send(text, current, quoteOptions, (issues) => { held = !!issues.amount; });
+    assert.equal(held, true);
+    assert.equal(session.apply(current, () => assert.fail("확인 전 적용")), false);
+    const job = api.jobs[0];
+    if (text.includes("견적")) assert.equal(job.request.rule_fields.find((f) => f.field === "amount")?.value, 3_200_000);
+    if (answer === null) job.reject(new AssistApiError(503, "unavailable", "연결 실패"));
+    else job.resolve(response(job.request, { amount: { action: "set", value: answer, evidence: "정확히는 294만 8천 원이에요" } }));
+    await flush();
+    const candidate = session.view.response?.fields.find((field) => field.field === "amount");
+    if (answer === 2_948_000) {
+      assert.equal(candidate?.status, "valid");
+      assert.equal(session.apply(current, (changes) => assert.deepEqual(changes, { amount: 2_948_000 })), true);
+    } else {
+      session.select("amount", true);
+      assert.equal(session.apply(current, () => assert.fail("옛 금액·잘린 금액 적용")), false);
+    }
+  }
+});
+
+test("문장을 나눈 정정에서 질문·취소·조건·다른 필드·제3 금액은 옛 규칙 금액으로 적용되지 않아요", async () => {
+  const text = "아까 견적 320만원이라고 제가 잘못 말씀드렸네요. 정확히는 294만 8천 원이에요. 그 금액으로 정정 부탁해요.";
+  const current = { amount: 3_200_000, vat: "included", days: 4, valid: "2026-12-20" };
+  for (const phrase of [
+    text.replace("잘못 말씀드렸네요", "말씀드렸네요"),
+    text.replace("원이에요.", "원이에요?"),
+    text.replace("정정 부탁해요", "정정하지 마세요"),
+    text.replace("그 금액으로", "그 기간으로"),
+    text.replace("그 금액으로", "가능하면 그 금액으로"),
+    text.replace("그 금액으로", "300만원 대신 그 금액으로"),
+    text + " 금액 정정은 취소할게요.",
+  ]) {
+    for (const offline of [false, true]) {
+      const api = pending();
+      const session = new AssistSession("quote", "visit-id", api.requester);
+      let held = false;
+      session.send(phrase, current, quoteOptions, (issues) => { held = !!issues.amount; });
+      assert.equal(held, true, phrase);
+      const job = api.jobs[0];
+      if (offline) job.reject(new AssistApiError(503, "unavailable", "연결 실패"));
+      else job.resolve(response(job.request, { amount: { action: "set", value: 2_948_000 } }));
+      await flush();
+      session.select("amount", true);
+      assert.equal(session.apply(current, () => assert.fail(phrase)), false, phrase);
+    }
+  }
+});

@@ -33,7 +33,9 @@ def _retain(name, evidence):
     )
 
 
-def _run(monkeypatch, form, current, old_text, old_fields, text, intents, *, baselines=None):
+def _run(
+    monkeypatch, form, current, old_text, old_fields, text, intents, *, baselines=None, rules=None
+):
     previous = PreviousCandidate(
         request_id="known-prior",
         text=old_text,
@@ -53,7 +55,7 @@ def _run(monkeypatch, form, current, old_text, old_fields, text, intents, *, bas
         text=text,
         current=current,
         previous_candidate=previous,
-        rule_fields=[],
+        rule_fields=rules or [],
     )
 
     async def fake_model(safe_request, _context):
@@ -197,6 +199,185 @@ def test_field_within_prior_reference_phrase(monkeypatch):
         monkeypatch, evidence, [_retain("amount", evidence), _retain("vat", evidence)]
     )
     _valid(result["amount"], 5_900_000)
+    _not_restored(result["vat"])
+
+
+@pytest.mark.parametrize(
+    ("text", "evidence"),
+    [
+        (
+            "방금 확정한 590만 원은 그대로 두고 공사 일수는 4일로 해주세요.",
+            "방금 확정한 590만 원은 그대로 두고",
+        ),
+        (
+            "항목은 화면에서 고쳤어요. 기존 항목은 건들지 말고 아까 말씀드린 590만원은 그대로 반영해주세요.",
+            "아까 말씀드린 590만원은 그대로 반영해주세요",
+        ),
+        (
+            "방금 잡은 590만원은 그대로 두고, 부가세 0원 면세로 변경해 주세요.",
+            "방금 잡은 590만원은 그대로 두고",
+        ),
+    ],
+)
+def test_previous_amount_reaffirmation_binds_complete_value(monkeypatch, text, evidence):
+    result, _ = _quote(monkeypatch, text, [_retain("amount", evidence)])
+    _valid(result["amount"], 5_900_000)
+    assert result["amount"].source == "rule"
+
+
+@pytest.mark.parametrize(
+    ("text", "evidence"),
+    [
+        (
+            "공사 날짜는 아까 알려드린 12월 8일, 10일 그대로 가고요. 인원만 4명으로 해주세요.",
+            "아까 알려드린 12월 8일, 10일 그대로",
+        ),
+        (
+            "작업 날짜는 방금 말한 12월 8일, 10일 그대로 유지해 주세요.",
+            "방금 말한 12월 8일, 10일 그대로",
+        ),
+    ],
+)
+def test_previous_date_list_reaffirmation_checks_all_dates(monkeypatch, text, evidence):
+    result, _ = _run(
+        monkeypatch,
+        "dates",
+        {"days": ["2026-12-07", "2026-12-09"], "crew": 2},
+        "12월 8일이랑 10일 작업하고 인원은 3명으로 해주세요.",
+        [_field("days", "set", ["2026-12-08", "2026-12-10"], "12월 8일이랑 10일")],
+        text,
+        [_retain("days", evidence)],
+    )
+    _valid(result["days"], ["2026-12-08", "2026-12-10"])
+
+
+def test_previous_title_colloquial_retention(monkeypatch):
+    text = "항목은 방금 말씀드린 걸로 가고요, 금액만 27만 원으로 바꿔 주세요."
+    result, _ = _run(
+        monkeypatch,
+        "extra",
+        {"title": "원래 항목", "reason": "기존 사유", "amount": 120000, "vat": "included"},
+        "제목은 문선 보강으로 입력해 주세요.",
+        [_field("title", "set", "문선 보강", "제목은 문선 보강")],
+        text,
+        [_retain("title", "항목은 방금 말씀드린 걸로 가고요")],
+        rules=[_field("title", "set", "방금 말씀드린 걸로 가고요", text)],
+    )
+    _valid(result["title"], "문선 보강")
+
+
+@pytest.mark.parametrize(
+    "text,evidence",
+    [
+        (
+            "공사 일수는 화면에서 9일로 바꿨어요. 거기는 손대지 말고 부가세는 좀 전에 정한 포함 조건으로 계속 가주세요.",
+            "부가세는 좀 전에 정한 포함 조건으로 계속 가주세요",
+        ),
+        (
+            "금액은 직접 입력했어요. 지금 화면 금액 그대로 두고 세금은 아까 정한 포함 방식으로 해주세요.",
+            "세금은 아까 정한 포함 방식으로",
+        ),
+    ],
+)
+def test_previous_vat_retention_expands_clipped_predicate(monkeypatch, text, evidence):
+    result, _ = _quote(monkeypatch, text, [_retain("vat", evidence)])
+    _valid(result["vat"], "included")
+
+
+@pytest.mark.parametrize(
+    "text,evidence",
+    [
+        ("방금 잡은 580만 원은 그대로 두고요.", "방금 잡은 580만 원은 그대로"),
+        ("방금 잡은 590만 원은 그대로 두지 마세요.", "방금 잡은 590만 원은 그대로"),
+        ("방금 잡은 590만 원은 그대로 둘까요?", "방금 잡은 590만 원은 그대로"),
+        ("방금 잡은 590만 원은 나중에 그대로 둘 예정이에요.", "방금 잡은 590만 원"),
+        (
+            "방금 잡은 590만 원은 그대로 두세요. 그 요청은 취소합니다.",
+            "방금 잡은 590만 원은 그대로",
+        ),
+        (
+            "금액은 방금 잡은 590만 원은 그대로 두세요. 금액은 600만 원으로 바꿔 주세요.",
+            "방금 잡은 590만 원은 그대로",
+        ),
+        ("부가세는 방금 정한 590만 원은 그대로 두세요.", "방금 정한 590만 원은 그대로"),
+        (
+            "방금 잡은 590만 원은 그대로 두고, 아니 400만 원으로 바꿔 주세요.",
+            "방금 잡은 590만 원은 그대로 두고",
+        ),
+        (
+            "방금 잡은 590만 원은 그대로 두고, 아니 그건 취소할게요.",
+            "방금 잡은 590만 원은 그대로 두고",
+        ),
+        (
+            "혹시 금액은 방금 잡은 590만 원 그대로 두세요.",
+            "방금 잡은 590만 원 그대로",
+        ),
+        (
+            "나중에 금액은 방금 잡은 590만 원 그대로 두세요.",
+            "방금 잡은 590만 원 그대로",
+        ),
+    ],
+)
+def test_previous_amount_reaffirmation_rejects_unsafe_or_mismatched_scope(
+    monkeypatch, text, evidence
+):
+    result, _ = _quote(monkeypatch, text, [_retain("amount", evidence)])
+    _not_restored(result["amount"])
+
+
+@pytest.mark.parametrize(
+    "dates", ["12월 8일, 11일", "12월 8일, 10일, 11일", "12월 8일", "12월 8일, 10일, 32일"]
+)
+def test_previous_date_reaffirmation_rejects_partial_or_different_list(monkeypatch, dates):
+    text = f"공사 날짜는 방금 말한 {dates} 그대로 가주세요."
+    result, _ = _run(
+        monkeypatch,
+        "dates",
+        {"days": ["2026-12-07", "2026-12-09"], "crew": 2},
+        "12월 8일과 10일 작업해 주세요.",
+        [_field("days", "set", ["2026-12-08", "2026-12-10"], "12월 8일과 10일")],
+        text,
+        [_retain("days", text)],
+    )
+    _not_restored(result["days"])
+
+
+def test_previous_date_reaffirmation_rejects_implicit_later_change(monkeypatch):
+    evidence = "방금 말한 12월 8일, 10일 그대로 가고요"
+    text = "작업 날짜는 " + evidence + ", 아니 12월 9일로 변경해 주세요."
+    result, _ = _run(
+        monkeypatch,
+        "dates",
+        {"days": ["2026-12-07", "2026-12-09"], "crew": 2},
+        "12월 8일과 10일 작업해 주세요.",
+        [_field("days", "set", ["2026-12-08", "2026-12-10"], "12월 8일과 10일")],
+        text,
+        [_retain("days", evidence)],
+    )
+    _not_restored(result["days"])
+
+
+@pytest.mark.parametrize(
+    "text,evidence",
+    [
+        ("부가세는 아까 정한 별도 조건으로 해주세요.", "부가세는 아까 정한 별도 조건으로"),
+        (
+            "부가세는 아까 정한 포함 조건으로 해주세요? 아직 미정이에요.",
+            "부가세는 아까 정한 포함 조건으로",
+        ),
+        (
+            "부가세는 아까 정한 포함 조건으로 해주세요. 부가세 변경은 취소합니다.",
+            "부가세는 아까 정한 포함 조건으로",
+        ),
+        ("금액은 아까 정한 포함 조건으로 해주세요.", "아까 정한 포함 조건으로"),
+        (
+            "부가세는 아까 정한 포함 조건으로 계속 가주세요, 아니 별도로 바꿔 주세요.",
+            "부가세는 아까 정한 포함 조건으로 계속 가주세요",
+        ),
+    ],
+)
+def test_previous_vat_reaffirmation_rejects_unsafe_scope(monkeypatch, text, evidence):
+    result, _ = _quote(monkeypatch, text, [_retain("vat", evidence)])
     _not_restored(result["vat"])
 
 

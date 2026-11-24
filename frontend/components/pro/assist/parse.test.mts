@@ -191,6 +191,19 @@ test("#179 추가금: 명확하지 않은 제목과 다른 필드의 지시를 �
   assert.equal(parseExtra("벽 안쪽까지 곰팡이가 퍼져서", T).title, undefined);
 });
 
+test("이전 제목을 가리키는 말은 새 제목으로 쓰지 않아요", () => {
+  for (const text of [
+    "제목은 방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.",
+    "항목은 아까 말씀드린 걸로 해주세요.",
+    "제목은 좀 전에 정한 내용으로 진행해 주세요.",
+    "방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.",
+  ]) {
+    assert.equal(parseExtra(text, T).title, undefined, text);
+  }
+  assert.equal(parseExtra("제목은 문선 보강으로 해주세요.", T).title, "문선 보강");
+  assert.equal(parseExtra("제목은 방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.", T).amount, 254000);
+});
+
 // #174(dev)에서 온 시험 문장
 test("#174 금액: 소수 만 단위 · 금액 여럿이면 전체 금액 하나만", () => {
   assert.equal(parseQuote("455.5만 원", T).amount, 4_555_000);

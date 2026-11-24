@@ -635,6 +635,214 @@ def _retention_has_different_value(
     return bool(mentioned) and value not in mentioned
 
 
+# 앞서 실제로 말한 값을 다시 확인하는 표현은 동사만 잘라낸 모델 근거가
+# 아니라 원문의 같은 절에서 대상, 값, 유지 지시를 함께 확인한다.
+_REAFFIRM_REFERENCE = re.compile(
+    r"(?:방금|아까|앞서|좀\s*전에|조금\s*전에|이전에|지난번에|그때|전에)"
+    r"\s*(?:말씀드린|말한|얘기한|알려드린|정한|잡은|확정한|제안한|정리한|적은|전달한)\s*"
+)
+_REAFFIRM_DIRECTIVE = (
+    r"(?:가(?:고요?|주세요|주십시오|요|겠습니다)|"
+    r"두(?:고요?|세요|겠습니다)|둘게요|둡니다|"
+    r"(?:반영|유지|사용|적용)\s*(?:해\s*(?:주세요|줘요|주십시오)|할게요|하고요?|하겠습니다)?|"
+    r"해\s*(?:주세요|줘요|주십시오)|할게요|하겠습니다)"
+)
+_REAFFIRM_KEEP = re.compile(
+    r"그대로(?:\s*" + _REAFFIRM_DIRECTIVE + r")?"
+    r"|(?:걸로|대로|(?:조건|방식|안|내용)(?:으로|로))\s*(?:계속\s*)?" + _REAFFIRM_DIRECTIVE
+)
+_REAFFIRM_BREAK = re.compile(r"(?<!\d)\.|\.(?!\d)|[;!?？]")
+_REAFFIRM_UNDECIDED = re.compile(
+    r"(?:나중에|추후|다음에|예정|검토|생각\s*중|고민|보류|취소|철회|"
+    r"않|아니|말고|지\s*마|지\s*말|거라면|할지|할까|하면|할\s*경우|[?？])"
+)
+_REAFFIRM_TARGETS = {
+    "amount": r"추가\s*(?:금액|비용|금|비)|견적\s*(?:총액|금액)|금액|가격|비용|총액|견적",
+    "vat": r"부가세|세금(?:\s*(?:조건|방식))?",
+    "days": r"(?:공사|작업)\s*(?:날짜|일수|기간|일정)|날짜|일수|기간|일정|작업일|공사일",
+    "crew": r"인원|작업자",
+    "title": r"공사명|작업명|항목명|제목|항목|이름",
+    "reason": r"사유|이유",
+    "valid": r"유효\s*기간|만료일",
+}
+
+
+def _reaffirm_target(form: FormName, text: str, *, prefix: bool) -> tuple[str, re.Match] | None:
+    """앞 참조 바로 전의 목적어 또는 참조 뒤의 명시적인 대상만 받는다."""
+    for field in FORM_FIELDS[form]:
+        words = _REAFFIRM_TARGETS.get(field)
+        if not words:
+            continue
+        target = rf"(?:{words})(?:\s*[은는이가을를만도])?\s*"
+        match = re.search(target + r"$" if prefix else r"^" + target, text)
+        if match:
+            return field, match
+    return None
+
+
+def _without_tokens(text: str, tokens: list[tuple[int, int, object]]) -> str:
+    for start, end, _ in reversed(tokens):
+        text = text[:start] + text[end:]
+    return text
+
+
+def _reaffirmed_value(
+    form: FormName, field: str, value: Value, body: str, context: AssistContext
+) -> bool:
+    """반복 값은 부분 일치가 아니라 정규화한 전체 값과 일치해야 한다."""
+    if field == "amount":
+        tokens = _amount_tokens(body)
+        remainder = re.sub(r"\s+", "", _without_tokens(body, tokens))
+        return (
+            len(tokens) == 1
+            and {part[2] for part in tokens} == {value}
+            and bool(re.fullmatch(r"원?[은는이가을를도만]?", remainder))
+        )
+    if (form, field) == ("dates", "days"):
+        dates = date_tokens(body, context)
+        remainder = re.sub(r"\s+", "", _without_tokens(body, dates))
+        remainder = re.sub(r"이랑|부터|까지|랑|과|와|및", "", remainder)
+        return (
+            isinstance(value, list)
+            and bool(dates)
+            and {day.isoformat() for day in date_mentions(body, context, expand=True)} == set(value)
+            and all(char in ",，、·~∼〜–—－-은는이가을를도만" for char in remainder)
+        )
+    if field == "vat":
+        return isinstance(value, str) and any(
+            re.fullmatch(rf"{re.escape(word)}\s*[은는이가을를도만]?\s*", body)
+            for word in VAT_WORDS[value]
+        )
+    if field == "title":
+        return isinstance(value, str) and normalized(value) == body
+    return False
+
+
+def _reaffirmation_conflicts(
+    form: FormName, field: str, outside: str, context: AssistContext, value: Value
+) -> bool:
+    # 다른 칸의 직접 입력·정정은 유지 대상에 전파하지 않는다.
+    if re.search(
+        r"(?:그\s*(?:요청|제안|거)|방금\s*(?:요청|말)|유지\s*요청)"
+        r"(?:\s*[은는을를])?\s*(?:취소|철회|보류)",
+        outside,
+    ):
+        return True
+    words = _REAFFIRM_TARGETS.get(field)
+    if not words:
+        return False
+    for clause in re.split(r"(?<!\d),|,(?!\d)|(?<!\d)\.|\.(?!\d)|[;!?？]", outside):
+        # 목적어를 생략한 취소·재정정도 바로 앞 유지 지시를 철회할 수 있다.
+        clause = clause.strip()
+        if re.match(
+            r"^(?:아니\s*|아\s*|잠깐\s*)?(?:그\s*(?:건|거|것)(?:\s*[은는을를])?\s*)?"
+            r"(?:취소|철회|보류|안\s*할|아직\s*미정)",
+            clause,
+        ):
+            return True
+        other_target = any(
+            re.search(rf"(?:{target})", clause)
+            for name, target in _REAFFIRM_TARGETS.items()
+            if name in FORM_FIELDS[form] and name != field
+        )
+        change = re.search(
+            r"(?:바꿔|바꾸|고쳐|고치|고쳤|수정|변경|정정|입력|덮어|대신|말고|아니)", clause
+        )
+        if not other_target and change:
+            if field == "amount" and (amounts := _amount_mentions(clause)) and amounts != {value}:
+                return True
+            if (form, field) == ("dates", "days") and isinstance(value, list):
+                dates = {day.isoformat() for day in date_mentions(clause, context, expand=True)}
+                if dates and dates != set(value):
+                    return True
+            if field == "vat" and _retention_has_different_value(
+                form, field, value, clause, context
+            ):
+                return True
+        if re.search(rf"(?:{words})\s*[은는이가을를만도]?", clause) and (
+            _deletion_requested(clause)
+            or _RULE_QUESTION_OR_UNDECIDED.search(clause)
+            or _REAFFIRM_UNDECIDED.search(clause)
+            or re.search(r"(?:바꿔|바꾸|고쳐|고치|고쳤|수정|변경|정정|입력|덮어)", clause)
+            or _retention_has_different_value(form, field, value, clause, context)
+        ):
+            return True
+    return False
+
+
+def _verified_reaffirmation(
+    form: FormName, field: str, value: Value, evidence: str, text: str, context: AssistContext
+) -> bool | None:
+    """명시적인 이전 값 재확인만 복구한다. 다른 유지 표현은 기존 검증에 맡긴다."""
+    if field not in ("amount", "vat", "title") and (form, field) != ("dates", "days"):
+        return None
+    raw, needle = normalized(text), normalized(evidence)
+    if not needle or raw.count(needle) != 1:
+        return False
+    at = raw.index(needle)
+    refs = [
+        match
+        for match in _REAFFIRM_REFERENCE.finditer(raw)
+        if at <= match.start() < at + len(needle)
+    ]
+    if not refs:
+        return None
+    if len(refs) != 1:
+        return False
+    ref = refs[0]
+    stop = _REAFFIRM_BREAK.search(raw, ref.end())
+    right = stop.start() if stop else len(raw)
+    after_ref = raw[ref.end() : right]
+    keep = _REAFFIRM_KEEP.search(after_ref)
+    if keep is None:
+        return None
+    end = ref.end() + keep.end()
+    tail = raw[end:right].lstrip()
+    if tail and not tail.startswith(","):
+        next_target = _reaffirm_target(form, tail, prefix=False)
+        if next_target is None or next_target[0] == field:
+            return False
+    elif not tail and stop and stop.group() in ("?", "？"):
+        return False
+    prefix = raw[: ref.start()]
+    target = _reaffirm_target(form, prefix, prefix=True)
+    scope_start = target[1].start() if target else ref.start()
+    body = after_ref[: keep.start()].strip()
+    if target and target[0] != field:
+        # '금액과 부가세는 앞서 정리한 안으로 두고'의 공동 대상은 기존 검증을 쓴다.
+        if not body and _targeted_retention(form, field, evidence, text, context):
+            return None
+        return False
+    body_target = _reaffirm_target(form, body, prefix=False)
+    if body_target:
+        if body_target[0] != field:
+            return False
+        body = body[body_target[1].end() :].strip()
+    scope = raw[scope_start:end]
+    if (
+        _RETAIN_NEGATED.search(scope)
+        or _RULE_QUESTION_OR_UNDECIDED.search(scope)
+        or _REAFFIRM_UNDECIDED.search(scope)
+        or re.search(
+            r"(?:혹시|아마|나중에|추후|다음에|가능하면|조건부로)\s*$",
+            raw[:scope_start],
+        )
+        or re.search(r"(?:현재|지금)\s*(?:폼|화면|입력)|폼\s*값\s*대로", scope)
+    ):
+        return False
+    # 모델이 대상 명사를 잘랐어도 유일한 완전한 금액 또는 날짜 목록은
+    # 같은 필드의 근거가 된다. 값 없는 유지에는 명시적인 대상이 필요하다.
+    if body:
+        if not _reaffirmed_value(form, field, value, body, context):
+            return False
+        if field in ("vat", "title") and not (target or body_target):
+            return False
+    elif not (target or body_target):
+        return None
+    outside = raw[:scope_start] + " ; " + raw[end:]
+    return not _reaffirmation_conflicts(form, field, outside, context, value)
+
+
 def _rule_local_clauses(
     form: FormName, field: str, value: Value, text: str, context: AssistContext
 ) -> list[str]:
@@ -1194,6 +1402,64 @@ def _verified_extra_amount_error_correction(
     return True
 
 
+_QUOTE_REPORTED_AMOUNT_PREFIX = re.compile(
+    r"(?:(?:아까|앞서|방금|이전에))?(?:제가)?"
+    r"(?:총액|합계|견적금액|견적|금액|공사비)(?:은|는|이|가|을|를|:)?"
+)
+_QUOTE_REPORTED_AMOUNT_LINK = re.compile(
+    r"원?(?:이라고|라고|이라|라)(?:제가)?(?:잘못|틀리게)"
+    r"(?:말씀드렸|말했|전달했|적었|입력했|썼)(?:네요|어요|습니다|죠)"
+    r"[.!。](?:정확히는|정확한금액은|실제금액은)"
+)
+_QUOTE_REPORTED_AMOUNT_CONFIRM = re.compile(
+    r"원?(?:이에요|예요|입니다|이맞아요|이맞습니다|맞아요|맞습니다)"
+    r"[.!。](?:그금액|이금액)(?:으로|로)"
+    r"(?:정정부탁해요|정정부탁드립니다|정정해주세요|정정할게요|정정하겠습니다"
+    r"|수정해주세요|고쳐주세요)[.!。]?"
+)
+
+
+def _verified_quote_reported_amount_correction(
+    item: FieldIntent,
+    text: str,
+    context: AssistContext,
+    old_text: str,
+    new_text: str,
+    before: int,
+    after: int,
+) -> bool:
+    """옛 총액의 오류 인정, 새 금액의 진술, 같은 금액의 확정 지시를 모두 확인한다."""
+    relation = item.correction
+    if relation is None or type(relation.rejected_value) is not int or type(item.value) is not int:
+        return False
+    if not 0 < relation.rejected_value <= AMOUNT_MAX or not 0 < item.value <= AMOUNT_MAX:
+        return False
+    raw = normalized(text)
+    groups = _amount_tokens(raw)
+    if len(groups) != 2:
+        return False
+    (old_start, old_end, old_amount), (new_start, new_end, new_amount) = groups
+    if (
+        (old_amount, new_amount) != (relation.rejected_value, item.value)
+        or not before <= old_start < old_end <= before + len(old_text)
+        or not after <= new_start < new_end <= after + len(new_text)
+    ):
+        return False
+    prefix, link, tail = (
+        re.sub(r"\s+", "", part)
+        for part in (raw[:old_start], raw[old_end:new_start], raw[new_end:])
+    )
+    if not (
+        _QUOTE_REPORTED_AMOUNT_PREFIX.fullmatch(prefix)
+        and _QUOTE_REPORTED_AMOUNT_LINK.fullmatch(link)
+        and _QUOTE_REPORTED_AMOUNT_CONFIRM.fullmatch(tail)
+    ):
+        return False
+    return _grounded(
+        "quote", "amount", relation.rejected_value, relation.rejected_evidence, context, text=text
+    ) and _grounded("quote", "amount", item.value, relation.accepted_evidence, context, text=text)
+
+
 def _verified_correction(
     item: FieldIntent,
     form: FormName,
@@ -1222,6 +1488,14 @@ def _verified_correction(
     after = normalized_text.find(new_text, before + len(old_text))
     if before < 0 or after < before + len(old_text):
         return None
+    if (
+        form == "quote"
+        and item.field == "amount"
+        and _verified_quote_reported_amount_correction(
+            item, text, context, old_text, new_text, before, after
+        )
+    ):
+        return relation
     if _verified_historical_scalar(
         item, form, text, context, previous, old_text, new_text, before, after
     ):
@@ -1458,8 +1732,6 @@ def _review_one(
     if intent == "retain_previous":
         if item.action != "keep" or not evidence_matches(text, item.evidence):
             return reject("evidence_missing")
-        if not _targeted_retention(data.form, item.field, item.evidence, text, context):
-            return reject("ambiguous_intent")
         if re.search(r"(?:현재|지금)\s*(?:폼|화면|입력)|폼\s*값\s*대로", item.evidence):
             return reject("ambiguous_intent")
         retained = (
@@ -1471,8 +1743,24 @@ def _review_one(
             return reject(
                 "stale_context" if data.previous_candidate is not None else "reference_missing"
             )
-        if retained.action == "set" and _retention_has_different_value(
-            data.form, item.field, retained.value, item.evidence, context
+        reaffirmed = (
+            _verified_reaffirmation(
+                data.form, item.field, retained.value, item.evidence, text, context
+            )
+            if retained.action == "set"
+            else None
+        )
+        if reaffirmed is False or (
+            reaffirmed is None
+            and not _targeted_retention(data.form, item.field, item.evidence, text, context)
+        ):
+            return reject("ambiguous_intent")
+        if (
+            reaffirmed is None
+            and retained.action == "set"
+            and _retention_has_different_value(
+                data.form, item.field, retained.value, item.evidence, context
+            )
         ):
             return reject("ambiguous_intent")
         return _candidate_from_previous(retained, previous)
@@ -1533,6 +1821,15 @@ def _review_one(
             return reject("type_mismatch")
         if item.value_source in ("previous", "current"):
             return reject("reference_missing")
+        # 참조 지시 자체를 새 제목으로 추출한 규칙 후보는 실제 제목이 아니다.
+        if (
+            source == "rule"
+            and item.field == "title"
+            and isinstance(item.value, str)
+            and _REAFFIRM_REFERENCE.match(normalized(item.value))
+            and _REAFFIRM_KEEP.search(normalized(item.value))
+        ):
+            return reject("ambiguous_intent")
         if not _grounded(data.form, item.field, item.value, item.evidence, context, text=text):
             return reject("unsupported_normalization")
         if not _business_ok(data.form, item.field, item.value, data, context, proposed):

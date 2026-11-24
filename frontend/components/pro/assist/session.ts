@@ -149,7 +149,7 @@ export class AssistSession {
       immutableFields: [...(options.immutableFields ?? [])],
     };
     const id = requestId();
-    const confirmedAmount = this.form === "quote" || this.form === "extra" ? amountToConfirm(utterance, opts.today) : undefined;
+    const confirmedAmount = this.form === "quote" || this.form === "extra" ? amountToConfirm(utterance, opts.today, this.form) : undefined;
     const issues = assistInputIssues(this.form, utterance, opts, confirmedAmount);
     // 확인되지 않은 금액으로 다른 칸만 저장되는 것을 요청을 보내는 순간부터 막아요.
     const hold = confirmedAmount !== undefined && confirmedAmount !== snapshot.amount && !issues.amount
