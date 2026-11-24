@@ -177,6 +177,59 @@ _DAY_SCOPE = re.compile(r"작업\s*(?:일|날짜?)|공사\s*(?:일|날짜?)|시�
 _OTHER_SCOPE = re.compile(
     r"시작\s*(?:일|날짜?)|(?:종료|마감)\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간"
 )
+# 의도 분류에는 유효하지 않은 날짜와 미완성 교체도 포함한다.
+# 실제 날짜 계산은 기존 엄격한 토큰과 검증기를 사용한다.
+_RELATION_DATE = re.compile(
+    r"(?<!\d)(?:20\d{2}\s*(?:년|[-/.])\s*)?"
+    r"(?:\d{1,2}\s*(?:월|[-/.])\s*\d{1,3}\s*일?|"
+    r"\d{1,3}\s*일(?!\s*(?:간|동안|정도|째|소요|후|전|차|뒤)))"
+)
+_RELATION_CONNECTOR = re.compile(r"^(?:[은는이가을를]\s*)?(?:대신|말고|아니고|아니라|->|→)")
+_RELATION_ACTION = re.compile(
+    r"^\s*(?:로|으로)\s*(?:바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|"
+    r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길)"
+)
+_MOVE_ACTION = re.compile(r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길")
+_RELATION_GAP = re.compile(
+    r"^(?:[은는이가을를]|에서|[은는이가을를]?만|[은는에]?쉬는(?:걸|것을)(?:만)?)$"
+)
+
+
+def date_replacement_requested(field: str, text: str) -> bool:
+    """목록 교체 의도는 날짜·이전값·확정 여부의 검증 성공과 별개로 분류한다."""
+    if field not in ("days", "excluded"):
+        return False
+    mentions = list(_RELATION_DATE.finditer(text))
+    for index, old in enumerate(mentions):
+        prefix = _local_prefix(text, old.start())
+        marks = sorted(
+            [(m.start(), "excluded") for m in _EXCLUDED_SCOPE.finditer(prefix)]
+            + [(m.start(), "days") for m in _DAY_SCOPE.finditer(prefix)]
+            + [(m.start(), "other") for m in _OTHER_SCOPE.finditer(prefix)]
+        )
+        if marks and marks[-1][1] not in (field,):
+            continue
+        tail = text[old.end() :]
+        if _RELATION_CONNECTOR.match(tail.lstrip()):
+            return True
+        if index + 1 < len(mentions):
+            new = mentions[index + 1]
+            gap = text[old.end() : new.start()]
+            compact = "".join(gap.split())
+            suffix = text[new.end() :]
+            if (
+                _RELATION_GAP.fullmatch(compact)
+                and _RELATION_ACTION.match(suffix)
+                or _SHIFT_GAP.fullmatch(compact)
+                or _EXCLUSION_MOVE_GAP.fullmatch(compact)
+                or _ANAPHOR_MOVE_GAP.fullmatch(gap)
+            ):
+                return True
+        # 옛날/새날 중 하나가 빠진 이동 요청도 열거로 바꾸지 않는다.
+        clause = re.split(r"[,;.!?？。\n]", tail, maxsplit=1)[0]
+        if _MOVE_ACTION.search(clause):
+            return True
+    return False
 
 
 @dataclass(frozen=True)

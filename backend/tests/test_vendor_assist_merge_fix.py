@@ -502,7 +502,12 @@ def test_rule_field_proof_rejects_negated_or_cancelled_scalar_action(form, text,
         rule=field(name, "set", value, text),
         model=field(name, "keep", None, "", intent_kind="no_mention"),
     )
-    assert checked.status == "valid"
+    # 수치 필드는 병합 이전부터 부정·취소·과거 보고를 변경 후보로 인정하지 않는다.
+    if name in ("amount", "crew"):
+        assert checked.status != "valid"
+        assert checked.value is None
+    else:
+        assert checked.status == "valid"
     assert candidate.status == "uncertain"
     assert candidate.value is None
 

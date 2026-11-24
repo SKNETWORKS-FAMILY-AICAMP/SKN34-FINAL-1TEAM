@@ -73,6 +73,7 @@ export function validSetValue(form: AssistForm, field: string, value: unknown, o
     if (new Set(value).size !== value.length) return false;
     if (form === "dates") {
       if (!value.length || value.some((day) => day <= opts.today || opts.holidays?.includes(day))) return false;
+      if (value.some((day) => Date.parse(day) - Date.parse(opts.today) > 365 * 86_400_000)) return false;
       if (opts.noWeekend && value.some((day) => [0, 6].includes(new Date(day + "T00:00:00Z").getUTCDay()))) return false;
       if (opts.requiredDays && value.length !== opts.requiredDays) return false;
       const ordered = [...value].sort();
@@ -178,10 +179,13 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
     return { field, action: "uncertain", value: null, evidence, source, status: alternatives.length ? "conflict" : "uncertain", alternatives, origin_request_id: origin };
   }
   const validAction = action === "set" ? validSetValue(form, field, value, opts) :
-    value === null && (action !== "clear" || !opts.immutableFields?.includes(field));
+    action !== "uncertain" && value === null && (action !== "clear" || !opts.immutableFields?.includes(field));
   const safeStatus = validAction && status === "valid" ? "valid" : status === "uncertain" ? "uncertain" : "invalid";
-  const metadata = safeStatus === "valid" && action === "set"
-    ? derivedListMetadata(form, field, data, opts) : {};
+  const metadata: Partial<FieldIntent> = safeStatus === "valid" && action === "set"
+    ? derivedListMetadata(form, field, data, opts)
+    : safeStatus === "valid" && action === "keep" && evidence.trim() &&
+      data.intent_kind === "retain_current" && data.value_source === "current"
+      ? { intent_kind: "retain_current", value_source: "current" } : {};
   return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin, ...metadata };
 }
 
@@ -270,7 +274,8 @@ export function validCombinedPeriod(current: AssistCurrent, selected: AssistCurr
   if (start !== null && !validSetValue("period", "start", start, opts)) return false;
   if (end !== null && !validSetValue("period", "end", end, opts)) return false;
   if (start === null && end !== null) return false;
-  if (start !== null && end !== null && start > end) return false;
+  if (typeof start === "string" && typeof end === "string" &&
+      (start > end || Date.parse(end) - Date.parse(start) > 62 * 86_400_000)) return false;
   if (!Array.isArray(excluded) || excluded.some((date) => typeof date !== "string")) return false;
   if (excluded.length && (start === null || end === null)) return false;
   if (excluded.length && !validSetValue("period", "excluded", excluded, opts)) return false;

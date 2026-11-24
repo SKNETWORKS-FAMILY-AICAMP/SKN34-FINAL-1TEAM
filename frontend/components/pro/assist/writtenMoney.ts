@@ -1,3 +1,5 @@
+import { amountRiskText } from "./requestIntent";
+
 // 명시적인 원 단위 한글 정수 금액만 서버와 같은 문법으로 확인해요.
 const DIGIT: Record<string, number> = Object.fromEntries([..."일이삼사오육칠팔구"].map((c, i) => [c, i + 1]));
 const SMALL: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
@@ -13,7 +15,7 @@ const ASCII_NUMBER_CHARS = ASCII_DIGITS + ",.";
 const OTHER_WRITTEN = /[일이삼사오육칠팔구영공십백천만억조경]\s*원/;
 const SPLIT_NUMBER = /[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$/;
 const RANGE_SEPARATORS = [..."~∼〜–—－−/.,·:-", "부터", "에서", "또는", "혹은", "아니면", "점"];
-const END = /^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))/;
+const END = /^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|이고|이며|이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))/;
 const MONEY_TARGET = /(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|계약금|잔금)\s*(?:[은는이가을를:=]\s*)?$/;
 const SHORT_OMITTED_END = /^(?:$|[,.;!?？。]|으로|로|입니다|이에요|예요|요)/;
 const OTHER_MONEY = /[0-9]\s*[억천백만원]|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|단가|청구)\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9](?=$|\s|[,.;!?])/;
@@ -132,7 +134,7 @@ export function writtenMoney(text: string): { mentioned: boolean; amount?: numbe
   }
   const held = { mentioned: true };
   if (!mentions.length) return attachedOrMixed(raw, true) ? held : { mentioned: false };
-  if (mentions.length !== 1 || omittedShort || UNCERTAIN.test(raw)) return held;
+  if (mentions.length !== 1 || omittedShort || UNCERTAIN.test(amountRiskText(raw))) return held;
   const [{ match, body }] = mentions;
   if (match.index === undefined) return held;
   const before = raw.slice(0, match.index);

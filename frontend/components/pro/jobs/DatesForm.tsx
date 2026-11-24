@@ -20,6 +20,7 @@ import { Group, Lead, Row, Rows, Small } from "../ui/parts";
 import { visitTitle } from "../visit/facts";
 import { daysText } from "./days";
 import { AssistBox } from "../assist/AssistBox";
+import { formWriteBlock, PENDING_FORM_MESSAGE, useFormHolds } from "../assist/formHolds";
 import s from "./jobs.module.css";
 
 /** 예시 글: 희망 시작일부터 공사 기간만큼 "12/8부터 12/10까지, 2명" */
@@ -48,9 +49,8 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
   const [crew, setCrew] = useState(String(job.proposal?.crew ?? job.need.crew ?? 2));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 도우미가 말한 인원 · 날짜를 넣지 못한 까닭. 칸에는 옛 값이 남아 있어서, 업체가 인원을 다시 고르거나 달력을 누르기 전까지 보내기를 막아요
-  const [crewHold, setCrewHold] = useState<string | null>(null);
-  const [daysHold, setDaysHold] = useState<string | null>(null);
+  const holds = useFormHolds("dates");
+  const { fields: fieldHolds, pending } = holds.state;
   const [idem] = useState(newKey);
   const today = dateSeoul(now);
 
@@ -61,8 +61,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
   job.request?.wish_dates.forEach((d) => { if (!notes[d]) notes[d] = { text: "희망", label: "고객이 요청한 날" }; });
 
   async function go() {
-    if (busy) return;
-    if (daysHold || crewHold) return; // 이유는 달력 아래 · 인원 칸에 이미 보여요
+    if (busy || formWriteBlock(holds.current.current)) return;
     if (need && days.length !== need) { setErr(`견적서 공사 기간 ${need}일과 같게 ${need}일을 골라 주세요. 지금 ${days.length}일 골랐어요.`); return; }
     setErr(null);
     setBusy(true);
@@ -96,13 +95,12 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
             noWeekend: !job.weekend_work,
             crewMax: 6, requiredDays: need,
           }}
-          onInputIssues={(issues) => {
-            if (issues.days) setDaysHold(issues.days);
-            if (issues.crew) setCrewHold(issues.crew);
-          }}
-          onApply={(changes) => {
-            if ("days" in changes) { setDays(Array.isArray(changes.days) ? changes.days : []); setDaysHold(null); }
-            if ("crew" in changes) { setCrew(typeof changes.crew === "number" ? String(changes.crew) : ""); setCrewHold(null); }
+          readManualVersions={() => holds.manualVersions.current}
+          onInputIssues={holds.receive}
+          onApply={(changes, response) => {
+            if ("days" in changes) setDays(Array.isArray(changes.days) ? changes.days : []);
+            if ("crew" in changes) setCrew(typeof changes.crew === "number" ? String(changes.crew) : "");
+            holds.applied(changes, response);
             setErr(null);
           }} />
         <Group>
@@ -112,7 +110,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
             today={today}
             month={job.request?.wish_dates[0] ?? v.work_wish_on ?? today}
             value={days}
-            onChange={(x) => { setDays(x); setDaysHold(null); setErr(null); }}
+            onChange={(x) => { setDays(x); holds.manual(["days"]); setErr(null); }}
             marks={marks}
             notes={notes}
             wide
@@ -123,8 +121,9 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
           <Rows label="보낼 공사 날짜">
             <Row label="고른 날" sub={need ? `견적서 공사 기간 ${need}일` : undefined} value={days.length ? daysText(days, true) : "—"} />
           </Rows>
-          {daysHold ? <p className={s.err} role="alert"><Icon name="error" size={16} />{daysHold}</p> : null}
-          <SelectField label="인원" options={CREW} value={crew} error={crewHold} onChange={(e) => { setCrew(e.target.value); setCrewHold(null); setErr(null); }} />
+          {pending ? <p className={s.err} role="status">{PENDING_FORM_MESSAGE}</p> : null}
+          {fieldHolds.days ? <p className={s.err} role="alert"><Icon name="error" size={16} />{fieldHolds.days}</p> : null}
+          <SelectField label="인원" options={CREW} value={crew} error={fieldHolds.crew} onChange={(e) => { setCrew(e.target.value); holds.manual(["crew"]); setErr(null); }} />
           {err ? <p className={s.err} role="alert"><Icon name="error" size={16} />{err}</p> : null}
         </Group>
       </Main>

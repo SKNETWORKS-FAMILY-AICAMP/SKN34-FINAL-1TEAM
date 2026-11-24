@@ -3,6 +3,7 @@
 // 애매하면 칸을 채우지 않아요(틀린 값을 넣는 것보다 비워 두고 업체가 적는 편이 안전해요).
 
 import { writtenMoney } from "./writtenMoney";
+import { requestIntent } from "./requestIntent";
 
 /** outside: 안 된다고 했지만 기간 밖이라 넣지 않은 날 */
 export type PeriodFill = { start: string; end: string; excluded: string[]; outside: string[] };
@@ -197,8 +198,19 @@ const TOTAL = /(?:전체|총|합계|견적)\s*(?:금액|견적|은|는|이|가)?
 function amountIn(text: string): number | undefined {
   if (/억/.test(text)) return undefined; // 억 단위는 읽지 않아요
   const hits: { at: number; end: number; won: number }[] = [];
-  for (const m of text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*만\s*(?:(\d)\s*천)?\s*(?:(\d[\d,]*)\s*원)?/g)) {
-    const won = Math.round(num(m[1]) * 10000) + (m[2] ? Number(m[2]) * 1000 : 0) + (m[3] ? num(m[3]) : 0);
+  for (const m of text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*만\s*((?:\d+\s*[천백십]\s*){0,4})(?:(\d[\d,]*)\s*원)?/g)) {
+    const base = num(m[1]) * 10000;
+    if (!Number.isSafeInteger(Math.round(base)) || Math.abs(base - Math.round(base)) > 1e-6) return undefined;
+    let limit = 10000, rest = 0;
+    for (const part of m[2].matchAll(/(\d+)\s*([천백십])/g)) {
+      const scale = MAN_SCALE[part[2]], value = Number(part[1]) * scale;
+      if (scale >= limit || value >= limit) return undefined;
+      rest += value;
+      limit = scale;
+    }
+    const tail = m[3] ? num(m[3]) : 0;
+    if (tail >= limit || /^\s*\d+\s*[천백십]/.test(text.slice(m.index + m[0].length))) return undefined;
+    const won = Math.round(base) + rest + tail;
     hits.push({ at: m.index, end: m.index + m[0].length, won });
   }
   for (const m of text.matchAll(/(\d{1,3}(?:,\d{3})+|\d{6,})\s*원?/g)) {
@@ -287,7 +299,8 @@ function daysOf(text: string): number | undefined {
 export function parseQuote(text: string, today: string): QuoteFill {
   const out: QuoteFill = {};
   const normalized = manOf(text);
-  const amount = normalized === null || writtenMoney(text).mentioned || uncertainCompoundAmount(text) ? undefined : amountIn(normalized);
+  const amount = normalized === null || writtenMoney(text).mentioned || uncertainCompoundAmount(text) ||
+    requestIntent("quote", text).blocked.has("amount") ? undefined : amountIn(normalized);
   if (amount) out.amount = amount;
   const vat = vatIn(text);
   if (vat) out.vat = vat;
@@ -348,7 +361,7 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
 const NATIVE_CREW: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10, 열두: 12 };
 const CREW_NUMBER = String.raw`(?:(?<![\d./월-])\d+(?:,\d+)+(?:\.\d+)?|(?<![\d.])\d+(?:\.\d+)?|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열두|열))`;
 const CREW_UNIT = String.raw`(?:명|인(?=$|[\s.,!?;~/∼〜–—－-]|으로|[은을도과]|부터|에서|입니다|이에요))`;
-const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼〜–—－-]|부터|에서|또는|혹은)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*${CREW_UNIT}`, "g");
+const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼〜–—－-]|부터|에서|또는|혹은|아니면|이나|나)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*${CREW_UNIT}`, "g");
 const CREW_TERM = new RegExp(String.raw`(${CREW_NUMBER})\s*${CREW_UNIT}`, "g");
 const CREW_REPLACEMENT = new RegExp(String.raw`^(?:(?:아까|앞서|방금|이전에)\s*)?(?:(?:작업\s*인원|인원(?:수)?|작업자(?:\s*수)?|인부|사람)(?:은|는|만|을|를|이|가|:)?\s*)?(${CREW_NUMBER})\s*(?:${CREW_UNIT})?\s*에서\s*(${CREW_NUMBER})\s*${CREW_UNIT}\s*(?:으로|로)\s*(?:(?:정정|수정|변경|확정)\s*(?:할게요|하겠습니다|해\s*주세요|해\s*줘요|합니다|해요)|(?:바꿔|고쳐)\s*(?:주세요|줘요|요)|바꿀게요|고칠게요|바꾸겠습니다|고치겠습니다)$`);
 const CREW_CORRECTION_UNCERTAIN = /[?？]|아마|혹시|미정|보류|검토|취소|철회|고민|가능하면|예정|잠정|모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s*걸로|하지\s*마|하지\s*않/;
@@ -396,6 +409,8 @@ const EXTRA_TITLE_REFERENCE = /^(?:방금|아까|앞서|좀\s*전에|조금\s*�
 const EXTRA_TITLE_DENIED = /(?:그대로|유지|바꾸지|고치지|수정하지|변경하지|건드리지|손대지|삭제|지우|비우|없애|취소|하지\s*마|주지\s*마|말아\s*주|안\s*(?:할|해|하|바꿔|고쳐|수정|변경)|아니|아닙|말고|대신)/;
 const EXTRA_OTHER_FIELD = /(?:사유|이유|금액|비용|부가세|VAT)\s*(?::|=|은|는|을|를)/i;
 const EXTRA_NOT_FREE_TITLE = /^(?:추가금|추가\s*(?:금액|비용|요금)|금액|비용|가격|공사비|총액|견적|사유|이유|부가세|부가가치세|VAT|면세|제목|항목명|항목|작업명|이름)(?:\s|은|는|이|가|을|를|만|도|:|=|$)/i;
+// 금액을 지운 뒤 남는 과거 보고·정정의 조사나 서술어는 새 작업명이 아니에요.
+const EXTRA_AMOUNT_NARRATIVE = /^(?:(?:아까|앞서|방금|이전에|지난번에|좀\s*전에)\s*)?(?:이라고|라고|이라\s*했|라\s*했|이었|였|으로(?:\s|$)|로(?:\s|$)|입니다|이에요|이요|정확히는|제가\s*잘못|제가\s*계산)/;
 
 /** 제목 대상이 하나로 정해졌을 때만 해당 절에서 값을 추출해요. */
 function targetedExtraTitle(text: string): { targeted: boolean; value?: string } {
@@ -444,7 +459,10 @@ export function parseExtra(text: string, today: string): ExtraFill {
       !EXTRA_TITLE_UNCERTAIN.test(part)) {
       // 정정한 뒤 말은 항목 이름이 아니에요("곰팡이 방지 12만 원이 아니라 15만 원")
       const head = (manOf(part) ?? part).split(/아니라|아니고|말고|부가세|부가가치세|VAT|면세/i)[0];
-      const t = head.replace(AMOUNT_WORD, "").replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
+      const withoutAmount = head.replace(AMOUNT_WORD, "");
+      const t = withoutAmount.replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
+      if (head !== withoutAmount && EXTRA_AMOUNT_NARRATIVE.test(t)) continue;
+      if (/^(?:아|앗|아니|네|예|응|음|어|잠깐|알겠습니다|확인했습니다)[.!。]?$/.test(t)) continue;
       if (t && !/^\d/.test(t) && !EXTRA_TITLE_DENIED.test(t) && !EXTRA_TITLE_REFERENCE.test(t)) out.title = t.slice(0, 60);
     }
   }

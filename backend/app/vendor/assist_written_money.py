@@ -2,6 +2,8 @@
 
 import re
 
+from app.vendor.assist_normalize import scalar_clause_risk
+
 _DIGIT = dict(zip("일이삼사오육칠팔구", range(1, 10), strict=True))
 _SMALL = {"천": 1000, "백": 100, "십": 10}
 _MAJOR = {"억": 100_000_000, "만": 10_000}
@@ -24,7 +26,7 @@ _OTHER_WRITTEN = re.compile(r"[일이삼사오육칠팔구영공십백천만억�
 _SPLIT_NUMBER = re.compile(r"[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$")
 _RANGE_SEPARATORS = (*"~∼〜–—－−/.,·:-", "부터", "에서", "또는", "혹은", "아니면", "점")
 _END = re.compile(
-    r"^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|"
+    r"^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|이고|이며|"
     r"이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))"
 )
 _MONEY_TARGET = re.compile(
@@ -193,9 +195,11 @@ def written_money_tokens(text: str) -> list[tuple[int, int, int]] | None:
         mentions.append((match, body))
     if not mentions:
         return [] if _attached_or_mixed(text, include_range=True) else None
-    if len(mentions) != 1 or omitted_short or _UNCERTAIN.search(text):
+    if len(mentions) != 1 or omitted_short:
         return []
     match, body = mentions[0]
+    if scalar_clause_risk(text, "amount", [match.span()], _UNCERTAIN):
+        return []
     if not match["won"] or not _END.match(text[match.end() :]):
         return []
     if match.start() and text[match.start() - 1] in "+-−/":

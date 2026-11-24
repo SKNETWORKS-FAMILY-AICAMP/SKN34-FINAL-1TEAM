@@ -1,5 +1,6 @@
 // 기존 규칙 파서는 서버 응답과 같은 후보 모양으로 바꿔 미리보기에만 사용해요.
 import { parseDates, parseExtra, parsePeriod, parseQuote } from "./parse";
+import { requestIntent } from "./requestIntent";
 import {
   type AssistForm, type AssistResponse, type AssistValue, type FieldIntent,
   type RuleOptions, formKeys, keepField, validSetValue,
@@ -24,9 +25,11 @@ export function ruleFields(form: AssistForm, text: string, opts: RuleOptions): F
   } else {
     Object.assign(found, parseExtra(text, opts.today));
   }
+  const intent = requestIntent(form, text);
   return formKeys(form).map((field) => {
     const value = found[field];
-    return value === undefined ? keepField(field) : { field, action: "set", value, evidence: text };
+    return value === undefined || intent.blocked.has(field) || intent.serverOnly.has(field) || intent.cancelAll
+      ? keepField(field) : { field, action: "set", value, evidence: text };
   });
 }
 

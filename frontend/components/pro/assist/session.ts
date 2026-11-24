@@ -7,9 +7,31 @@ import {
 } from "./protocol";
 import { ruleFields, ruleResponse } from "./rules";
 import { assistInputIssues, amountToConfirm, historicalAmountCorrection, historicalAmountReport } from "./guard";
-import { readCrewReplacement } from "./parse";
+import { parseQuote, readCrew, readCrewReplacement, uncertainCompoundAmount } from "./parse";
+import { writtenMoney } from "./writtenMoney";
+import { requestIntent, type RequestIntent } from "./requestIntent";
 
 export type InputIssues = ReturnType<typeof assistInputIssues>;
+type FieldHoldDelta = NonNullable<InputIssues["fieldHolds"]>;
+type LiveState = { current: AssistCurrent; manualVersions?: Readonly<Record<string, number>> };
+
+const FIELD_HOLD = "말씀하신 값을 확인해 적용하거나 해당 칸을 직접 입력해 주세요.";
+
+function actionable(field: CandidateField): boolean {
+  return field.status === "valid" && (field.action === "set" || field.action === "clear") ||
+    field.status === "conflict" && field.alternatives.length > 0;
+}
+
+function checkedIntentFields(response: AssistResponse, intent: RequestIntent, localOnly: boolean): AssistResponse {
+  return { ...response, fields: response.fields.map((field) => {
+    if (!actionable(field)) return field;
+    const replacement = intent.replacements.has(field.field);
+    const unsafe = intent.cancelAll && !intent.reassigned.has(field.field) || intent.blocked.has(field.field) || intent.currentKeep.has(field.field) ||
+      localOnly && intent.serverOnly.has(field.field) ||
+      replacement && (localOnly || field.value_source !== "derived" || !field.correction);
+    return unsafe ? { ...field, status: "uncertain", action: "uncertain", value: null, alternatives: [] } : field;
+  }) };
+}
 
 function hasCrewCorrectionProof(raw: unknown, request: AssistRequest, old: number): boolean {
   if (!raw || typeof raw !== "object") return false;
@@ -144,6 +166,11 @@ export class AssistSession {
   private baselines: AssistCurrent | null = null;
   private validationOptions: RuleOptions | null = null;
   private disposed = false;
+  private issuesCallback?: (issues: InputIssues) => void;
+  private liveReader?: () => LiveState;
+  private manualBaselines: Readonly<Record<string, number>> = {};
+  private unresolved = new Set<string>();
+  private legacyIssues: InputIssues = {};
 
   constructor(
     form: AssistForm,
@@ -171,7 +198,52 @@ export class AssistSession {
     this.listener?.(value);
   }
 
-  send(text: string, current: AssistCurrent, options: RuleOptions, onInputIssues?: (issues: InputIssues) => void): boolean {
+  private emitHolds(delta: FieldHoldDelta, pending: boolean): void {
+    for (const [field, message] of Object.entries(delta)) {
+      if (message === null) this.unresolved.delete(field);
+      else if (typeof message === "string") this.unresolved.add(field);
+    }
+    this.issuesCallback?.({ ...this.legacyIssues, fieldHolds: delta, pending });
+  }
+
+  private matchesManual(field: string): boolean {
+    return (this.manualBaselines[field] ?? 0) === (this.liveReader?.().manualVersions?.[field] ?? 0);
+  }
+
+  private settleHolds(response: AssistResponse | null, request: AssistRequest, intent: RequestIntent, requested: Set<string>, priorHolds: Set<string>): void {
+    const delta: FieldHoldDelta = {};
+    const now = this.liveReader?.().current ?? request.current;
+    const norm = (s: string) => s.normalize("NFKC").replace(/\s+/g, "");
+    for (const field of formKeys(this.form)) {
+      if (!this.matchesManual(field) || !sameValue(now[field] ?? null, request.current[field] ?? null)) {
+        this.unresolved.delete(field);
+        continue;
+      }
+      const candidate = response?.fields.find((f) => f.field === field);
+      const verifiedKeep = candidate?.status === "valid" && candidate.action === "keep" &&
+        candidate.intent_kind === "retain_current" && candidate.value_source === "current" &&
+        !!candidate.evidence.trim() && norm(request.text).includes(norm(candidate.evidence)) &&
+        (intent.currentKeep.has(field) || intent.canceled.has(field) || intent.cancelAll ||
+          /그대로|유지|건드리지|손대지/.test(candidate.evidence));
+      const unchanged = candidate?.status === "valid" && candidate.action === "set" &&
+        sameValue(candidate.value, request.current[field] ?? null);
+      const parserOnly = candidate?.status === "valid" && candidate.action === "keep" &&
+        !candidate.evidence.trim() && requested.has(field) && !intent.requested.has(field) &&
+        !priorHolds.has(field) && !this.legacyIssues[field as "amount" | "crew" | "days"];
+      if (verifiedKeep || unchanged || parserOnly || intent.cancelAll && !intent.requested.size) {
+        if (this.unresolved.has(field)) delta[field] = null;
+      } else if (!requested.has(field) && !this.unresolved.has(field) && candidate &&
+        !this.validationOptions?.immutableFields?.includes(field) &&
+        (actionable(candidate) || candidate.status !== "valid" && !!candidate.evidence.trim())) {
+        // 규칙에 없던 새 서버 후보도 적용 전에는 옛 값으로 저장하지 않아요.
+        delta[field] = FIELD_HOLD;
+      }
+    }
+    this.emitHolds(delta, false);
+  }
+
+  send(text: string, current: AssistCurrent, options: RuleOptions, onInputIssues?: (issues: InputIssues) => void,
+    getLive?: () => LiveState): boolean {
     if (this.disposed || this.state.phase === "loading") return false;
     const utterance = text.trim();
     if (!utterance || utterance.length > 1000) {
@@ -186,13 +258,22 @@ export class AssistSession {
     const snapshot = copyCurrent(this.form, current);
     // 직전 후보 원문과 새 글을 함께 보낼 수 있는 길이 안에서만 문맥을 잇습니다.
     const keepPrior = !!before && priorContext.length + utterance.length + 1 <= 1000;
-    const previous = keepPrior ? freshPrevious(before, priorBaselines, snapshot) : null;
+    const versions = { ...getLive?.().manualVersions };
+    // 폼에서 이미 수동으로 해제한 보류를 다음 응답의 보류 판정에 끌고 오지 않아요.
+    for (const field of this.unresolved) {
+      if ((this.manualBaselines[field] ?? 0) !== (versions[field] ?? 0)) this.unresolved.delete(field);
+    }
+    const fresh = keepPrior ? freshPrevious(before, priorBaselines, snapshot) : null;
+    const freshFields = fresh?.fields.filter((field) =>
+      (this.manualBaselines[field.field] ?? 0) === (versions[field.field] ?? 0)) ?? [];
+    const previous = fresh && freshFields.length ? { ...fresh, fields: freshFields } : null;
     const context = previous ? priorContext + "\n" + utterance : utterance;
     const opts: RuleOptions = {
       ...options, holidays: [...(options.holidays ?? [])], vatModes: [...(options.vatModes ?? [])],
       immutableFields: [...(options.immutableFields ?? [])],
     };
     const id = requestId();
+    const intent = requestIntent(this.form, utterance);
     const reported = (this.form === "quote" || this.form === "extra") && historicalAmountReport(utterance);
     const historical = reported ? historicalAmountCorrection(utterance, opts.today, this.form) : undefined;
     const oldMatches = historical && previous?.fields.some((field) =>
@@ -209,11 +290,30 @@ export class AssistSession {
     // 확인되지 않은 금액으로 다른 칸만 저장되는 것을 요청을 보내는 순간부터 막아요.
     const hold = (reported || confirmedAmount !== undefined && confirmedAmount !== snapshot.amount) && !issues.amount
       ? { ...issues, amount: "금액 후보를 확인해 적용하거나 금액을 직접 입력해 주세요." } : issues;
-    onInputIssues?.(hold);
     const parsed = ruleFields(this.form, utterance, opts);
+    const requested = new Set(intent.requested);
+    for (const field of parsed) if (field.action !== "keep") requested.add(field.field);
+    for (const field of ["amount", "crew", "days"] as const) if (hold[field]) requested.add(field);
+    if (this.form === "period" && hold.period && !["start", "end", "excluded"].some(f => requested.has(f))) {
+      if (hold.periodScope === "excluded") requested.add("excluded");
+      else { requested.add("start"); requested.add("end"); }
+    }
+    if (intent.cancelAll) for (const field of this.unresolved) requested.add(field);
+    for (const field of opts.immutableFields ?? []) requested.delete(field);
+    for (const field of requested) if (!formKeys(this.form).includes(field)) requested.delete(field);
+    this.issuesCallback = onInputIssues;
+    this.liveReader = getLive;
+    this.manualBaselines = versions;
+    this.legacyIssues = hold;
+    const priorHolds = new Set(this.unresolved);
+    const initial: FieldHoldDelta = {};
+    for (const field of requested) initial[field] = hold[field as "amount" | "crew" | "days"] ?? FIELD_HOLD;
+    this.emitHolds(initial, true);
     const fallbackIssues = reported ? hold : issues;
-    const fallback = checkedNumericFields(ruleResponse(this.form, id, utterance, opts, parsed), fallbackIssues, confirmedAmount);
-    const preview = checkedNumericFields(mergeKeptFields(previous, fallback), fallbackIssues, confirmedAmount);
+    const fallback = checkedIntentFields(checkedNumericFields(
+      ruleResponse(this.form, id, utterance, opts, parsed), fallbackIssues, confirmedAmount), intent, true);
+    const preview = checkedIntentFields(checkedNumericFields(
+      mergeKeptFields(previous, fallback), fallbackIssues, confirmedAmount), intent, true);
     const token = ++this.sequence;
     this.controller?.abort();
     const abort = new AbortController();
@@ -242,11 +342,26 @@ export class AssistSession {
         if (this.disposed || abort.signal.aborted || token !== this.sequence) return;
         const verifiedCrew = confirmedCrew !== undefined && crewReplacement &&
           hasCrewCorrectionProof(raw, request, crewReplacement.old) ? confirmedCrew : undefined;
-        const responseIssues = reported && (!historical || !oldMatches || !serverVerifiedAmount(raw, request, historical))
-          ? hold : issues;
-        const response = checkedNumericFields(readResponse(raw, request, opts), responseIssues, confirmedAmount, verifiedCrew);
+        const responseIssues = { ...(reported && (!historical || !oldMatches || !serverVerifiedAmount(raw, request, historical))
+          ? hold : issues) };
+        // 읽지 못한 것과 원문에서 독립적으로 확인한 모순을 구분해요.
+        const written = writtenMoney(utterance);
+        const ordinary = (this.form === "quote" || this.form === "extra") ? parseQuote(utterance, opts.today).amount : undefined;
+        if (responseIssues.amount && !reported && !written.mentioned && !intent.blocked.has("amount") &&
+          !uncertainCompoundAmount(utterance) && ordinary === undefined && confirmedAmount === undefined &&
+          !/잘못\s*(?:말씀드렸|말했|적었|썼)|정확히는/.test(utterance)) delete responseIssues.amount;
+        const response = checkedIntentFields(checkedNumericFields(readResponse(raw, request, opts),
+          responseIssues, confirmedAmount, verifiedCrew), intent, false);
+        // 원문에서 단일 인원을 읽었는데 서버가 다른 수를 주면 적용하지 않아요.
+        const crew = this.form === "dates" && !crewReplacement ? readCrew(utterance).value : undefined;
+        if (crew !== undefined && intent.requested.has("crew")) {
+          response.fields = response.fields.map(f => f.field === "crew" && f.status === "valid" &&
+            f.action === "set" && f.value !== crew
+            ? { ...f, action: "uncertain", status: "invalid", value: null, alternatives: [] } : f);
+        }
         // 서버의 keep/보류가 이전 후보를 제외했다면 화면에서 다시 되살리지 않아요.
         this.baselines = baselinesFor(response, previous, priorBaselines, snapshot);
+        this.settleHolds(response, request, intent, requested, priorHolds);
         this.publish({
           phase: "ready", utterance, response,
           choices: choicesFor(response, previous, priorChoices),
@@ -257,6 +372,7 @@ export class AssistSession {
         if (error instanceof AssistApiError && error.status >= 400 && error.status < 500) {
           this.baselines = null;
           this.validationOptions = null;
+          this.settleHolds(null, request, intent, requested, priorHolds);
           this.publish({ phase: "denied", utterance, response: null, choices: {}, error: error.message, appliedFields: [] });
           return;
         }
@@ -265,6 +381,7 @@ export class AssistSession {
           error instanceof Error ? error.message : "해석 요청에 문제가 생겼어요.";
         this.contextText = utterance;
         this.baselines = copyCurrent(this.form, snapshot);
+        this.settleHolds(fallback, request, intent, requested, priorHolds);
         this.publish({
           phase: "ready", utterance,
           response: {
@@ -313,7 +430,7 @@ export class AssistSession {
     for (const field of this.state.response.fields) {
       const proposed = proposedAction(field, this.state.choices[field.field]);
       if (!proposed) continue;
-      if (!sameValue(this.baselines[field.field], now[field.field])) changedManually.push(field.field);
+      if (!sameValue(this.baselines[field.field], now[field.field]) || !this.matchesManual(field.field)) changedManually.push(field.field);
       else selected[field.field] = proposed.value;
     }
     if (changedManually.length) {
@@ -330,7 +447,14 @@ export class AssistSession {
       return false;
     }
     // 먼저 완료 상태로 바꿔 두 번 누르거나 늦게 온 응답이 다시 적용되지 않아요.
+    const resolved: FieldHoldDelta = {};
+    for (const field of this.state.response.fields) {
+      // 명시적 적용과 유효 후보의 의식적인 제외만 해결된 것으로 처리해요.
+      if (this.matchesManual(field.field) && sameValue(this.baselines[field.field], now[field.field]) &&
+          (field.field in selected || field.status === "valid" && actionable(field))) resolved[field.field] = null;
+    }
     this.publish({ ...this.state, phase: "applied", error: null, appliedFields: names });
+    this.emitHolds(resolved, false);
     onApply(selected);
     return true;
   }
@@ -342,6 +466,7 @@ export class AssistSession {
     this.contextText = "";
     this.baselines = null;
     this.validationOptions = null;
+    this.emitHolds({}, false);
     this.publish({ phase: "idle", utterance: "", response: null, choices: {}, error: null, appliedFields: [] });
   }
 
@@ -349,5 +474,7 @@ export class AssistSession {
     this.cancel();
     this.disposed = true;
     this.listener = null;
+    this.issuesCallback = undefined;
+    this.liveReader = undefined;
   }
 }

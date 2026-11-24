@@ -124,15 +124,18 @@ def test_hallucinated_amount_and_mismatched_evidence_never_valid():
     assert wrong["amount"].status == "invalid"
 
 
-def test_rule_llm_disagreement_returns_validated_alternatives_only():
+def test_rule_llm_disagreement_does_not_offer_explicitly_rejected_amount():
     req = request("quote", "455만원 아니고 555만원으로 수정")
     rule, _ = review_fields([field("amount", 4_550_000, "455만원")], "rule", req, ctx())
     llm, _ = review_fields([field("amount", 5_550_000, "555만원")], "llm", req, ctx())
     merged = {x.field: x for x in merge_candidates(req, ctx(), rule, llm, None)}
-    assert merged["amount"].action == "uncertain"
-    assert merged["amount"].value is None
-    assert merged["amount"].status == "conflict"
-    assert {x.value for x in merged["amount"].alternatives} == {4_550_000, 5_550_000}
+    # 방향이 입증된 정정에서 폐기한 옛 금액은 선택 가능한 대안이 아니다.
+    assert rule["amount"].status != "valid"
+    assert llm["amount"].status == "valid"
+    assert merged["amount"].action == "set"
+    assert merged["amount"].value == 5_550_000
+    assert merged["amount"].status == "valid"
+    assert not merged["amount"].alternatives
 
 
 def test_previous_candidates_are_revalidated_and_can_be_corrected():

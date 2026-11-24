@@ -17,6 +17,7 @@ import type { VendorQuoteBoard, VendorVisitV3 } from "@/lib/api/vendor";
 import { errorText, type Schemas } from "@/lib/backend/client";
 import { dateSeoul, dateShort, dueText, halfDayText, won } from "@/lib/format";
 import { shouldAutosaveQuote } from "../assist/quoteAutosave";
+import { formWriteBlock, PENDING_FORM_MESSAGE, useFormHolds } from "../assist/formHolds";
 import { AssistBox } from "../assist/AssistBox";
 import { enc, newKey, send, upload } from "../send";
 import { VAT_MODE_LABEL } from "../text";
@@ -76,10 +77,9 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
     warranty_months: incl.includes("warranty") ? Number(warranty) : null,
   });
   // 금액 · 부가세가 바뀌면 잠시 뒤 임시 저장 → 계산 엔진 값으로 '믿집 계산'을 바꿔요
-  // hold: 도우미가 말한 금액을 넣지 못한 까닭(한도 초과 · 못 읽음). 칸에는 옛 금액이 남아 있어서,
-  // 업체가 금액 칸을 직접 고치거나 도우미가 맞는 금액을 넣기 전까지 저장 · 보내기를 모두 막아요(다른 칸을 고치거나 보내기에 실패해도 풀리지 않아요)
-  const [hold, setHoldState] = useState<string | null>(null);
-  const holdRef = useRef<string | null>(null);
+  // 요청 중이거나 아직 확인하지 못한 칸이 있으면 옛 값으로 저장·발송하지 않아요.
+  const holds = useFormHolds("quote");
+  const { fields: fieldHolds, pending } = holds.state;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveVersion = useRef(0);
   const previousDraft = useRef({ amount, vat });
@@ -92,18 +92,13 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = null;
   }
-  function setHold(message: string | null) {
-    holdRef.current = message;
-    if (message) cancelAutosave();
-    setHoldState(message);
-  }
   async function save(autoVersion?: number): Promise<boolean> {
     // 이미 시작한 PUT이 뒤늦게 새 임시 저장을 덮지 않게 순서대로 보내요.
     while (writing.current) {
       try { await writing.current; } catch { /* 새 입력은 저장할 수 있어요. */ }
     }
     const draft = latestDraft.current;
-    if (holdRef.current || Number(draft.amount) > AMOUNT_MAX) return false;
+    if (formWriteBlock(holds.current.current) || Number(draft.amount) > AMOUNT_MAX) return false;
     if (autoVersion !== undefined && (autoVersion !== autosaveVersion.current ||
       !shouldAutosaveQuote(previousDraft.current, draft))) return false;
     const task = send<VendorQuoteBoard>("PUT", `/vendor/visits/${enc(v.id)}/quote`, draft.body);
@@ -119,7 +114,7 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
       writing.current = null;
     }
   }
-  const over = Number(amount) > AMOUNT_MAX || hold !== null;
+  const over = Number(amount) > AMOUNT_MAX || formWriteBlock(holds.state) !== null;
   useEffect(() => {
     if (over || busy || !shouldAutosaveQuote(previousDraft.current, { amount, vat })) return;
     const version = autosaveVersion.current;
@@ -128,7 +123,7 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
       save(version).catch(() => {});
     }, 800);
     return cancelAutosave;
-  }, [amount, vat, over, busy, savedRevision]);
+  }, [amount, vat, over, busy, savedRevision, holds.state]);
   const calcFresh = calc.amount != null && String(calc.amount) === amount && calc.vat === vat && calc.total != null;
 
   async function pick(list: File[]) {
@@ -155,8 +150,7 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
   function check(): boolean {
     const e: Record<string, string> = {};
     if (!files.length) e.files = "견적서 파일을 올려 주세요.";
-    if (hold) e.amount = hold;
-    else if (!amount || Number(amount) <= 0) e.amount = "견적 금액을 원 단위로 넣어 주세요.";
+    if (!amount || Number(amount) <= 0) e.amount = "견적 금액을 원 단위로 넣어 주세요.";
     else if (Number(amount) > AMOUNT_MAX) e.amount = OVER;
     if (!vat) e.vat = "부가세를 어떻게 적었는지 골라 주세요.";
     if (!days || Number(days) < 1 || Number(days) > board.days_max) e.days = `공사 기간을 1~${board.days_max}일로 넣어 주세요.`;
@@ -170,19 +164,19 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
   }
 
   async function onSave() {
-    if (busy) return;
-    if (over) { setErr((x) => ({ ...x, amount: hold ?? OVER })); amountRef.current?.focus(); return; }
+    if (busy || formWriteBlock(holds.current.current)) return;
+    if (Number(amount) > AMOUNT_MAX) { setErr((x) => ({ ...x, amount: OVER })); amountRef.current?.focus(); return; }
     cancelAutosave();
     setBusy("save");
     try { if (await save()) toast.show("임시 저장했어요."); } catch (e) { setErr((x) => ({ ...x, form: errorText(e) })); } finally { setBusy(null); }
   }
   async function onSend() {
-    if (busy || uploading || !check()) return;
+    if (busy || uploading || formWriteBlock(holds.current.current) || !check()) return;
     cancelAutosave();
     const submitted = JSON.stringify(latestDraft.current.body);
     setBusy("send");
     try {
-      if (!(await save()) || holdRef.current) { setBusy(null); return; }
+      if (!(await save()) || formWriteBlock(holds.current.current)) { setBusy(null); return; }
       if (JSON.stringify(latestDraft.current.body) !== submitted) {
         setErr((x) => ({ ...x, form: "입력 내용이 바뀌었어요. 확인한 뒤 다시 보내 주세요." }));
         setBusy(null);
@@ -227,30 +221,35 @@ export function QuoteForm({ v, board, now }: { v: VendorVisitV3; board: VendorQu
             today, vatModes: board.vat_modes, daysMax: board.days_max,
             immutableFields: fixedVat ? ["vat"] : [],
           }}
-          onInputIssues={(issues) => { if (issues.amount) setHold(issues.amount); }}
-          onApply={(changes) => {
-            if ("amount" in changes) { setAmount(typeof changes.amount === "number" ? String(changes.amount) : ""); setHold(null); }
+          readManualVersions={() => holds.manualVersions.current}
+          onInputIssues={(issues) => {
+            if (formWriteBlock(holds.receive(issues))) cancelAutosave();
+          }}
+          onApply={(changes, response) => {
+            if ("amount" in changes) setAmount(typeof changes.amount === "number" ? String(changes.amount) : "");
             if ("vat" in changes && !fixedVat) setVat(typeof changes.vat === "string" ? changes.vat as Vat : null);
             if ("days" in changes) setDays(typeof changes.days === "number" ? String(changes.days) : "");
             if ("valid" in changes) setValid(typeof changes.valid === "string" ? changes.valid : "");
+            holds.applied(changes, response);
             setErr({});
           }} />
         <Group>
-          <Field ref={amountRef} label={simplified ? "받을 금액" : "견적 금액"} unit="원" num inputMode="numeric" value={money(amount)} error={hold ?? err.amount} onChange={(e) => { const n = amountDigits(e.target.value); setAmount(n); setHold(null); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
+          {pending ? <p className={s.err} role="status">{PENDING_FORM_MESSAGE}</p> : null}
+          <Field ref={amountRef} label={simplified ? "받을 금액" : "견적 금액"} unit="원" num inputMode="numeric" value={money(amount)} error={fieldHolds.amount ?? err.amount} onChange={(e) => { const n = amountDigits(e.target.value); setAmount(n); holds.manual(["amount"]); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
           {fixedVat ? (
             <Small>{simplified ? "간이과세라 부가세를 따로 붙이지 않아요. 적은 금액이 고객이 보는 금액이에요." : `부가세 ${VAT_MODE_LABEL[fixedVat]}`}</Small>
           ) : (
             <>
-              <Segmented legend="부가세" options={(board.vat_modes as Vat[]).map((m) => ({ value: m, label: VAT_MODE_LABEL[m] ?? m }))} value={vat} onChange={(x) => { setVat(x as Vat); setErr((e) => ({ ...e, vat: undefined })); }} />
-              {err.vat ? <p className={s.err} role="alert"><Icon name="error" size={16} />{err.vat}</p> : null}
+              <Segmented legend="부가세" options={(board.vat_modes as Vat[]).map((m) => ({ value: m, label: VAT_MODE_LABEL[m] ?? m }))} value={vat} onChange={(x) => { setVat(x as Vat); holds.manual(["vat"]); setErr((e) => ({ ...e, vat: undefined })); }} />
             </>
           )}
+          {(fieldHolds.vat ?? err.vat) ? <p className={s.err} role="alert"><Icon name="error" size={16} />{fieldHolds.vat ?? err.vat}</p> : null}
           {calcFresh ? (
             <CalcBox tone="form" lines={[{ terms: [{ n: calc.supply ?? 0, unit: "원", label: "공급가" }, "+", { n: calc.vatWon ?? 0, unit: "원", label: "부가세" }], result: { n: calc.total ?? 0, unit: "원" } }]} />
           ) : amount && vat ? <Small>잠시 뒤 임시 저장하면 믿집 계산(공급가 · 부가세 · 합계)이 보여요.</Small> : null}
           <div className={s.two}>
-            <Field ref={daysRef} label="공사 기간" unit="일" num inputMode="numeric" value={days} error={err.days} onChange={(e) => { setDays(digits(e.target.value).slice(0, 3)); setErr((x) => ({ ...x, days: undefined })); }} />
-            <Field ref={validRef} label="유효기간" type="date" min={today} value={valid} error={err.valid} onChange={(e) => { setValid(e.target.value); setErr((x) => ({ ...x, valid: undefined })); }} />
+            <Field ref={daysRef} label="공사 기간" unit="일" num inputMode="numeric" value={days} error={fieldHolds.days ?? err.days} onChange={(e) => { setDays(digits(e.target.value).slice(0, 3)); holds.manual(["days"]); setErr((x) => ({ ...x, days: undefined })); }} />
+            <Field ref={validRef} label="유효기간" type="date" min={today} value={valid} error={fieldHolds.valid ?? err.valid} onChange={(e) => { setValid(e.target.value); holds.manual(["valid"]); setErr((x) => ({ ...x, valid: undefined })); }} />
           </div>
           {/* CF-40: '칩' 대신 쉬운 말 */}
           <ChoiceChips

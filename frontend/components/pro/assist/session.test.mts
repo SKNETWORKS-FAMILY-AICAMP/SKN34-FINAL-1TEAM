@@ -5,6 +5,7 @@ import { AssistSession } from "./session.ts";
 import { AssistApiError, interpretAssist } from "./api.ts";
 import { parseDates, parseExtra } from "./parse.ts";
 import { ruleFields } from "./rules.ts";
+import { emptyFormHolds, mergeFormHolds, manuallyResolveHolds, formWriteBlock } from "./formHolds.ts";
 import { shouldAutosaveQuote } from "./quoteAutosave.ts";
 import { periodIssueScope, resolvePeriodHolds, type PeriodHolds } from "./periodHold.ts";
 import {
@@ -1375,4 +1376,50 @@ test("잘린 한글 금액 및 혼합 정정은 서버가 숫자를 보내도 �
     session.select("amount", true);
     assert.equal(session.apply({ ...quote, amount: 3_000_000 }, () => assert.fail(text)), false);
   }
+});
+
+test("추가금 정정의 보고 문장이 제목 보류를 만들지 않아요", async () => {
+  const api = pending();
+  const session = new AssistSession("extra", "resource-id", api.requester);
+  const current = { amount: 1_000_000, title: "보강", reason: "현장 요청", vat: "included" };
+  let holds = emptyFormHolds();
+  const issues = (value: Parameters<typeof mergeFormHolds>[2]) => { holds = mergeFormHolds("extra", holds, value); };
+  session.send("금액은 287만 원으로 잡아 주세요.", current, quoteOptions, issues);
+  api.jobs[0].resolve(response(api.jobs[0].request, { amount: { action: "set", value: 2_870_000 } }));
+  await flush();
+  session.send("아까 287만 원이라고 했는데 제가 계산을 잘못했네요. 293만 4천 원으로 정정 부탁해요.", current, quoteOptions, issues);
+  const job = api.jobs[1];
+  assert.equal(job.request.rule_fields.find(f => f.field === "title")?.action, "keep");
+  assert.equal(holds.fields.title, undefined);
+  const raw = response(job.request, { amount: {
+    action: "set", value: 2_934_000, origin_request_id: job.request.request_id,
+    correction: { kind: "replace", rejected_value: 2_870_000, rejected_evidence: "287만 원", accepted_evidence: "293만 4천 원" },
+  } });
+  job.resolve({ ...raw, fields: raw.fields.filter(f => f.field === "amount") });
+  await flush();
+  assert.equal(session.apply(current, changes => assert.deepEqual(changes, { amount: 2_934_000 })), true);
+  assert.equal(formWriteBlock(holds), null);
+});
+
+test("수동으로 해결한 보류는 다음 서버의 새 후보를 보류하는 데 방해되지 않아요", async () => {
+  const api = pending();
+  const session = new AssistSession("extra", "resource-id", api.requester);
+  let current = { amount: 1_000_000, title: "보강", reason: "현장 요청", vat: "included" };
+  const manualVersions: Record<string, number> = {};
+  let holds = emptyFormHolds();
+  const issues = (value: Parameters<typeof mergeFormHolds>[2]) => { holds = mergeFormHolds("extra", holds, value); };
+  const live = () => ({ current, manualVersions });
+  session.send("금액 30만 원", current, quoteOptions, issues, live);
+  api.jobs[0].resolve(response(api.jobs[0].request, { amount: { action: "set", value: 300_000 } }));
+  await flush();
+  assert.ok(holds.fields.amount);
+  current = { ...current, amount: 400_000 };
+  manualVersions.amount = 1;
+  holds = manuallyResolveHolds(holds, ["amount"]);
+  assert.equal(formWriteBlock(holds), null);
+  session.send("추가 작업 조건을 다시 읽어 주세요.", current, quoteOptions, issues, live);
+  const job = api.jobs[1];
+  job.resolve(response(job.request, { amount: { action: "set", value: 500_000 } }));
+  await flush();
+  assert.ok(holds.fields.amount);
 });

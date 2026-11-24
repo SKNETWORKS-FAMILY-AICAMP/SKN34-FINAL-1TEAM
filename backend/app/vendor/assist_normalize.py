@@ -52,7 +52,7 @@ _CREW_WORDS = "|".join(_NATIVE_CREW)
 _CREW_UNIT = r"(?:명(?!\d)|인(?=$|[\s.,!?;~/∼〜–—－-]|으로|[은을도과]|부터|에서|입니다|이에요))"
 _CREW = re.compile(rf"(?<!\d)(?<!\d[,.])(?:(\d{{1,2}})|(?<![가-힣])({_CREW_WORDS}))\s*{_CREW_UNIT}")
 _CREW_COUNT = rf"(?:(?<!\d)\d+|(?<![가-힣])(?:{_CREW_WORDS}))"
-_CREW_RANGE_LINK = r"(?:[~\-–—－∼〜/]|부터|에서|또는|혹은)"
+_CREW_RANGE_LINK = r"(?:[~\-–—－∼〜/]|부터|에서|또는|혹은|아니면|이나|나)"
 _CREW_RANGE = re.compile(
     rf"{_CREW_COUNT}\s*(?:{_CREW_UNIT}\s*)?{_CREW_RANGE_LINK}\s*{_CREW_COUNT}\s*{_CREW_UNIT}"
     rf"|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*{_CREW_UNIT}"
@@ -71,6 +71,55 @@ _CREW_CORRECTION_UNCERTAIN = re.compile(
     r"모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s*걸로|하지\s*마|하지\s*않"
 )
 
+# 숫자 안의 소수점·천 단위 쉼표는 문장 경계가 아니다.
+_SCALAR_CLAUSE_BREAK = re.compile(
+    r"(?<!\d)[,.]|[,.](?!\d)|[;!?？。\n]|(?<=[고며])\s+"
+    r"(?=(?:부가세|세금|기간|일수|일정|작업일|날짜|유효기간|항목|제목|사유|이유|"
+    r"금액|견적|인원|작업자)(?:은|는|이|가|을|를)\s*)"
+)
+_SCALAR_AMOUNT_TARGET = re.compile(r"금액|견적|비용|가격|공사비|총액|합계|추가금|추가비")
+_SCALAR_CREW_TARGET = re.compile(
+    r"인원|작업자|인부|사람|(?:\d|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*명"
+)
+_SCALAR_OTHER_TARGET = re.compile(
+    r"부가세|세금|면세|기간|일수|일정|작업일|날짜|유효기간|종료일|시작일|항목|제목|사유|이유|"
+    r"\d{1,2}\s*(?:월|/)\s*\d{1,2}|\d+\s*일"
+)
+_SCALAR_CONDITION = re.compile(r"가능하면|(?:라면|다면|으면|이면|하면)|경우|일\s*때")
+
+
+def scalar_clause_risk(
+    text: str,
+    field: str,
+    spans: list[tuple[int, int]],
+    risk: re.Pattern[str],
+    *,
+    masked: str | None = None,
+) -> bool:
+    """같은 숫자 필드와 대상 없는 보류·조건만 검사하고 독립 필드는 구분한다."""
+    own, other = (
+        (_SCALAR_AMOUNT_TARGET, _SCALAR_CREW_TARGET)
+        if field == "amount"
+        else (_SCALAR_CREW_TARGET, _SCALAR_AMOUNT_TARGET)
+    )
+    checked = text if masked is None else masked
+    start = 0
+    boundaries = [m.end() for m in _SCALAR_CLAUSE_BREAK.finditer(text)] + [len(text)]
+    first = min((a for a, _ in spans), default=len(text))
+    for end in boundaries:
+        clause = text[start:end]
+        candidate = checked[start:end]
+        has_value = any(a < end and b > start for a, b in spans)
+        if risk.search(candidate) and (
+            has_value
+            or own.search(clause)
+            or not (other.search(clause) or _SCALAR_OTHER_TARGET.search(clause))
+            or (end <= first and _SCALAR_CONDITION.search(candidate))
+        ):
+            return True
+        start = end
+    return False
+
 
 @dataclass(frozen=True)
 class CrewReplacement:
@@ -82,8 +131,6 @@ class CrewReplacement:
 
 def crew_replacement(text: str) -> CrewReplacement | None:
     """명시적인 인원 정정에서만 '에서'를 범위 대신 교체 연결로 읽는다."""
-    if _CREW_CORRECTION_UNCERTAIN.search(text):
-        return None
     clauses = _CREW_CLAUSE_BREAK.split(text)
     matches = [(clause, _CREW_REPLACEMENT.fullmatch(clause.strip())) for clause in clauses]
     matches = [(clause, match) for clause, match in matches if match is not None]
@@ -94,6 +141,10 @@ def crew_replacement(text: str) -> CrewReplacement | None:
     if text.count(clause) != 1:
         return None
     offset = text.index(clause) + len(clause) - len(clause.lstrip())
+    if scalar_clause_risk(
+        text, "crew", [(offset, offset + len(clause.strip()))], _CREW_CORRECTION_UNCERTAIN
+    ):
+        return None
     other = text[: text.index(clause)] + " " + text[text.index(clause) + len(clause) :]
     if _CREW.search(other) or _CREW_RANGE.search(other):
         return None

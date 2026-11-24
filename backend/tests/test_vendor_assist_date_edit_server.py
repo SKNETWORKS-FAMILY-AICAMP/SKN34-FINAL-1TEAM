@@ -247,6 +247,55 @@ def test_missing_pending_list_with_prior_reference_does_not_use_current(monkeypa
     assert trace["date_edit_reviewed"] == []
 
 
+@pytest.mark.parametrize("use_model", [False, True])
+@pytest.mark.parametrize(
+    "text,values",
+    [
+        ("아까 말씀드린 작업일 중 9일만 11일로 옮겨 주세요.", ["2026-12-09", "2026-12-11"]),
+        ("작업일 9일 대신 16일로 변경해 주세요.", ["2026-12-09", "2026-12-16"]),
+        ("작업일 9일 대신 11일로 변경할까요?", ["2026-12-09", "2026-12-11"]),
+    ],
+)
+def test_failed_replacement_cannot_be_approved_as_plain_list(monkeypatch, use_model, text, values):
+    current = {"days": ["2026-12-09", "2026-12-16"], "crew": 2}
+    candidate = FieldIntent(field="days", action="set", value=values, evidence=text)
+    data = _request("dates", text, current).model_copy(update={"rule_fields": [candidate]})
+    context = _context("dates").model_copy(update={"required_days": 2})
+    if use_model:
+        fields, _ = _run(monkeypatch, data, [candidate], context=context)
+    else:
+        result = asyncio.run(interpret(data, context, use_model=False))
+        fields = {item.field: item for item in result.fields}
+    assert fields["days"].action == "uncertain"
+    assert fields["days"].status != "valid"
+    assert not fields["days"].alternatives
+
+
+def test_rejected_exclusions_revalidate_remaining_period_boundary(monkeypatch):
+    current = {"start": "2026-12-02", "end": "2026-12-24", "excluded": ["2026-12-15"]}
+    text = "종료일은 12월 10일로 바꾸고, 제외일은 12월 10일로 변경해 주세요."
+    candidates = [
+        FieldIntent(
+            field="end",
+            action="set",
+            value="2026-12-10",
+            evidence="종료일은 12월 10일로 바꾸고",
+            intent_kind="explicit_change",
+        ),
+        FieldIntent(
+            field="excluded",
+            action="set",
+            value=["2026-12-10"],
+            evidence="제외일은 12월 10일로 변경해 주세요",
+            intent_kind="explicit_change",
+        ),
+    ]
+    fields, _ = _run(monkeypatch, _request("period", text, current), candidates)
+    for field in ("end", "excluded"):
+        assert fields[field].action == "uncertain"
+        assert fields[field].status != "valid"
+
+
 @pytest.mark.parametrize("candidate_source", ["llm", "rule"])
 def test_singleton_candidate_cannot_drop_other_exclusions(monkeypatch, candidate_source):
     current = {

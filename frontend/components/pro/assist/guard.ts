@@ -1,7 +1,8 @@
 import { parseDates, parsePeriod, parseQuote, readCrew, recognizedCompoundAmount, SAID_AMOUNT, uncertainCompoundAmount } from "./parse";
-import type { AssistForm, RuleOptions } from "./protocol";
+import { validSetValue, type AssistForm, type RuleOptions } from "./protocol";
 import { periodIssueScope, type PeriodIssueScope } from "./periodHold";
 import { writtenMoney } from "./writtenMoney";
+import { requestIntent } from "./requestIntent";
 
 // 문장 사이의 옛 금액 오류 인정과 새 금액 확정을 함께 읽어요. 서버의 정정 검증은 별도로 거쳐요.
 const REPORTED_AMOUNT_CLAUSE = /(?:이라고|라고|이라|라)\s*(?:제가\s*)?(?:(?:잘못|틀리게)\s*)?(?:말씀드렸|말했|전달했|적었|입력했|썼)[^.!?？。]*[.!?？。]/;
@@ -96,16 +97,21 @@ export function amountToConfirm(text: string, today: string, form: AssistForm = 
   return parseQuote(change[1], today).amount;
 }
 
-type Issues = Partial<Record<"amount" | "crew" | "days" | "period", string>> & { periodScope?: PeriodIssueScope };
+type Issues = Partial<Record<"amount" | "crew" | "days" | "period", string>> & {
+  periodScope?: PeriodIssueScope;
+  fieldHolds?: Partial<Record<string, string | null>>;
+  pending?: boolean;
+};
 const DATE_WORD = /\d\s*(?:일|월|\/)|\d{4}[-.]\d{1,2}[-.]\d{1,2}|오늘|내일|모레|이번\s*주|다음\s*주|요일/;
 
 export function assistInputIssues(form: AssistForm, text: string, opts: RuleOptions, confirmedAmount?: number): Issues {
   const issues: Issues = {};
+  const intent = requestIntent(form, text);
   if (form === "quote" || form === "extra") {
     const written = writtenMoney(text);
     const amount = confirmedAmount ?? parseQuote(text, opts.today).amount;
     if (amount !== undefined && amount > 1_000_000_000) issues.amount = "10억 원까지 넣을 수 있어요.";
-    else if ((written.mentioned && (written.amount === undefined || written.amount !== confirmedAmount)) ||
+    else if (intent.blocked.has("amount") || (written.mentioned && (written.amount === undefined || written.amount !== confirmedAmount)) ||
       uncertainCompoundAmount(text) ||
       (historicalAmountReport(text) && confirmedAmount === undefined) ||
       (form === "quote" && reportedAmountError(text) && confirmedAmount === undefined) ||
@@ -116,16 +122,18 @@ export function assistInputIssues(form: AssistForm, text: string, opts: RuleOpti
   if (form === "dates") {
     const parsed = parseDates(text, opts.today, opts.baseMonth, opts.holidays, opts.noWeekend);
     const crew = readCrew(text);
-    if (crew.mentioned && (!crew.value || crew.value > (opts.crewMax ?? 6))) {
+    if (intent.blocked.has("crew") || crew.mentioned && (!crew.value || crew.value > (opts.crewMax ?? 6))) {
       issues.crew = "말씀하신 인원을 확정할 수 없어요. 보낼 인원을 다시 골라 주세요.";
     }
-    if (DATE_WORD.test(crew.withoutCrew) && !parsed?.days.some((day) => day > opts.today)) {
+    if (DATE_WORD.test(crew.withoutCrew) && (!parsed?.days.length || !validSetValue("dates", "days", parsed.days, opts) ||
+      intent.blocked.has("days") || intent.replacements.has("days"))) {
       issues.days = "말씀하신 날짜를 넣지 못했어요. 달력에서 공사할 날을 다시 골라 주세요.";
     }
   }
   if (form === "period" && DATE_WORD.test(text)) {
     const parsed = parsePeriod(text, opts.today, opts.baseMonth);
-    if (!parsed || parsed.start < opts.today) {
+    if (!parsed || parsed.start <= opts.today || intent.blocked.has("start") || intent.blocked.has("end") ||
+        intent.blocked.has("excluded") || intent.replacements.has("excluded")) {
       issues.period = "말씀하신 기간을 넣지 못했어요. 달력에서 기간을 다시 눌러 주세요.";
       issues.periodScope = periodIssueScope(text);
     }

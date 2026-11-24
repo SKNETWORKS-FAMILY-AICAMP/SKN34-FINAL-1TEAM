@@ -23,6 +23,7 @@ import { visitTitle } from "../visit/facts";
 import { daysText } from "./days";
 import { PhotoPick, type PickedPhoto } from "./PhotoPick";
 import { AssistBox } from "../assist/AssistBox";
+import { formWriteBlock, PENDING_FORM_MESSAGE, useFormHolds } from "../assist/formHolds";
 import s from "./jobs.module.css";
 
 type Vat = "included" | "excluded" | "exempt";
@@ -44,21 +45,19 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<Record<string, string | undefined>>({});
   const [busy, setBusy] = useState(false);
-  // hold: 도우미가 말한 금액을 넣지 못한 까닭(한도 초과 · 못 읽음). 칸에는 옛 금액이 남아 있어서,
-  // 업체가 금액 칸을 직접 고치거나 도우미가 맞는 금액을 넣기 전까지 보내기를 막아요
-  const [hold, setHold] = useState<string | null>(null);
+  const holds = useFormHolds("extra");
+  const { fields: fieldHolds, pending } = holds.state;
   const [key] = useState(newKey);
   const refs = { title: useRef<HTMLInputElement>(null), reason: useRef<HTMLInputElement>(null), amount: useRef<HTMLInputElement>(null) };
   const back = `/vendor/jobs/${enc(job.deal_id)}`;
   const preview = usePreview(job.deal_id, amount, vat);
 
   async function go() {
-    if (busy || uploading) return;
+    if (busy || uploading || formWriteBlock(holds.current.current)) return;
     const e: Record<string, string> = {};
     if (!title.trim()) e.title = "무엇에 드는 돈인지 적어 주세요. 예: 곰팡이 방지 처리";
     if (!reason.trim()) e.reason = "왜 더 드는지 한 줄로 적어 주세요.";
-    if (hold) e.amount = hold;
-    else if (!amount || Number(amount) <= 0) e.amount = "금액을 원 단위로 넣어 주세요.";
+    if (!amount || Number(amount) <= 0) e.amount = "금액을 원 단위로 넣어 주세요.";
     else if (Number(amount) > AMOUNT_MAX) e.amount = OVER;
     if (!vat) e.vat = "부가세를 어떻게 적었는지 골라 주세요.";
     setErr(e);
@@ -92,28 +91,31 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
             vatModes: fixed ? [fixed] : ["included", "excluded", "exempt"],
             immutableFields: fixed ? ["vat"] : [],
           }}
-          onInputIssues={(issues) => { if (issues.amount) setHold(issues.amount); }}
-          onApply={(changes) => {
+          readManualVersions={() => holds.manualVersions.current}
+          onInputIssues={holds.receive}
+          onApply={(changes, response) => {
             if ("title" in changes) setTitle(typeof changes.title === "string" ? changes.title : "");
             if ("reason" in changes) setReason(typeof changes.reason === "string" ? changes.reason : "");
-            if ("amount" in changes) { setAmount(typeof changes.amount === "number" ? String(changes.amount) : ""); setHold(null); }
+            if ("amount" in changes) setAmount(typeof changes.amount === "number" ? String(changes.amount) : "");
             if ("vat" in changes && !fixed) setVat(typeof changes.vat === "string" ? changes.vat as Vat : null);
+            holds.applied(changes, response);
             setErr({});
           }} />
         <Group>
           {/* CF-65: 칸 이름 '무엇' → '항목' */}
-          <Field ref={refs.title} label="항목" maxLength={60} value={title} error={err.title} onChange={(e) => { setTitle(e.target.value); setErr((x) => ({ ...x, title: undefined })); }} />
-          <Field ref={refs.reason} label="이유" maxLength={200} value={reason} error={err.reason} onChange={(e) => { setReason(e.target.value); setErr((x) => ({ ...x, reason: undefined })); }} />
-          <Field ref={refs.amount} label={taxKind === "simplified" ? "받을 금액" : "금액"} unit="원" num inputMode="numeric" value={amount ? Number(amount).toLocaleString("ko-KR") : ""} error={hold ?? err.amount} onChange={(e) => { const n = digits(e.target.value); setAmount(n); setHold(null); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
+          {pending ? <p className={s.err} role="status">{PENDING_FORM_MESSAGE}</p> : null}
+          <Field ref={refs.title} label="항목" maxLength={60} value={title} error={fieldHolds.title ?? err.title} onChange={(e) => { setTitle(e.target.value); holds.manual(["title"]); setErr((x) => ({ ...x, title: undefined })); }} />
+          <Field ref={refs.reason} label="이유" maxLength={200} value={reason} error={fieldHolds.reason ?? err.reason} onChange={(e) => { setReason(e.target.value); holds.manual(["reason"]); setErr((x) => ({ ...x, reason: undefined })); }} />
+          <Field ref={refs.amount} label={taxKind === "simplified" ? "받을 금액" : "금액"} unit="원" num inputMode="numeric" value={amount ? Number(amount).toLocaleString("ko-KR") : ""} error={fieldHolds.amount ?? err.amount} onChange={(e) => { const n = digits(e.target.value); setAmount(n); holds.manual(["amount"]); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
           {fixed ? (
             <Small>{fixed === "exempt" ? "면세 업체라 부가세가 없어요." : "간이과세라 부가세를 따로 붙이지 않아요. 적은 금액이 고객이 보는 금액이에요."}</Small>
           ) : (
             <>
               {/* CF-64: 칸 이름 '부가세' + 포함 · 빼고 · 면세 */}
-              <Segmented legend="부가세" options={(["included", "excluded", "exempt"] as Vat[]).map((m) => ({ value: m, label: VAT_MODE_LABEL[m] }))} value={vat} onChange={(x) => { setVat(x as Vat); setErr((e) => ({ ...e, vat: undefined })); }} />
-              {err.vat ? <p className={s.err} role="alert"><Icon name="error" size={16} />{err.vat}</p> : null}
+              <Segmented legend="부가세" options={(["included", "excluded", "exempt"] as Vat[]).map((m) => ({ value: m, label: VAT_MODE_LABEL[m] }))} value={vat} onChange={(x) => { setVat(x as Vat); holds.manual(["vat"]); setErr((e) => ({ ...e, vat: undefined })); }} />
             </>
           )}
+          {(fieldHolds.vat ?? err.vat) ? <p className={s.err} role="alert"><Icon name="error" size={16} />{fieldHolds.vat ?? err.vat}</p> : null}
           {preview ? (
             <CalcBox tone="form" lines={[{ terms: [{ n: preview.supply, unit: "원", label: "공급가" }, "+", { n: preview.vat, unit: "원", label: "부가세" }], result: { n: preview.total, unit: "원" } }]} />
           ) : <Small>금액과 부가세를 넣으면 믿집이 공급가 · 부가세 · 합계를 계산해서 보여요.</Small>}

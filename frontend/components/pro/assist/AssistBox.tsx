@@ -37,7 +37,7 @@ function proposal(field: CandidateField | Alternative, key: string): string {
   return showValue(key, field.value);
 }
 
-export function AssistBox({ hint, examples, form, resourceId, current, options, onApply, onInputIssues }: {
+export function AssistBox({ hint, examples, form, resourceId, current, options, onApply, onInputIssues, readManualVersions }: {
   hint: string;
   examples: string[];
   form: AssistForm;
@@ -47,20 +47,22 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
   /** 업체가 '폼에 적용'을 누른 뒤 선택·검증된 칸만 전달해요. */
   onApply: (changes: AssistCurrent, response: AssistResponse) => void;
   onInputIssues?: (issues: InputIssues) => void;
+  readManualVersions?: () => Readonly<Record<string, number>>;
 }) {
   const session = useMemo(() => new AssistSession(form, resourceId), [form, resourceId]);
   const slot = useContext(AssistSlot);
   const [view, setView] = useState(() => session.view);
   const [text, setText] = useState("");
-  const latest = useRef({ current, options, onApply });
-  latest.current = { current, options, onApply };
+  const latest = useRef({ current, options, onApply, readManualVersions });
+  latest.current = { current, options, onApply, readManualVersions };
   useEffect(() => {
     const unsubscribe = session.subscribe(setView);
     return () => { unsubscribe(); session.dispose(); };
   }, [session]);
 
   function send() {
-    if (session.send(text, latest.current.current, latest.current.options, onInputIssues)) setText("");
+    if (session.send(text, latest.current.current, latest.current.options, onInputIssues,
+      () => ({ current: latest.current.current, manualVersions: latest.current.readManualVersions?.() }))) setText("");
   }
 
   function apply() {
