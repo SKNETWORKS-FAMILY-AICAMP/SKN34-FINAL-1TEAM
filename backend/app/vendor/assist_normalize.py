@@ -147,7 +147,14 @@ def date_tokens(
         add(match.start(), match.end(), d, _date(y, m, d), "explicit", month=m, year=y)
     for match in _MONTH_DAY.finditer(evidence):
         m, d = (int(group) for group in match.groups())
-        add(match.start(), match.end(), d, _date(_infer_year(m, d, context), m, d), "explicit", month=m)
+        add(
+            match.start(),
+            match.end(),
+            d,
+            _date(_infer_year(m, d, context), m, d),
+            "explicit",
+            month=m,
+        )
 
     if allow_bare:
         for match in _BARE_DAY.finditer(evidence):
