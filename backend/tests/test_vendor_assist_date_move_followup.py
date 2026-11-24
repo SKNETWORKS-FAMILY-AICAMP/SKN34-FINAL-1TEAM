@@ -127,22 +127,33 @@ def test_previous_exclusion_move_keeps_neighbour_and_replays_after_other_field(m
     assert third["excluded"].value == candidate.value
 
 
-def test_previous_exclusion_move_after_manual_boundary_update(monkeypatch):
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "종료일은 제가 직접 변경했으니 현재 값 유지해 주세요",
+        "종료일   제가 직접 변경했으니 현재 값 유지해 주세요",
+        "종료 일  은  제가 직접 변경했으니 현재 값 유지해 주세요",
+    ],
+)
+def test_previous_exclusion_move_after_manual_boundary_update(monkeypatch, boundary):
     current = _period(["2026-12-09"])
     prior = _prior("excluded", current, "휴무는 12월 9일과 17일", ["2026-12-09", "2026-12-17"])
-    text = (
-        "종료일은 제가 직접 변경했으니 현재 값 유지해 주세요, "
-        "아까 정한 휴무 중 17일만 12월 18일로 옮겨 주세요."
-    )
+    text = boundary + ", 아까 정한 휴무 중 17일만 12월 18일로 옮겨 주세요."
     fields, trace = _run(monkeypatch, "period", text, current, prior=prior)
     assert trace["date_edit_reviewed"]
     assert fields["excluded"].value == ["2026-12-09", "2026-12-18"]
     assert fields["end"].action == "keep"
 
 
-def test_current_workday_postponement_with_anaphor_replays(monkeypatch):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "12월 9일에 건물 행사가 있어요. 그날 공사만 12월 10일로 미뤄 주세요.",
+        "12월 9일에   건물 행사가 있어요。 그 날 공사만 12월 10일로 미뤄 주세요.",
+    ],
+)
+def test_current_workday_postponement_with_anaphor_replays(monkeypatch, text):
     current = {"days": ["2026-12-09", "2026-12-16"], "crew": 3}
-    text = "12월 9일에 건물 행사가 있어요. 그날 공사만 12월 10일로 미뤄 주세요."
     fields, _ = _run(monkeypatch, "dates", text, current, required_days=2)
     candidate = fields["days"]
     assert candidate.status == "valid"

@@ -12,17 +12,18 @@ _RUN = re.compile(
     rf"(?P<body>[{_CHARS}](?:\s*[{_CHARS}]|[,.](?=[0-9]))*)(?P<won>\s*원)?"
 )
 _WRITTEN_DIGIT = re.compile(r"[일이삼사오육칠팔구영공조경]")
-_ATTACHED = re.compile(
-    r"(?<=[가-힣])(?:[일이삼사오육칠팔구영공십백천]+[십백천만억]|[십백천])"
-    r"[일이삼사오육칠팔구영공십백천만억]*[ \t]*(?:[0-9]|원)"
-    r"|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를]"
-    r"[일이삼사오육칠팔구영공십백천만억]+\s*[0-9]"
+_HANGUL_RUN = re.compile(r"[일이삼사오육칠팔구영공십백천만억]+")
+_ATTACHED_UNIT = re.compile(r"[십백천]|[일이삼사오육칠팔구영공십백천][만억]")
+_ATTACHED_END = re.compile(r"[ \t]*(?:[0-9]|원)")
+_ATTACHED_LABEL = re.compile(
+    r"(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를]"
 )
+_ATTACHED_LABEL_NUMBER = re.compile(r"[일이삼사오육칠팔구영공십백천만억]+\s*[0-9]")
 _OTHER_WRITTEN = re.compile(r"[일이삼사오육칠팔구영공십백천만억조경]\s*원")
 _SPLIT_NUMBER = re.compile(r"[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$")
-_WRITTEN_TO_ARABIC = re.compile(
-    r"(?<![가-힣0-9])[일이삼사오육칠팔구영공십백천]+\s*"
-    r"(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)\s*[0-9][0-9,.]*\s*[억천백십만원]"
+_WRITTEN_RANGE_END = re.compile(
+    r"\s*(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)"
+    r"\s*[0-9][0-9,.]*\s*[억천백십만원]"
 )
 _END = re.compile(
     r"^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|"
@@ -36,7 +37,7 @@ _SHORT_OMITTED_END = re.compile(r"^(?:$|[,.;!?？。]|으로|로|입니다|이�
 _OTHER_MONEY = re.compile(
     r"[0-9]\s*[억천백만원]|"
     r"(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|단가|청구)"
-    r"\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9][0-9,.]*(?=$|\s|[,.;!?])"
+    r"\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9](?=$|\s|[,.;!?])"
 )
 _UNCERTAIN = re.compile(
     r"[?？~∼〜–—－−]|아마|혹시|미정|모르|애매|일까|할까|할지|거죠|까요|"
@@ -49,6 +50,29 @@ _UNCERTAIN = re.compile(
 )
 _RANGE = re.compile(r"부터|까지|에서|[+/<>-]")
 _BREAK = re.compile(r"[,;.!?？。]")
+
+
+def _attached_or_mixed(text: str, *, include_range: bool = False) -> bool:
+    """한글 숫자 묶음을 한 번씩 읽고, 끝 위치에서만 인접 단위·숫자를 확인한다."""
+    for match in _HANGUL_RUN.finditer(text):
+        start, end = match.span()
+        body = match[0]
+        before = text[start - 1] if start else ""
+        # 낱말에 붙은 숫자나 숫자 묶음 중간부터 잘라 읽은 후보는 보류한다.
+        suffix = body if "가" <= before <= "힣" else body[1:]
+        if _ATTACHED_UNIT.search(suffix) and _ATTACHED_END.match(text, end):
+            return True
+        if (
+            include_range
+            and not ("가" <= before <= "힣" or "0" <= before <= "9")
+            and "만" not in body
+            and "억" not in body
+            and _WRITTEN_RANGE_END.match(text, end)
+        ):
+            return True
+    return any(
+        _ATTACHED_LABEL_NUMBER.match(text, label.end()) for label in _ATTACHED_LABEL.finditer(text)
+    )
 
 
 def _coefficient(body: str) -> int | None:
@@ -133,7 +157,7 @@ def written_money_tokens(text: str) -> list[tuple[int, int, int]] | None:
                 continue
         mentions.append((match, body))
     if not mentions:
-        return [] if _ATTACHED.search(text) or _WRITTEN_TO_ARABIC.search(text) else None
+        return [] if _attached_or_mixed(text, include_range=True) else None
     if len(mentions) != 1 or omitted_short or _UNCERTAIN.search(text):
         return []
     match, body = mentions[0]
@@ -144,7 +168,11 @@ def written_money_tokens(text: str) -> list[tuple[int, int, int]] | None:
     before = text[: match.start()]
     after = text[match.end() :]
     outside = before + " " + after
-    if _OTHER_MONEY.search(outside) or _ATTACHED.search(outside) or _OTHER_WRITTEN.search(outside):
+    if (
+        _OTHER_MONEY.search(outside)
+        or _attached_or_mixed(outside)
+        or _OTHER_WRITTEN.search(outside)
+    ):
         return []
     if _SPLIT_NUMBER.search(before) or re.search(r"(?:^|\s)(?:한|두|세|네|두세|서너)\s*$", before):
         return []

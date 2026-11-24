@@ -4,17 +4,42 @@ const SMALL: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
 const MAJOR: Record<string, number> = { 억: 100_000_000, 만: 10_000 };
 const RUN = /(?<![가-힣0-9])(?<![0-9][.,])(?!공사(?:\s|$)|[0-9]+\s*일\s)(?<body>[일이삼사오육칠팔구영공십백천만억조경0-9](?:\s*[일이삼사오육칠팔구영공십백천만억조경0-9]|[,.](?=[0-9]))*)(?<won>\s*원)?/g;
 const WRITTEN_DIGIT = /[일이삼사오육칠팔구영공조경]/;
-const ATTACHED = /(?<=[가-힣])(?:[일이삼사오육칠팔구영공십백천]+[십백천만억]|[십백천])[일이삼사오육칠팔구영공십백천만억]*[ \t]*(?:[0-9]|원)|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를][일이삼사오육칠팔구영공십백천만억]+\s*[0-9]/;
+const HANGUL_RUN = /[일이삼사오육칠팔구영공십백천만억]+/g;
+const ATTACHED_UNIT = /[십백천]|[일이삼사오육칠팔구영공십백천][만억]/;
+const ATTACHED_END = /[ \t]*(?:[0-9]|원)/y;
+const ATTACHED_LABEL = /(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를]/g;
+const ATTACHED_LABEL_NUMBER = /[일이삼사오육칠팔구영공십백천만억]+\s*[0-9]/y;
 const OTHER_WRITTEN = /[일이삼사오육칠팔구영공십백천만억조경]\s*원/;
 const SPLIT_NUMBER = /[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$/;
-const WRITTEN_TO_ARABIC = /(?<![가-힣0-9])[일이삼사오육칠팔구영공십백천]+\s*(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)\s*[0-9][0-9,.]*\s*[억천백십만원]/;
+const WRITTEN_RANGE_END = /\s*(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)\s*[0-9][0-9,.]*\s*[억천백십만원]/y;
 const END = /^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))/;
 const MONEY_TARGET = /(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|계약금|잔금)\s*(?:[은는이가을를:=]\s*)?$/;
 const SHORT_OMITTED_END = /^(?:$|[,.;!?？。]|으로|로|입니다|이에요|예요|요)/;
-const OTHER_MONEY = /[0-9]\s*[억천백만원]|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|단가|청구)\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9][0-9,.]*(?=$|\s|[,.;!?])/;
+const OTHER_MONEY = /[0-9]\s*[억천백만원]|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|단가|청구)\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9](?=$|\s|[,.;!?])/;
 const UNCERTAIN = /[?？~∼〜–—－−]|아마|혹시|미정|모르|애매|일까|할까|할지|거죠|까요|또는|아니면|혹은|사이|정도|쯤|약\s|대략|내외|안팎|가량|언저리|고민|생각\s*중|검토\s*중|몇|취소|철회|보류|않|아니|아닙|말고|대신|지\s*(?:마|말|않|못)|원하지|거부|금지|안\s*(?:할|해|하|넣|적|맞)|최대|최소|미만|초과|이상|이하|이내|한도|라면|이면|조건|가능하면|경우|마이너스|음수|플러스|잘못|틀렸|지난|이전|기존|예전|과거|원래|(?:말했|말씀드렸|정했|적었|썼|입력했|했)(?:는데|지만|다가)/;
 const RANGE = /부터|까지|에서|[+/<>-]/;
 const BREAK = /[,;.!?？。]/;
+
+// 숫자 묶음을 한 번씩 읽고 끝 위치에서만 검사해 반복 탐색을 피한다.
+function testAt(pattern: RegExp, text: string, index: number): boolean {
+  pattern.lastIndex = index;
+  return pattern.test(text);
+}
+
+function attachedOrMixed(text: string, includeRange = false): boolean {
+  for (const match of text.matchAll(HANGUL_RUN)) {
+    const start = match.index, end = start + match[0].length;
+    const body = match[0], before = text[start - 1] ?? "";
+    const suffix = /[가-힣]/.test(before) ? body : body.slice(1);
+    if (ATTACHED_UNIT.test(suffix) && testAt(ATTACHED_END, text, end)) return true;
+    if (includeRange && !/[가-힣0-9]/.test(before) && !/[만억]/.test(body) &&
+        testAt(WRITTEN_RANGE_END, text, end)) return true;
+  }
+  for (const label of text.matchAll(ATTACHED_LABEL)) {
+    if (testAt(ATTACHED_LABEL_NUMBER, text, label.index + label[0].length)) return true;
+  }
+  return false;
+}
 
 function coefficient(body: string): number | undefined {
   let total = 0, pending = 0, limit = 10_000;
@@ -78,7 +103,7 @@ export function writtenMoney(text: string): { mentioned: boolean; amount?: numbe
     mentions.push({ match, body });
   }
   const held = { mentioned: true };
-  if (!mentions.length) return ATTACHED.test(raw) || WRITTEN_TO_ARABIC.test(raw) ? held : { mentioned: false };
+  if (!mentions.length) return attachedOrMixed(raw, true) ? held : { mentioned: false };
   if (mentions.length !== 1 || omittedShort || UNCERTAIN.test(raw)) return held;
   const [{ match, body }] = mentions;
   if (match.index === undefined) return held;
@@ -86,7 +111,7 @@ export function writtenMoney(text: string): { mentioned: boolean; amount?: numbe
   const after = raw.slice(match.index + match[0].length);
   if (!match.groups!.won || !END.test(after) || /[+\-−/]$/.test(before)) return held;
   const outside = before + " " + after;
-  if (OTHER_MONEY.test(outside) || ATTACHED.test(outside) || OTHER_WRITTEN.test(outside)) return held;
+  if (OTHER_MONEY.test(outside) || attachedOrMixed(outside) || OTHER_WRITTEN.test(outside)) return held;
   if (SPLIT_NUMBER.test(before) || /(?:^|\s)(?:한|두|세|네|두세|서너)\s*$/.test(before)) return held;
   if (body.length === 1 && match.groups!.won === "원" && !MONEY_TARGET.test(before)) return held;
   const clause = before.split(BREAK).at(-1)! + match[0] + after.split(BREAK)[0];

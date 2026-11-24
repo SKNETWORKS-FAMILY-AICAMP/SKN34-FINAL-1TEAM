@@ -16,6 +16,7 @@ from app.vendor.assist_schemas import (
 )
 from app.vendor.assist_service import interpret
 from app.vendor.assist_validation import _amount_mentions, review_fields
+from app.vendor.assist_written_money import written_money_tokens
 
 FRESH_TEXT = "현장 추가 물량까지 다시 잡았어요. 이번 견적 금액은 천이백육십만 원으로 넣어 주세요."
 FRESH_EVIDENCE = "이번 견적 금액은 천이백육십만 원으로 넣어 주세요"
@@ -178,3 +179,23 @@ def test_fresh_written_quote_replay_with_model_stub(monkeypatch):
 )
 def test_existing_arabic_amounts_preserved(text, values):
     assert _amount_mentions(text) == values
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "견적은삼백만 500원",
+        "금액이삼 500만원",
+        "견적 삼백부터 400만원",
+        "견적 삼백점 400만원",
+        "견적 삼백만원, 4000000",
+        "견적 삼백만원, 4,000,000",
+        "견적 삼백만원, 4000000 원",
+    ],
+)
+def test_written_amount_does_not_fall_back_to_partial_number(text):
+    assert written_money_tokens(text) == []
+
+
+def test_non_money_words_do_not_block_normal_numeric_amount():
+    assert written_money_tokens("공사 견적 555만원") is None
