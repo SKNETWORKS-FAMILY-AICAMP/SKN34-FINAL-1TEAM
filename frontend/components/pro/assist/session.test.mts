@@ -44,6 +44,32 @@ test("인원 범위를 말하면 API가 한쪽 숫자를 반환해도 인원 후
   session.select("crew", true);
   assert.equal(session.apply(current, () => assert.fail("인원 적용")), false);
 });
+
+test("인원 범위와 잘린 수는 명시적 날짜가 유효해도 서버·오프라인 후보에서 발송 보류해요", async () => {
+  const days = ["2027-01-05", "2027-01-06"];
+  const current = { crew: 2, days: [] };
+  const opts = { today, crewMax: 6, requiredDays: 2, noWeekend: true };
+  for (const phrase of ["2〜3명", "2—3명", "2－3명", "2인〜3인", "두세 인", "1,003명", "1,03명"]) {
+    for (const offline of [false, true]) {
+      const api = pending();
+      const session = new AssistSession("dates", "deal-id", api.requester);
+      let held = false;
+      session.send("2027년 1월 5일부터 6일까지, " + phrase, current, opts, (issues) => { held = !!issues.crew; });
+      assert.equal(held, true, phrase);
+      const job = api.jobs[0];
+      if (offline) job.reject(new Error("offline"));
+      else job.resolve(response(job.request, {
+        days: { action: "set", value: days },
+        crew: { action: "set", value: 3 },
+      }));
+      await flush();
+      let changes: AssistCurrent = {};
+      session.select("crew", true);
+      assert.equal(session.apply(current, (selected) => { changes = selected; }), true, phrase);
+      assert.deepEqual(changes, { days }, phrase);
+    }
+  }
+});
 type Data = Partial<Record<string, {
   origin_request_id?: string;
   evidence?: string;
@@ -1035,5 +1061,38 @@ test("실제 HTTP JSON: 부정된 제외일 삭제에는 이전 후보를 전송
   } finally {
     session.dispose();
     globalThis.fetch = original;
+  }
+});
+
+test("한글 미확정 금액·추측한 복합 금액은 서버 응답과 연결 실패 모두에서 기존 금액 저장을 막아요", async () => {
+  for (const form of ["quote", "extra"] as const) {
+    const current: AssistCurrent = form === "quote"
+      ? { ...quote, amount: 1_000_000, vat: "included" }
+      : { amount: 1_000_000, vat: "included", title: "추가 보강", reason: "현장 요청" };
+    for (const [phrase, candidate] of [
+      ["견적 이천만으로", 20_000_000], ["견적 오백만으로", 5_000_000],
+      ["견적 천 만으로", 10_000_000], ["견적 천만요", 10_000_000],
+      ["견적 1천500만 원으로 할까?", 15_000_000],
+    ] as const) {
+      for (const failure of [true, false]) {
+        const label = `${form}: ${phrase}, 503=${failure}`;
+        const api = pending();
+        const session = new AssistSession(form, "resource-id", api.requester);
+        let held = false;
+        assert.equal(session.send(phrase + ", 부가세 별도", current, quoteOptions, (issues) => { held = !!issues.amount; }), true, label);
+        assert.equal(held, true, label);
+        const job = api.jobs[0];
+        assert.equal(job.request.rule_fields.find((field) => field.field === "amount")?.action, "keep", label);
+        if (failure) job.reject(new AssistApiError(503, "unavailable", "연결 실패"));
+        else job.resolve(response(job.request, {
+          amount: { action: "set", value: candidate }, vat: { action: "set", value: "excluded" },
+        }));
+        await flush();
+        session.select("amount", true);
+        assert.equal(session.apply(current, (changes) => {
+          assert.deepEqual(changes, { vat: "excluded" }, label);
+        }), true, label);
+      }
+    }
   }
 });

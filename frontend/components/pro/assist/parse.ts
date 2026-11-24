@@ -18,14 +18,21 @@ const FIX_GAP = String.raw`(?:\s*원?\s*(?:은|는|이|가)?\s*(?:아니라|아�
 /** 바꾸는 말: 두 값 사이에 있는데 어느 값인지 못 고르면 비워요 */
 const CHANGE = /변경|바꾸|바꿔|바뀌|바꿨|바꿈|수정|정정|아니|→|->|=>|에서/;
 /** 날짜만 지운 토막에 남은 게 조사 · 이음말뿐이면 날짜만 늘어놓은 토막이에요("12/4, 12/3은 안 돼요"의 12/4) */
-const DATE_ALL = /(?:\d{1,2}\s*(?:\/|\.|월)\s*)?\d{1,2}\s*일?/g;
+const FULL_DATE = String.raw`(?<!\d)\d{4}\s*(?:년|[-/.])\s*\d+\s*(?:월|[-/.])\s*\d+\s*일?`;
+const DATE = String.raw`(?:${FULL_DATE}|(?:\d{1,2}\s*(?:\/|\.|월)\s*)?\d{1,2}\s*일?)`;
+const DATE_ALL = new RegExp(DATE, "g");
 const BARE = /^[\s과와랑및도은는이가]*$/;
 // 정정: "12/2부터 → 12/3부터로 정정" · "아니 12/3부터요"면 날짜를 비워요
 const FIX = /→|->|정정|(?:^|[\s.,!?])아니(?:\s|,|$)|말고|다시/;
 // 토막 나누기: 쉼표 · 줄바꿈 · 이음말, 마침표는 숫자 사이(12.2)가 아닐 때만
 const PARTS = /,|\n|(?<!\d)\.|\.(?!\d)|그리고|하고|인데|는데|지만/;
-const DATE = String.raw`(?:\d{1,2}\s*(?:\/|\.|월)\s*)?\d{1,2}\s*일?`;
 const pad = (n: number) => String(n).padStart(2, "0");
+
+/** 연도와 날짜를 한 토큰으로 보존하고 ISO 날짜 안의 '-'를 범위 표시와 구분해요. */
+function normalizeFullDates(text: string): string {
+  return text.replace(/(?<!\d)(\d{4})\s*(?:년|[-/.])\s*(\d+)\s*(?:월|[-/.])\s*(\d+)\s*일?/g,
+    (_, year: string, month: string, day: string) => `${year}년 ${month}월 ${day}일`);
+}
 
 /** 토막 나누기. 괄호 안은 한 토막으로 둬요("(12/3, 12/4 불가)"는 둘 다 안 되는 날) */
 function partsOf(text: string): string[] {
@@ -35,29 +42,36 @@ function partsOf(text: string): string[] {
 }
 
 /** 월 · 일 → "2026-12-02". 오늘보다 여섯 달 넘게 앞선 달이면 내년으로 봐요(12월에 적은 1월) */
-function iso(month: number, day: number, today: string): string | null {
+function iso(month: number, day: number, today: string, explicitYear?: number): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const ty = Number(today.slice(0, 4));
   const tm = Number(today.slice(5, 7));
-  const y = month < tm - 6 ? ty + 1 : ty;
+  const y = explicitYear ?? (month < tm - 6 ? ty + 1 : ty);
+  if (y < 1000 || y > 9999) return null;
   const d = new Date(Date.UTC(y, month - 1, day));
   if (d.getUTCMonth() !== month - 1) return null;
   return `${y}-${pad(month)}-${pad(day)}`;
 }
 
-type Month = { m: number; prev?: string; bad?: boolean };
+type Month = { m: number; year?: number; prev?: string; bad?: boolean };
 
 /** 글 한 토막의 날짜들. "12/2", "12.2", "12월 2일", "3일", "12/2~5"를 읽고, 달이 없으면 앞에서 본 달을 써요.
  *  "3일간 · 3일 정도"는 기간이라 날짜가 아니에요. ok면 달 없는 날이 앞 날보다 이를 때 애매하다고 표시해요("12/8부터 3일") */
 function daysIn(part: string, today: string, month: Month, ok = false): string[] {
-  const text = part.replace(/[~\-–]\s*(\d{1,2})(?!\s*[/.월\d])/g, "~$1일");
+  const text = normalizeFullDates(part).replace(/[~∼〜\-–—－]\s*(\d{1,2})(?!\s*[/.월\d])/g, "~$1일");
   const out: string[] = [];
-  for (const x of text.matchAll(/(?:(\d{1,2})\s*(?:\/|\.|월)\s*(\d{1,2})\s*일?)|(?:(?<!\d)(\d{1,2})\s*일(?!\s*(?:간|동안|정도|째|걸|소요)))/g)) {
-    if (x[1]) month.m = Number(x[1]);
-    const day = iso(month.m, Number(x[2] ?? x[3]), today);
-    if (!day) continue;
+  for (const x of text.matchAll(/(?<!\d)(\d{4})년\s*(\d+)월\s*(\d+)일|(?<!\d)(\d{1,2})\s*(?:\/|\.|월)\s*(\d{1,2})(?!\d)\s*일?|(?<!\d)(\d{1,2})\s*일(?!\s*(?:간|동안|정도|째|걸|소요))/g)) {
+    if (x[1]) {
+      month.year = Number(x[1]);
+      month.m = Number(x[2]);
+    } else if (x[4]) {
+      // 같은 날짜 표현에서 생략한 연도는 앞에서 명시한 연도를 상속해요.
+      month.m = Number(x[4]);
+    }
+    const day = iso(month.m, Number(x[3] ?? x[5] ?? x[6]), today, month.year);
+    if (!day || (month.year !== undefined && day < today)) { month.bad = true; continue; }
     if (ok) {
-      if (x[3] && month.prev && day < month.prev) month.bad = true;
+      if (x[6] && month.prev && day < month.prev) month.bad = true;
       month.prev = day;
     }
     out.push(day);
@@ -66,11 +80,12 @@ function daysIn(part: string, today: string, month: Month, ok = false): string[]
 }
 
 /** 기간 표시: '부터 · 까지 · ~ · -'가 있어야 처음 ~ 끝을 기간으로 봐요 */
-const RANGE = /부터|까지|~|∼|(?<=\d\s*일?\s*)[-–](?=\s*\d)/;
+const RANGE = /부터|까지|~|∼|〜|(?<=\d\s*일?\s*)[-–—－](?=\s*\d)/;
 
 /** "12/2부터 12/5까지 돼요, 12/4는 안 돼요" → 기간과 빼는 날. 못 읽으면 null.
  *  "12월 2일과 12월 5일만 가능"처럼 날짜만 늘어놓으면 기간이 아니라서 비워요(하루만 말하면 그 하루) */
 export function parsePeriod(text: string, today: string, baseMonth?: string | null): PeriodFill | null {
+  text = normalizeFullDates(text);
   if (FIX.test(text)) return null;
   const month: Month = { m: Number((baseMonth ?? today).slice(5, 7)) };
   const ok: string[] = [];
@@ -95,6 +110,8 @@ export function parsePeriod(text: string, today: string, baseMonth?: string | nu
   if (month.bad || !ok.length) return null;
   // 범위 표시 없이 늘어놓거나, "12/2부터"처럼 끝이 없으면 비워요
   if (new Set(ok).size > 1 !== RANGE.test(text)) return null;
+  // 연도를 명시한 범위의 끝이 시작보다 앞서면 다음 해라고 추측하지 않아요.
+  if (/\d{4}년/.test(text) && RANGE.test(text) && ok.some((d, i) => i > 0 && d < ok[i - 1])) return null;
   ok.sort();
   const nos = new Set(no);
   // 안 된다고 한 날은 첫날 · 끝날이어도 가능한 날로 넣지 않아요(12/2~12/5에 12/2가 안 되면 12/3부터)
@@ -117,7 +134,17 @@ function shift(day: string, by: number): string {
 const num = (s: string) => Number(s.replace(/,/g, ""));
 const MAN_SCALE: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
 const COMPOUND_MAN = /(?<![\d.,천백십])(?:[\d천백십][ \t]*){1,24}만/g;
-export const SAID_AMOUNT = /\d\s*[억천백만원]|(?<![가-힣])[일이삼사오육칠팔구십백천만억]{1,8}\s*원|(?<![가-힣])[천백십]만(?=$|[\s,.;!?]|으로|은|을|이요|입니다)/;
+const MONEY_END = String.raw`(?=$|[\s,.;!?？。:)]|원|으로|로|[은는이가을를도요]|부터|까지|예요|쯤|정도)`;
+const WRITTEN_START = String.raw`(?<![가-힣\d])(?<!\d[ \t]+)`;
+// '이만'이나 '기간만'은 금액이 아닐 수 있어요. 원이 없으면 숫자 단위나 명시적 금액 대상을 확인해요.
+const WRITTEN_AMOUNT = new RegExp([
+  String.raw`${WRITTEN_START}(?:[일이삼사오육칠팔구십백천만억][ \t]*){1,16}원${MONEY_END}`,
+  String.raw`${WRITTEN_START}(?=[일이삼사오육칠팔구십백천 \t]*[십백천])(?:[일이삼사오육칠팔구십백천][ \t]*){1,16}만${MONEY_END}`,
+  String.raw`${WRITTEN_START}(?:[일이삼사오육칠팔구십백천][ \t]*){1,16}억${MONEY_END}`,
+  String.raw`${WRITTEN_START}[삼사육칠팔구][ \t]*만${MONEY_END}`,
+  String.raw`(?:견적(?:[ \t]*금액)?|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|계약금|잔금)[ \t]*(?:[은는이가을를:=][ \t]*)?(?:[일오][ \t]*만${MONEY_END}|이[ \t]*만(?=$|[,.;!?？。]|원|으로|로|입니다|이에요|예요|요))`,
+].join("|"));
+export const SAID_AMOUNT = new RegExp(String.raw`\d\s*[억천백만원]|${WRITTEN_AMOUNT.source}`);
 
 /** 만 앞의 혼합 표기를 통째로 읽어요. 천500만처럼 시작 숫자가 없으면 뒷부분도 쓰지 않아요. */
 function manOf(text: string): string | null {
@@ -140,10 +167,18 @@ function manOf(text: string): string | null {
     return total + "만";
   });
   // 소수·쉼표가 잘못 붙어 합성 단위를 전부 해석하지 못했으면 뒷자리만 채택하지 않는다.
-  return invalid || /[천백십][\d.,천백십 \t]*만/.test(result) ? null : result;
+  return invalid || /[천백십][\d.,천백십 \t]*만/.test(result) || WRITTEN_AMOUNT.test(result) ? null : result;
+}
+
+/** 복합 금액과 같은 절에서 보류·질문으로 말한 금액은 규칙 후보도 확정하지 않아요. */
+export function uncertainCompoundAmount(text: string): boolean {
+  return text.split(/(?<!\d),|,(?!\d{3}(?!\d))|\n|(?<!\d)\.|\.(?!\d)|。/).some((clause) =>
+    [...clause.matchAll(COMPOUND_MAN)].some((m) => /[천백십]/.test(m[0])) &&
+    /[?？]|아마|혹시|미정|모르|애매|일까|할까|할지|고민|생각\s*중|검토\s*중|것\s*같|취소|철회|보류|하지\s*마|하지\s*말|안\s*할/.test(clause));
 }
 
 export function recognizedCompoundAmount(text: string): number | undefined {
+  if (uncertainCompoundAmount(text)) return undefined;
   const matches = [...text.matchAll(COMPOUND_MAN)];
   if (matches.length !== 1 || !/[천백십]/.test(matches[0][0])) return undefined;
   const [part] = matches;
@@ -218,9 +253,11 @@ function validIn(text: string, today: string): string | undefined {
   const hits = new Set([...text.matchAll(re)].map((m) => (text.slice(m.index + m[0].length).match(fix)?.[1] ?? m[1] ?? m[2]).trim()));
   if (hits.size !== 1) return undefined;
   const said = [...hits][0];
-  const bare = !/[/.월]/.test(said);
+  const bare = !/[/.월-]/.test(said);
   const tm = Number(today.slice(5, 7));
-  let d: string | undefined = daysIn(bare ? `${said.replace(/일/, "")}일` : said, today, { m: tm })[0];
+  const anchor: Month = { m: tm };
+  let d: string | undefined = daysIn(bare ? `${said.replace(/일/, "")}일` : said, today, anchor)[0];
+  if (anchor.bad) return undefined;
   // 달 없이 "17일까지"라고 했는데 이미 지난 날이면 다음 달로 봐요
   if (d && bare && d < today) d = iso((tm % 12) + 1, Number(d.slice(8, 10)), today) ?? undefined;
   return d;
@@ -248,7 +285,7 @@ function daysOf(text: string): number | undefined {
 export function parseQuote(text: string, today: string): QuoteFill {
   const out: QuoteFill = {};
   const normalized = manOf(text);
-  const amount = normalized === null ? undefined : amountIn(normalized);
+  const amount = normalized === null || uncertainCompoundAmount(text) ? undefined : amountIn(normalized);
   if (amount) out.amount = amount;
   const vat = vatIn(text);
   if (vat) out.vat = vat;
@@ -265,13 +302,13 @@ export type DatesFill = { days: string[]; crew?: number };
 function expandDateList(text: string, today: string): string | null {
   let invalid = false;
   const rewritten = text.replace(
-    /\d{1,2}\s*(?:\/|\.|월)\s*\d{1,2}\s*일?(?:\s*,\s*\d{1,2})+\s*일(?!\s*(?:간|동안|정도))/g,
+    /(?:\d{4}년\s*)?\d{1,2}\s*(?:\/|\.|월)\s*\d{1,2}\s*일?(?:\s*,\s*\d{1,2})+\s*일(?!\s*(?:간|동안|정도))/g,
     (list) => {
       const parts = list.split(",").map((part) => part.trim());
-      const anchor = parts[0].match(/^(\d{1,2})\s*(?:\/|\.|월)\s*(\d{1,2})/);
+      const anchor = parts[0].match(/^(?:(\d{4})년\s*)?(\d{1,2})\s*(?:\/|\.|월)\s*(\d{1,2})/);
       if (!anchor || parts.some((part, i) => {
-        const day = i === 0 ? Number(anchor[2]) : Number(part.match(/^\d{1,2}/)?.[0]);
-        return !iso(Number(anchor[1]), day, today);
+        const day = i === 0 ? Number(anchor[3]) : Number(part.match(/^\d{1,2}/)?.[0]);
+        return !iso(Number(anchor[2]), day, today, anchor[1] ? Number(anchor[1]) : undefined);
       })) {
         invalid = true;
         return list;
@@ -285,12 +322,13 @@ function expandDateList(text: string, today: string): string | null {
 /** 공사 날짜: "12/8부터 12/10까지, 2명" → 그 사이 날 모두(안 된다고 한 날 · 공휴일 빼고, noWeekend면 토 · 일도 빼고).
  *  "12/8, 12/9, 12/11"처럼 늘어놓으면 그 날만(말한 날은 주말이어도 그대로 두고 서버가 다시 봐요) */
 export function parseDates(text: string, today: string, baseMonth?: string | null, holidays: string[] = [], noWeekend = false): DatesFill | null {
-  const { value: crew, withoutCrew: said } = readCrew(text);
+  const { value: crew, withoutCrew } = readCrew(text);
+  const said = normalizeFullDates(withoutCrew);
   const days: string[] = [];
   if (RANGE.test(said)) {
     const p = parsePeriod(said, today, baseMonth);
     const skip = new Set([...(p?.excluded ?? []), ...holidays]);
-    for (let d = new Date(`${p?.start}T00:00:00Z`); p && d.toISOString().slice(0, 10) <= p.end; d.setUTCDate(d.getUTCDate() + 1)) {
+    for (let d = new Date(`${p?.start}T00:00:00Z`); p && Date.parse(p.end) - Date.parse(p.start) <= 120 * 86_400_000 && d.toISOString().slice(0, 10) <= p.end; d.setUTCDate(d.getUTCDate() + 1)) {
       const k = d.toISOString().slice(0, 10);
       if (!skip.has(k) && !(noWeekend && (d.getUTCDay() === 0 || d.getUTCDay() === 6))) days.push(k);
     }
@@ -306,9 +344,9 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
 }
 
 const NATIVE_CREW: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10, 열두: 12 };
-const CREW_NUMBER = String.raw`(?:(?<![\d.])\d+(?:\.\d+)?|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열두|열))`;
-const CREW_UNIT = String.raw`(?:명|인(?=$|[\s.,!?;~/∼–-]|으로|[은을도과]|부터|에서|입니다|이에요))`;
-const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼–-]|부터|에서|또는|혹은)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*명`, "g");
+const CREW_NUMBER = String.raw`(?:(?<![\d./월-])\d+(?:,\d+)+(?:\.\d+)?|(?<![\d.])\d+(?:\.\d+)?|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열두|열))`;
+const CREW_UNIT = String.raw`(?:명|인(?=$|[\s.,!?;~/∼〜–—－-]|으로|[은을도과]|부터|에서|입니다|이에요))`;
+const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼〜–—－-]|부터|에서|또는|혹은)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*${CREW_UNIT}`, "g");
 const CREW_TERM = new RegExp(String.raw`(${CREW_NUMBER})\s*${CREW_UNIT}`, "g");
 
 /** 범위 표현을 먼저 걷어내서 '2/3인'의 일부를 날짜나 확정 인원으로 읽지 않는다. */

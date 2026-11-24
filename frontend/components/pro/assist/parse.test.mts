@@ -1,7 +1,8 @@
+import { amountToConfirm, assistInputIssues } from "./guard.ts";
 // 업체 도우미 말 해석 시험: pnpm test:unit (node --test). 애매하면 칸을 채우지 않는지까지 봐요.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SAID_AMOUNT, parseDates, parseExtra, parsePeriod, parseQuote } from "./parse.ts";
+import { SAID_AMOUNT, parseDates, parseExtra, parsePeriod, parseQuote, readCrew } from "./parse.ts";
 
 const T = "2026-11-23";
 
@@ -322,4 +323,103 @@ test("복합 금액과 인원은 뒷자리만 후보로 만들지 않아요", ()
   assert.equal(parseDates("10명", T)?.crew, 10);
   assert.equal(parseDates("2~3명", T)?.crew, undefined);
   assert.equal(parseDates("앞서 정한 세 명 그대로", T)?.crew, 3);
+});
+
+test("인원 범위와 잘린 숫자는 날짜와 분리해도 확정하지 않아요", () => {
+  for (const phrase of ["2〜3명", "2—3명", "2－3명", "2~3인", "2인〜3인", "두세 인", "1,003명", "1,03명"]) {
+    assert.equal(readCrew(phrase).mentioned, true, phrase);
+    assert.equal(readCrew(phrase).value, undefined, phrase);
+    assert.deepEqual(parseDates("12/8부터 9일까지, " + phrase, T), {
+      days: ["2026-12-08", "2026-12-09"], crew: undefined,
+    }, phrase);
+  }
+  assert.deepEqual(parseDates("12/8,3명", T), { days: ["2026-12-08"], crew: 3 });
+  assert.equal(readCrew("12인").value, 12);
+});
+
+test("날짜에 명시한 연도를 유지하고 축약한 날짜는 그 연도를 상속해요", () => {
+  const expected = { days: ["2027-12-08", "2027-12-09"], crew: 3 };
+  for (const text of ["2027년 12월 8일부터 9일까지, 3명", "2027년 12월 8일부터 12월 9일까지, 3명",
+    "2027-12-08부터 2027-12-09까지, 3명",
+    "2027/12/08, 9일, 3명", "2027.12.08, 9일, 3명"]) {
+    assert.deepEqual(parseDates(text, T), expected, text);
+  }
+  assert.deepEqual(parsePeriod("2027년 12월 8일부터 9일까지", T), {
+    start: "2027-12-08", end: "2027-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("2027년 1월 30일부터 2월 2일까지", T), {
+    start: "2027-01-30", end: "2027-02-02", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("2026-12-31부터 2027-01-02까지", T), {
+    start: "2026-12-31", end: "2027-01-02", excluded: [], outside: [],
+  });
+  assert.deepEqual(parseDates("2027-12-08", T), { days: ["2027-12-08"], crew: undefined });
+  assert.deepEqual(parseDates("2028년 2월 28일,29일", T), { days: ["2028-02-28", "2028-02-29"], crew: undefined });
+  assert.equal(parseQuote("유효기간은 2027년 12월 8일까지", T).valid, "2027-12-08");
+  assert.equal(parseQuote("유효기간은 2027-12-08까지", T).valid, "2027-12-08");
+});
+
+test("명시적인 과거 날짜나 잘못된 날짜는 다른 연도나 부분 날짜로 바꾸지 않아요", () => {
+  for (const text of ["2025년 12월 8일", "2025-12-08", "2027년 2월 29일", "2027-13-02",
+    "2027년 2월 30일부터 3월 2일까지", "2027년 12월 8일, 32일", "2025년 12월 8일, 2027년 12월 9일"]) {
+    assert.equal(parseDates(text, T), null, text);
+  }
+  assert.equal(parsePeriod("2025년 12월 8일부터 9일까지", T), null);
+  assert.equal(parsePeriod("2027년 12월 31일부터 1월 2일까지", T), null);
+  assert.equal(parseQuote("2025년 12월 8일까지 유효", T).valid, undefined);
+});
+
+test("읽지 못한 한글 금액은 조사나 띄어쓰기와 상관없이 두 금액 폼에서 저장을 막아요", () => {
+  const unresolved = [
+    "견적 이천만으로", "견적 오백만으로", "견적 천 만으로", "견적 천만요",
+    "이 천 오 백 만 원으로", "삼백만은", "십오만으로", "삼만으로",
+    "금액은 이만으로", "추가금액은 오만으로", "견적 100만 원에서 삼만으로",
+    "견적 100만 원에서 이천만으로", "이천오백만원입니다", "일억으로",
+  ];
+  for (const phrase of unresolved) {
+    const text = phrase + ", 부가세 별도";
+    assert.equal(SAID_AMOUNT.test(text), true, text);
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    assert.equal(amountToConfirm(text, T), undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.match(assistInputIssues(form, text, { today: T }).amount ?? "", /금액을 확인하지 못했어요/, text);
+    }
+  }
+});
+
+test("금액과 무관한 만·이만 표현 및 정상 복합 금액 정정·유지는 차단하지 않아요", () => {
+  for (const text of [
+    "기간만 변경해 주세요", "부가세만 별도", "이만 마무리할게요", "견적 이만 마무리",
+    "일만 먼저 진행해 주세요", "견적은 이만큼만", "금액은 그대로",
+  ]) {
+    assert.equal(SAID_AMOUNT.test(text), false, text);
+    assert.equal(assistInputIssues("quote", text, { today: T }).amount, undefined, text);
+  }
+  for (const [text, expected] of [
+    ["견적 1천500만 원, 공사 기간은 미정", 15_000_000],
+    ["견적 2천300만 원 그대로", 23_000_000],
+    ["견적 1 천 500 만 원", 15_000_000],
+    ["견적 1천500만 원에서 2천300만 원으로 변경", 23_000_000],
+    ["견적 455만 5 천 원", 4_555_000],
+  ] as const) {
+    assert.equal(parseQuote(text, T).amount, expected, text);
+    assert.equal(assistInputIssues("quote", text, { today: T }, amountToConfirm(text, T)).amount, undefined, text);
+  }
+  const correction = "아까 1천500만 원이라고 했는데 2천300만 원으로 정정해 주세요";
+  assert.equal(amountToConfirm(correction, T), 23_000_000);
+  assert.equal(assistInputIssues("quote", correction, { today: T }, amountToConfirm(correction, T)).amount, undefined);
+});
+
+test("추측·보류·취소한 복합 금액은 규칙 후보와 확인 금액을 만들지 않아요", () => {
+  for (const phrase of [
+    "견적 1천500만 원으로 할까?", "아마 견적 2천300만 원",
+    "1천500만 원으로 할지 고민 중", "1천500만 원은 미정",
+    "1천500만 원 취소", "견적 2천300만 원으로 하지 말아 주세요",
+  ]) {
+    const text = phrase + ", 부가세 별도";
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(amountToConfirm(text, T), undefined, text);
+    assert.match(assistInputIssues("quote", text, { today: T }).amount ?? "", /금액을 확인하지 못했어요/, text);
+  }
 });

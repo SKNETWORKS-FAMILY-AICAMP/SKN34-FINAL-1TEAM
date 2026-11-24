@@ -119,7 +119,9 @@ test("복합 금액은 전체 원 단위로 확인한 뒤에만 견적서에 저
     expect(writes(await recorded(request))).toHaveLength(before);
     await box.getByRole("button", { name: "폼에 적용" }).click();
     await expect(amount).toHaveValue(expected.toLocaleString("ko-KR"));
-    await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.entered_amount).toBe(expected);
+    await expect.poll(async () => writes(await recorded(request)).slice(before).map((entry) => [
+      entry.method, entry.path, entry.body?.entered_amount,
+    ])).toEqual([["PUT", QUOTE_PATH, expected]]);
   }
 });
 
@@ -138,7 +140,7 @@ test("예약된 견적 자동 저장을 멈추고 같은 금액을 다시 확인
 });
 
 for (const form of ["quote", "extra"] as const) {
-  for (const phrase of ["견적 천만, 부가세 별도", "견적 천만으로, 부가세 별도"]) {
+  for (const phrase of ["견적 천만, 부가세 별도", "견적 천만으로, 부가세 별도", "견적 이천만으로, 부가세 별도"]) {
     test(`${form}: ${phrase} 차단 후 금액만 고치면 정확한 값으로 한 번 발송해요`, async ({ page, request }) => {
       await open(page, form === "quote" ? `/vendor/requests/${VISITED}/quote` : `/vendor/jobs/${WORKING}?step=extra`);
       const amount = page.getByLabel(form === "quote" ? "견적 금액" : "금액", { exact: true });
@@ -189,12 +191,25 @@ for (const form of ["quote", "extra"] as const) {
   }
 }
 
-for (const phrase of ["12명", "10명", "2~3명", "12인", "2~3인"]) {
+for (const phrase of ["12명", "10명", "2~3명", "12인", "2~3인", "2〜3명", "두세 인"]) {
   test(`인원 ${phrase}: 기존값 발송을 막고 직접 고른 3명으로만 보내요`, async ({ page, request }) => {
     const box = await open(page, `/vendor/jobs/${DATES}`);
-    const days = ["2027-12-08", "2027-12-09"];
-    await queueAnswer(request, { fields: [set("days", days, "12월 8일, 9일"), set("crew", 2, phrase)] });
-    await send(page, "2027년 12월 8일부터 9일까지, " + phrase);
+    // 두 날짜는 주말·공휴일을 피하고 서버가 허용하는 오늘 이후 365일 안에 둔다.
+    const day = new Date();
+    day.setUTCDate(8);
+    day.setUTCMonth(day.getUTCMonth() + 10);
+    while (day.getUTCDay() !== 1) day.setUTCDate(day.getUTCDate() + 1);
+    const first = day.toISOString().slice(0, 10);
+    day.setUTCDate(day.getUTCDate() + 1);
+    const days = [first, day.toISOString().slice(0, 10)];
+    const range = `${day.getUTCFullYear()}년 ${day.getUTCMonth() + 1}월 ${day.getUTCDate() - 1}일부터 ${day.getUTCDate()}일까지`;
+    if (phrase === "2〜3명" || phrase === "두세 인") {
+      // 서버에 연결할 수 없어도 원문의 연도와 인원 범위를 보존해야 한다.
+      await queueAnswer(request, { status: 503, message: "시험용 연결 실패" });
+    } else {
+      await queueAnswer(request, { fields: [set("days", days, range), set("crew", 2, phrase)] });
+    }
+    await send(page, range + ", " + phrase);
     await expect(page.getByText(/말씀하신 인원을 확정할 수 없어요/).first()).toBeVisible();
     await box.getByRole("button", { name: "폼에 적용" }).click();
     await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();

@@ -5,7 +5,7 @@
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 
 _FULL = re.compile(
-    r"(?<!\d)(20\d{2})\s*(?:년|[-/.])\s*(\d{1,2})\s*"
-    r"(?:월|[-/.])\s*(\d{1,2})\s*일?(?!\d)"
+    r"(?<!\d)(\d{4})\s*(?:년|[-/.])\s*(\d+)\s*"
+    r"(?:월|[-/.])\s*(\d+)\s*일?(?!\d)"
 )
 _MONTH_DAY = re.compile(r"(?<!\d)(\d{1,2})\s*(?:월|[-/.])\s*(\d{1,2})\s*일?(?!\d)")
 _BARE_DAY = re.compile(
@@ -49,7 +49,7 @@ _NATIVE_CREW = {
     "열": 10,
 }
 _CREW_WORDS = "|".join(_NATIVE_CREW)
-_CREW_UNIT = r"(?:명(?!\d)|인(?=$|[\s.,!?;~/∼–-]|으로|[은을도과]|부터|에서|입니다|이에요))"
+_CREW_UNIT = r"(?:명(?!\d)|인(?=$|[\s.,!?;~/∼〜–—－-]|으로|[은을도과]|부터|에서|입니다|이에요))"
 _CREW = re.compile(rf"(?<!\d)(?<!\d[,.])(?:(\d{{1,2}})|(?<![가-힣])({_CREW_WORDS}))\s*{_CREW_UNIT}")
 _CREW_COUNT = rf"(?:(?<!\d)\d+|(?<![가-힣])(?:{_CREW_WORDS}))"
 _CREW_RANGE_LINK = r"(?:[~\-–—－∼〜/]|부터|에서|또는|혹은)"
@@ -66,6 +66,8 @@ class _Token:
     day: int
     value: date | None
     kind: str  # 명시적 날짜, 'N일', 목록 중간의 숫자
+    month: int | None = None
+    year: int | None = None
 
 
 def complete_range_evidence(evidence: str, text: str) -> bool:
@@ -125,18 +127,27 @@ def date_tokens(
     tokens: list[_Token] = []
     occupied: list[tuple[int, int]] = []
 
-    def add(start: int, end: int, day: int, value: date | None, kind: str) -> None:
+    def add(
+        start: int,
+        end: int,
+        day: int,
+        value: date | None,
+        kind: str,
+        *,
+        month: int | None = None,
+        year: int | None = None,
+    ) -> None:
         if any(start < b and end > a for a, b in occupied):
             return
         occupied.append((start, end))  # 잘못된 명시 날짜도 부분 토큰으로 다시 읽지 않는다.
-        tokens.append(_Token(start, end, day, value, kind))
+        tokens.append(_Token(start, end, day, value, kind, month, year))
 
     for match in _FULL.finditer(evidence):
         y, m, d = (int(group) for group in match.groups())
-        add(match.start(), match.end(), d, _date(y, m, d), "explicit")
+        add(match.start(), match.end(), d, _date(y, m, d), "explicit", month=m, year=y)
     for match in _MONTH_DAY.finditer(evidence):
         m, d = (int(group) for group in match.groups())
-        add(match.start(), match.end(), d, _date(_infer_year(m, d, context), m, d), "explicit")
+        add(match.start(), match.end(), d, _date(_infer_year(m, d, context), m, d), "explicit", month=m)
 
     if allow_bare:
         for match in _BARE_DAY.finditer(evidence):
@@ -146,6 +157,17 @@ def date_tokens(
 
     tokens.sort(key=lambda token: token.start)
     links = [_link(evidence[left.end : right.start]) for left, right in pairwise(tokens)]
+
+    # 연도가 명시된 날짜와 목록·범위로 연결된 월/일은 같은 연도를 사용한다.
+    # 연결되지 않은 다른 절의 날짜는 기존 추정 정책을 유지한다.
+    anchor_year: int | None = None
+    for i, token in enumerate(tokens):
+        if i > 0 and links[i - 1] is None:
+            anchor_year = None
+        if token.year is not None:
+            anchor_year = token.year
+        elif anchor_year is not None and token.month is not None:
+            tokens[i] = replace(token, value=_date(anchor_year, token.month, token.day))
 
     def nearest_explicit(index: int, direction: int) -> _Token | None:
         cursor = index

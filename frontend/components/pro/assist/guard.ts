@@ -1,8 +1,9 @@
-import { parseDates, parsePeriod, parseQuote, readCrew, recognizedCompoundAmount, SAID_AMOUNT } from "./parse";
+import { parseDates, parsePeriod, parseQuote, readCrew, recognizedCompoundAmount, SAID_AMOUNT, uncertainCompoundAmount } from "./parse";
 import type { AssistForm, RuleOptions } from "./protocol";
 
 /** 규칙이 한 금액으로 축약하지 못해도 명시적으로 새로 확정한 금액은 서버 후보와 대조해요. */
 export function amountToConfirm(text: string, today: string): number | undefined {
+  if (uncertainCompoundAmount(text)) return undefined;
   const compound = recognizedCompoundAmount(text);
   if (compound !== undefined) return compound;
   const parts = text.split(/잘못\s*(?:적었고|썼고|입력했고)|(?:이?라고|이라)\s*(?:했는데|말했는데)/);
@@ -14,14 +15,14 @@ export function amountToConfirm(text: string, today: string): number | undefined
 }
 
 type Issues = Partial<Record<"amount" | "crew" | "days" | "period", string>>;
-const DATE_WORD = /\d\s*(?:일|월|\/)|오늘|내일|모레|이번\s*주|다음\s*주|요일/;
+const DATE_WORD = /\d\s*(?:일|월|\/)|\d{4}[-.]\d{1,2}[-.]\d{1,2}|오늘|내일|모레|이번\s*주|다음\s*주|요일/;
 
 export function assistInputIssues(form: AssistForm, text: string, opts: RuleOptions, confirmedAmount?: number): Issues {
   const issues: Issues = {};
   if (form === "quote" || form === "extra") {
     const amount = confirmedAmount ?? parseQuote(text, opts.today).amount;
     if (amount !== undefined && amount > 1_000_000_000) issues.amount = "10억 원까지 넣을 수 있어요.";
-    else if (amount === undefined && SAID_AMOUNT.test(text)) {
+    else if (uncertainCompoundAmount(text) || (amount === undefined && SAID_AMOUNT.test(text))) {
       issues.amount = "말씀하신 금액을 확인하지 못했어요. 금액을 직접 적어 주세요.";
     }
   }
