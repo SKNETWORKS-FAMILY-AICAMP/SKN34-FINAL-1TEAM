@@ -46,6 +46,8 @@ def rule_outputs(cases: list[dict], *, parser_path: Path | None = None) -> list[
         "node",
         "--experimental-strip-types",
         "--no-warnings",
+        "--experimental-loader",
+        (ROOT / "frontend/components/pro/assist/test-loader.mjs").as_uri(),
         str(HERE / "rule_bridge.mts"),
     ]
     if parser_path is not None:
