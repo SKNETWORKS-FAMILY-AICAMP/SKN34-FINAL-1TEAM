@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from app.agent import vendor_assist
+from app.vendor.assist_normalize import _scalar_clause_ends
 from app.vendor.assist_schemas import (
     AssistContext,
     AssistRequest,
@@ -20,6 +21,25 @@ from app.vendor.assist_validation import review_fields, verified_previous
 
 CTX = AssistContext(today=date(2026, 11, 24), crew_max=6)
 RESOURCE = UUID(int=179)
+
+
+@pytest.mark.parametrize(
+    ("text", "clauses"),
+    [
+        ("견적 4,550,000원, 기간 미정", ["견적 4,550,000원,", " 기간 미정"]),
+        ("견적 4.5만원. 기간 미정", ["견적 4.5만원.", " 기간 미정"]),
+        ("금액 500만원이고   기간은 미정", ["금액 500만원이고   ", "기간은 미정"]),
+        ("인원 3명이며\t\n  일정은 미정", ["인원 3명이며\t\n  ", "일정은 미정"]),
+        ("인원 3명이며\n일정은 미정", ["인원 3명이며\n", "일정은 미정"]),
+        ("금액 500만원이고   작업 예정", ["금액 500만원이고   작업 예정"]),
+        ("금액 500만원!\n", ["금액 500만원!", "\n", ""]),
+        ("", [""]),
+    ],
+)
+def test_scalar_clause_scan_preserves_original_offsets(text, clauses):
+    ends = _scalar_clause_ends(text)
+    assert [text[start:end] for start, end in zip([0, *ends], ends)] == clauses
+    assert ends[-1] == len(text)
 
 
 def _request(form, text, *, prior=None, current=None, rules=None):
@@ -51,6 +71,9 @@ def _assert_held(candidate):
     ("form", "text", "field", "value", "evidence"),
     [
         ("quote", "견적은 500만원으로 넣지 마세요", "amount", 5_000_000, "500만원"),
+        ("quote", "견적은 500만원으로 넣지   마세요", "amount", 5_000_000, "500만원"),
+        ("quote", "견적 500만원으로 할   생각이에요", "amount", 5_000_000, "500만원"),
+        ("quote", "견적 삼백만원으로 넣지   마세요", "amount", 3_000_000, "삼백만원"),
         ("quote", "견적 500만원으로 확정할게요. 잠깐, 취소할게요.", "amount", 5_000_000, "500만원"),
         ("quote", "견적 300만~500만 원", "amount", 5_000_000, "500만 원"),
         ("quote", "견적 300만원 이상", "amount", 3_000_000, "300만원"),
@@ -68,6 +91,7 @@ def _assert_held(candidate):
         ("quote", "견적 - 500만원", "amount", 5_000_000, "500만원"),
         ("dates", "인원은 3명으로 할까요?", "crew", 3, "3명"),
         ("dates", "작업 인원은 3명으로 바꾸지 마세요", "crew", 3, "3명"),
+        ("dates", "작업 인원은 3명으로 바꾸지\t 마세요", "crew", 3, "3명"),
         ("dates", "작업 인원은 3명 정도로 생각하고 있어요", "crew", 3, "3명"),
         ("dates", "작업 인원 2명 아니면 3명", "crew", 3, "3명"),
         ("dates", "작업자 3명 이상", "crew", 3, "3명"),
@@ -90,10 +114,13 @@ def test_scalar_set_is_held_on_both_paths(source, form, text, field, value, evid
     [
         ("quote", "견적 삼백만원, 기간은 아직 미정", "amount", 3_000_000, "삼백만원"),
         ("quote", "견적 삼백만원이고 기간은 아직 미정", "amount", 3_000_000, "삼백만원"),
+        ("quote", "견적 삼백만원이고   기간은 아직 미정", "amount", 3_000_000, "삼백만원"),
+        ("quote", "견적 4,550,000원, 기간은 미정", "amount", 4_550_000, "4,550,000원"),
         ("quote", "견적 삼백만원. 기간은 다시 고민 중이에요.", "amount", 3_000_000, "삼백만원"),
         ("quote", "견적 455만 5백 원", "amount", 4_550_500, "455만 5백 원"),
         ("quote", "견적 1천500만원, 공사 기간은 미정", "amount", 15_000_000, "1천500만원"),
         ("dates", "인원 3명, 작업일은 아직 미정", "crew", 3, "3명"),
+        ("dates", "인원 3명이고   작업일은 미정", "crew", 3, "3명"),
         ("dates", "12/8부터 12/10까지 공사, 2명", "crew", 2, "2명"),
         ("quote", "견적 10억원", "amount", 1_000_000_000, "10억원"),
         ("dates", "인원 6명", "crew", 6, "6명"),

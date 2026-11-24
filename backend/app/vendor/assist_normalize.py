@@ -68,24 +68,54 @@ _CREW_REPLACEMENT = re.compile(
 _CREW_CLAUSE_BREAK = re.compile(r"(?<!\d)[,.]|[,.](?!\d)|[;!。\n]")
 _CREW_CORRECTION_UNCERTAIN = re.compile(
     r"[?？]|아마|혹시|미정|보류|검토|취소|철회|고민|가능하면|예정|잠정|"
-    r"모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s*걸로|하지\s*마|하지\s*않"
+    r"모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s?걸로|하지\s?마|하지\s?않"
 )
 
 # 숫자 안의 소수점·천 단위 쉼표는 문장 경계가 아니다.
-_SCALAR_CLAUSE_BREAK = re.compile(
-    r"(?<!\d)[,.]|[,.](?!\d)|[;!?？。\n]|(?<=[고며])\s+"
-    r"(?=(?:부가세|세금|기간|일수|일정|작업일|날짜|유효기간|항목|제목|사유|이유|"
-    r"금액|견적|인원|작업자)(?:은|는|이|가|을|를)\s*)"
+_SCALAR_CLAUSE_TARGET = re.compile(
+    r"(?:부가세|세금|기간|일수|일정|작업일|날짜|유효기간|항목|제목|사유|이유|"
+    r"금액|견적|인원|작업자)(?:은|는|이|가|을|를)"
 )
+# 아래 검색 패턴은 공백 연속열을 한 칸으로 축약한 절에서만 사용한다.
 _SCALAR_AMOUNT_TARGET = re.compile(r"금액|견적|비용|가격|공사비|총액|합계|추가금|추가비")
 _SCALAR_CREW_TARGET = re.compile(
-    r"인원|작업자|인부|사람|(?:\d|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*명"
+    r"인원|작업자|인부|사람|(?:\d|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s?명"
 )
 _SCALAR_OTHER_TARGET = re.compile(
     r"부가세|세금|면세|기간|일수|일정|작업일|날짜|유효기간|종료일|시작일|항목|제목|사유|이유|"
-    r"\d{1,2}\s*(?:월|/)\s*\d{1,2}|\d+\s*일"
+    r"\d{1,2}\s?(?:월|/)\s?\d{1,2}|\d\s?일"
 )
-_SCALAR_CONDITION = re.compile(r"가능하면|(?:라면|다면|으면|이면|하면)|경우|일\s*때")
+_SCALAR_CONDITION = re.compile(r"가능하면|(?:라면|다면|으면|이면|하면)|경우|일\s?때")
+
+
+def _scalar_clause_ends(text: str) -> list[int]:
+    """원문 오프셋을 보존하면서 절의 경계를 순차 탐색한다."""
+    ends: list[int] = []
+    pos = 0
+    size = len(text)
+    while pos < size:
+        char = text[pos]
+        if char in ",.":
+            if not (
+                pos > 0
+                and text[pos - 1].isdecimal()
+                and pos + 1 < size
+                and text[pos + 1].isdecimal()
+            ):
+                ends.append(pos + 1)
+        elif char in ";!?？。\n":
+            ends.append(pos + 1)
+        elif char.isspace() and pos > 0 and text[pos - 1] in "고며":
+            end = pos + 1
+            while end < size and text[end].isspace():
+                end += 1
+            if _SCALAR_CLAUSE_TARGET.match(text, end):
+                ends.append(end)
+                pos = end
+                continue
+        pos += 1
+    ends.append(size)
+    return ends
 
 
 def scalar_clause_risk(
@@ -96,7 +126,10 @@ def scalar_clause_risk(
     *,
     masked: str | None = None,
 ) -> bool:
-    """같은 숫자 필드와 대상 없는 보류·조건만 검사하고 독립 필드는 구분한다."""
+    """같은 숫자 필드와 대상 없는 보류·조건만 검사하고 독립 필드는 구분한다.
+
+    risk는 공백 연속열을 한 칸으로 축약한 절에 대한 검색 패턴이다.
+    """
     own, other = (
         (_SCALAR_AMOUNT_TARGET, _SCALAR_CREW_TARGET)
         if field == "amount"
@@ -104,11 +137,11 @@ def scalar_clause_risk(
     )
     checked = text if masked is None else masked
     start = 0
-    boundaries = [m.end() for m in _SCALAR_CLAUSE_BREAK.finditer(text)] + [len(text)]
+    boundaries = _scalar_clause_ends(text)
     first = min((a for a, _ in spans), default=len(text))
     for end in boundaries:
-        clause = text[start:end]
-        candidate = checked[start:end]
+        clause = re.sub(r"\s+", " ", text[start:end])
+        candidate = re.sub(r"\s+", " ", checked[start:end])
         has_value = any(a < end and b > start for a, b in spans)
         if risk.search(candidate) and (
             has_value
