@@ -253,6 +253,96 @@ test("이전 clear가 유지되는 동안 최초 사유를 baseline으로 전송
   assert.deepEqual(applied, [{ amount: 120_000 }]); // 삭제는 기본 미선택
 });
 
+test("#179 추가금: 서버 연결 실패에도 공사 제목만 올바른 규칙 후보로 남아요", async () => {
+  const current = {
+    title: "걸레받이 보수", reason: "철거 중 파손 발견", amount: 180_000, vat: "excluded",
+  };
+  const api = pending();
+  const session = new AssistSession("extra", "deal-id", api.requester);
+  const text = "사유 말고 공사 제목을 몰딩 재시공으로 바꿔 주세요.";
+  assert.ok(session.send(text, current, { today }));
+  const request = api.jobs[0].request;
+  assert.deepEqual(request.rule_fields.map((item) => [item.field, item.action, item.value]), [
+    ["title", "set", "몰딩 재시공"],
+    ["reason", "keep", null],
+    ["amount", "keep", null],
+    ["vat", "keep", null],
+  ]);
+  api.jobs[0].reject(new AssistApiError(0, "network", "서버 연결 실패"));
+  await flush();
+  assert.equal(session.view.phase, "ready");
+  assert.equal(session.view.response?.source, "rule");
+  assert.equal(session.view.response?.fields.find((field) => field.field === "title")?.value, "몰딩 재시공");
+  const changes: AssistCurrent[] = [];
+  assert.equal(session.apply(current, (value) => changes.push(value)), true);
+  assert.deepEqual(changes, [{ title: "몰딩 재시공" }]);
+  assert.deepEqual(current, {
+    title: "걸레받이 보수", reason: "철거 중 파손 발견", amount: 180_000, vat: "excluded",
+  });
+});
+
+test("#179 추가금: 제목 후보를 유지하면서 직접 고친 금액은 덮어쓰지 않아요", async () => {
+  const original = {
+    title: "걸레받이 보수", reason: "철거 중 파손 발견", amount: 180_000, vat: "excluded",
+  };
+  const api = pending();
+  const session = new AssistSession("extra", "deal-id", api.requester);
+  const firstText = "제목은 문틀 보강, 금액은 30만 원으로 변경해 주세요.";
+  assert.ok(session.send(firstText, original, { today }));
+  const first = api.jobs[0].request;
+  assert.equal(first.rule_fields.find((item) => item.field === "title")?.value, "문틀 보강");
+  assert.equal(first.rule_fields.find((item) => item.field === "amount")?.value, 300_000);
+  assert.equal(first.rule_fields.find((item) => item.field === "reason")?.action, "keep");
+  api.jobs[0].resolve(response(first, {
+    title: {
+      action: "set", value: "문틀 보강", evidence: "제목은 문틀 보강",
+      source: "rule", origin_request_id: first.request_id,
+    },
+    amount: {
+      action: "set", value: 300_000, evidence: "금액은 30만 원으로 변경",
+      origin_request_id: first.request_id,
+    },
+  }));
+  await flush();
+  const manual = { ...original, amount: 280_000 };
+  const followText = "제가 직접 입력한 금액은 그대로 두고 부가세 포함으로 바꿔 주세요. 아까 제목 변경도 유지해 주세요.";
+  assert.ok(session.send(followText, manual, { today }));
+  const next = api.jobs[1].request;
+  assert.deepEqual(next.previous_candidate?.fields.map((item) => item.field), ["title"]);
+  assert.deepEqual(next.previous_candidate?.baselines, { title: original.title });
+  assert.equal(next.previous_candidate?.sources?.title, "rule");
+  assert.equal(next.previous_candidate?.origins?.title, first.request_id);
+  assert.equal(next.rule_fields.find((item) => item.field === "title")?.action, "keep");
+  assert.equal(next.rule_fields.find((item) => item.field === "amount")?.action, "keep");
+  assert.equal(next.rule_fields.find((item) => item.field === "vat")?.value, "included");
+  api.jobs[1].resolve(response(next, {
+    title: {
+      action: "set", value: "문틀 보강", evidence: "제목은 문틀 보강",
+      source: "rule", origin_request_id: first.request_id,
+    },
+    vat: { action: "set", value: "included", origin_request_id: next.request_id },
+  }));
+  await flush();
+  const changes: AssistCurrent[] = [];
+  assert.equal(session.apply(manual, (value) => changes.push(value)), true);
+  assert.deepEqual(changes, [{ title: "문틀 보강", vat: "included" }]);
+  assert.equal(manual.amount, 280_000);
+  assert.equal(manual.reason, "철거 중 파손 발견");
+});
+
+test("#179 추가금: 경쟁 제목이나 부정 요청은 규칙 제목 후보로 승격하지 않아요", () => {
+  for (const text of [
+    "항목은 누수 보수, 제목은 몰딩 재시공",
+    "제목은 누수 보수 말고 몰딩 재시공",
+    "제목은 문틀 보강으로 바꾸지 마세요",
+    "제목은 문틀 보강으로 변경할까요?",
+    "사유는 기존 벽체 손상이라고 적어 주세요",
+  ]) {
+    const title = ruleFields("extra", text, { today }).find((item) => item.field === "title");
+    assert.equal(title?.action, "keep", text);
+  }
+});
+
 test("3회 연속 메시지에서도 물려받은 기준값·원래 요청 ID·출처가 바뀌지 않아요", async () => {
   const api = pending();
   const current = { ...quote, amount: 1_000_000 };

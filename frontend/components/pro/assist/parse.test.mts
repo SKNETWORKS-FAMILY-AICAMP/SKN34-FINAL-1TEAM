@@ -150,6 +150,46 @@ test("리뷰 회귀: 추가 금액 항목 이름", () => {
   assert.equal(x.amount, 150_000);
 });
 
+test("#179 추가금: 명시적 제목 대상을 사유·금액과 분리해 읽어요", () => {
+  assert.deepEqual(parseExtra("사유 말고 공사 제목을 몰딩 재시공으로 바꿔 주세요.", T), {
+    title: "몰딩 재시공",
+  });
+  assert.deepEqual(parseExtra("제목은 문틀 보강, 금액은 30만 원으로 변경해 주세요.", T), {
+    title: "문틀 보강", amount: 300_000,
+  });
+  assert.equal(parseExtra("추가 항목은 곰팡이 방지 처리로 적어 주세요.", T).title, "곰팡이 방지 처리");
+  assert.equal(parseExtra("공사 제목: 누수 보수", T).title, "누수 보수");
+  assert.equal(parseExtra("작업명은 현관 몰딩 교체", T).title, "현관 몰딩 교체");
+  assert.equal(parseExtra("제목은 문틀 보강, 벽 안쪽까지 곰팡이가 퍼져서", T).reason,
+    "벽 안쪽까지 곰팡이가 퍼져서");
+});
+
+test("#179 추가금: 명확하지 않은 제목과 다른 필드의 지시를 제목으로 사용하지 않아요", () => {
+  for (const text of [
+    "제목은 문틀 보강?",
+    "제목은 문틀 보강으로 바꿔 주세요. 잠깐, 제목 변경은 취소할게요.",
+    "제목은 문틀 보강으로 바꿀까요?",
+    "제목은 문틀 보강 또는 몰딩 보수",
+    "제목은 문틀 보강으로 바꿀까 고민 중",
+    "제목은 문틀 보강으로 바꾸면 될 것 같아요",
+    "제목은 문틀 보강으로 변경할 예정입니다",
+    "제목은 문틀 보강으로 변경한 게 아닙니다.",
+    "제목을 몰딩 재시공으로 바꾸지 마세요.",
+    "제목은 그대로 유지해 주세요.",
+    "제목은 누수 보수, 제목은 몰딩 재시공",
+    "제목은 누수 보수 말고 몰딩 재시공",
+    "추가금 사유만 지워 주세요.",
+    "추가금 사유는 지우지 말아 주세요.",
+    "사유 칸에는 기존 벽체 손상이라고 적어 주세요.",
+    "금액은 30만 원으로 변경해 주세요.",
+  ]) {
+    assert.equal(parseExtra(text, T).title, undefined, text);
+  }
+  assert.equal(parseExtra("금액은 30만 원으로 변경해 주세요.", T).amount, 300_000);
+  assert.equal(parseExtra("벽 안쪽까지 곰팡이가 퍼져서", T).reason, "벽 안쪽까지 곰팡이가 퍼져서");
+  assert.equal(parseExtra("벽 안쪽까지 곰팡이가 퍼져서", T).title, undefined);
+});
+
 // #174(dev)에서 온 시험 문장
 test("#174 금액: 소수 만 단위 · 금액 여럿이면 전체 금액 하나만", () => {
   assert.equal(parseQuote("455.5만 원", T).amount, 4_555_000);

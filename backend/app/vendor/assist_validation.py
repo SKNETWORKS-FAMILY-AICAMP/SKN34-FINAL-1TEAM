@@ -899,6 +899,136 @@ def reviewed_date_edit(
     }
 
 
+_EXTRA_AMOUNT_OLD_ERROR = re.compile(
+    r"(?:원)?(?:은|는|을|를|이|가)?"
+    r"(?:잘못(?:적었|썼|입력했|기재했)|틀리게(?:적었|썼|입력했|기재했))"
+    r"(?:고|는데|으며|어서|지만)?"
+)
+_EXTRA_AMOUNT_NEW_ACTION = re.compile(
+    r"(?:원)?(?:으로|로)"
+    r"(?:(?:정정|수정|변경)"
+    r"(?:해주세요|해줘요|해주십시오|해요|할게요|하겠습니다|합니다)"
+    r"|(?:고쳐|바꿔)(?:주세요|줘요|주십시오|요)"
+    r"|고칠게요|바꿀게요|고치겠습니다|바꾸겠습니다)"
+)
+_EXTRA_AMOUNT_UNDECIDED = re.compile(
+    r"[?？]|아마|혹시|아직|미정|보류|가능하면|검토|예정|잠정|"
+    r"고민|또는|혹은|아니면|수도|지도|것\s*같|(?:할|일|될)까|정도|쯤"
+)
+_EXTRA_AMOUNT_FOLLOWUP_CANCEL = re.compile(
+    r"취소|철회|보류|미정|없던걸로|원래대로|그대로두|하지마|안할|다시고민"
+)
+
+
+def _extra_amount_groups(
+    text: str,
+) -> tuple[list[tuple[int, int, int]], set[int]] | None:
+    """'21만 5천 원'은 하나의 금액으로 묶고 다른 금액 선택지는 따로 센다."""
+    groups: list[tuple[int, int, int]] = []
+    components: set[int] = set()
+    last_scale = 0
+    for token in MONEY.finditer(text):
+        unit = token[2]
+        if not unit:
+            continue
+        value = Decimal(token[1].replace(",", "")) * MONEY_UNIT[unit]
+        if value != value.to_integral_value():
+            return None
+        amount = int(value)
+        components.add(amount)
+        if (
+            groups
+            and MONEY_UNIT[unit] < last_scale
+            and not text[groups[-1][1] : token.start()].strip()
+        ):
+            start, _, previous = groups[-1]
+            groups[-1] = (start, token.end(), previous + amount)
+        else:
+            groups.append((token.start(), token.end(), amount))
+        last_scale = MONEY_UNIT[unit]
+    return groups, components
+
+
+def _verified_extra_amount_error_correction(
+    item: FieldIntent,
+    text: str,
+    context: AssistContext,
+    old_text: str,
+    new_text: str,
+    before: int,
+    after: int,
+) -> bool:
+    """옛 금액 오류 인정 뒤 새 금액으로 확정한 단방향 정정만 허용한다."""
+    relation = item.correction
+    if relation is None or type(item.value) is not int or type(relation.rejected_value) is not int:
+        return False
+    try:
+        check_value("extra", "amount", relation.rejected_value)
+        if not (
+            _grounded(
+                "extra", "amount", relation.rejected_value, relation.rejected_evidence, context
+            )
+            and _grounded("extra", "amount", item.value, relation.accepted_evidence, context)
+        ):
+            return False
+    except (TypeError, ValueError, KeyError):
+        return False
+
+    raw = normalized(text)
+    parsed = _extra_amount_groups(raw)
+    if parsed is None:
+        return False
+    groups, components = parsed
+    if len(groups) != 2:
+        return False
+    (old_start, old_end, old_amount), (new_start, new_end, new_amount) = groups
+    if (
+        (old_amount, new_amount) != (relation.rejected_value, item.value)
+        or not before <= old_start < before + len(old_text)
+        or not after <= new_start < after + len(new_text)
+        or not _amount_mentions(raw) <= components | {old_amount, new_amount}
+    ):
+        return False
+    if not _EXTRA_AMOUNT_OLD_ERROR.fullmatch(re.sub(r"\s+", "", raw[old_end:new_start])):
+        return False
+    sentence_start = (
+        max(
+            raw.rfind(".", 0, old_start),
+            raw.rfind(";", 0, old_start),
+            raw.rfind("\n", 0, old_start),
+        )
+        + 1
+    )
+    end_marker = re.search(r"[.;!?？\n]", raw[new_end:])
+    if end_marker and end_marker[0] in "?？":
+        return False
+    sentence_end = new_end + end_marker.start() if end_marker else len(raw)
+    amount_sentence = raw[sentence_start:sentence_end]
+    if _EXTRA_AMOUNT_UNDECIDED.search(amount_sentence) or _RULE_QUESTION_OR_UNDECIDED.search(
+        amount_sentence
+    ):
+        return False
+    new_action = re.sub(r"\s+", "", raw[new_end:sentence_end])
+    if not _EXTRA_AMOUNT_NEW_ACTION.fullmatch(new_action):
+        return False
+    if _HISTORICAL_DENIED_NEW.search(amount_sentence) or _DIRECT_REPLACE.search(
+        raw[new_end:sentence_end]
+    ):
+        return False
+    # 확정 직후 다른 문장에서 같은 금액 변경을 취소·보류하면 앞 제안을 되살리지 않는다.
+    rest = raw[sentence_end + 1 :] if end_marker else ""
+    for sentence in re.split(r"[.;!?？\n]", rest):
+        compact = re.sub(r"\s+", "", sentence)
+        if not _EXTRA_AMOUNT_FOLLOWUP_CANCEL.search(compact):
+            continue
+        if re.search(r"금액|추가금|공사비|견적", compact):
+            return False
+        other_field = re.search(r"세금|부가세|사유|이유|제목|항목|인원|기간|일정|프로젝트", compact)
+        if not other_field:
+            return False
+    return True
+
+
 def _verified_correction(
     item: FieldIntent,
     form: FormName,
@@ -929,6 +1059,14 @@ def _verified_correction(
         return None
     if _verified_historical_scalar(
         item, form, text, context, previous, old_text, new_text, before, after
+    ):
+        return relation
+    if (
+        form == "extra"
+        and item.field == "amount"
+        and _verified_extra_amount_error_correction(
+            item, text, context, old_text, new_text, before, after
+        )
     ):
         return relation
     link = normalized_text[before + len(old_text) : after]

@@ -280,21 +280,63 @@ export type ExtraFill = QuoteFill & { title?: string; reason?: string };
 const WHY = /(?<!견적|계약|문|청구|확인)서\s*요?\s*$|때문/;
 /** 항목 이름에서 지울 금액: 만 · 원이 붙은 숫자만("2평 · 3장"은 둬요) */
 const AMOUNT_WORD = /\d[\d,]*(?:\.\d+)?\s*만\s*(?:\d\s*천)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*\s*원(?:이|가|은|는)?/g;
+/** 명시적인 제목 지시가 있으면 앞쪽의 '사유 말고'를 제목으로 읽지 않아요. */
+const EXTRA_TITLE_TARGET = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*)?(?:항목명|작업명|제목|항목|이름)\s*(?::|=|은|는|을|를)\s*/g;
+const EXTRA_TITLE_PREFIX = /^(?:추가금|추가금액)?(?:사유|이유)[은는을를]?(?:말고|대신)$/;
+const EXTRA_TITLE_CHANGE = /(?:으로|로)\s*(?:(?:바꿔|고쳐|적어|해)\s*(?:주세요|줘요|주십시오)|(?:변경|수정|정정|입력)\s*해\s*(?:주세요|줘요|주십시오)|바꿀게요|고칠게요)$/;
+const EXTRA_TITLE_UNCERTAIN = /[?？]|아마|혹시|미정|모르|애매|일까|할까|고민|예정|생각\s*중|검토\s*중|것\s*같|가능하면|(?:바꾸|고치|수정|변경|정정)려고|또는|아니면/;
+const EXTRA_TITLE_DENIED = /(?:그대로|유지|바꾸지|고치지|수정하지|변경하지|건드리지|손대지|삭제|지우|비우|없애|취소|하지\s*마|주지\s*마|말아\s*주|안\s*(?:할|해|하|바꿔|고쳐|수정|변경)|아니|아닙|말고|대신)/;
+const EXTRA_OTHER_FIELD = /(?:사유|이유|금액|비용|부가세|VAT)\s*(?::|=|은|는|을|를)/i;
+const EXTRA_NOT_FREE_TITLE = /^(?:추가금|추가\s*(?:금액|비용|요금)|금액|비용|가격|공사비|총액|견적|사유|이유|부가세|부가가치세|VAT|면세|제목|항목명|항목|작업명|이름)(?:\s|은|는|이|가|을|를|만|도|:|=|$)/i;
+
+/** 제목 대상이 하나로 정해졌을 때만 해당 절에서 값을 추출해요. */
+function targetedExtraTitle(text: string): { targeted: boolean; value?: string } {
+  const targets = [...text.matchAll(EXTRA_TITLE_TARGET)];
+  if (!targets.length) return { targeted: false };
+  if (targets.length !== 1) return { targeted: true };
+  const match = targets[0];
+  const before = text.slice(0, match.index);
+  const prefix = before.split(/[,;.!?？\n]/).at(-1)?.trim();
+  if (prefix && !EXTRA_TITLE_PREFIX.test(prefix.replace(/\s+/g, ""))) return { targeted: true };
+  const rest = text.slice(match.index + match[0].length);
+  const boundary = rest.search(/[,;.!?？\n]/);
+  if (boundary >= 0 && /[?？]/.test(rest[boundary])) return { targeted: true };
+  if (boundary >= 0) {
+    const later = rest.slice(boundary + 1).split(/[,;.!?？\n]/);
+    if (later.some((part) => /취소|철회|보류/.test(part) &&
+      (/제목|항목|작업명|이름/.test(part) || !/금액|사유|이유|비용|부가세|세금/.test(part)))) {
+      return { targeted: true };
+    }
+  }
+  const clause = (boundary < 0 ? rest : rest.slice(0, boundary)).trim();
+  if (!clause || EXTRA_TITLE_UNCERTAIN.test(clause) || EXTRA_TITLE_DENIED.test(clause) || EXTRA_OTHER_FIELD.test(clause)) {
+    return { targeted: true };
+  }
+  const action = clause.match(EXTRA_TITLE_CHANGE);
+  // 수정 동사만 있고 값을 분리할 수 없다면 문장 전체를 제목으로 사용하지 않아요.
+  if (!action && /바꿔|바꾸|고쳐|고치|변경|수정|정정|입력|적어/.test(clause)) return { targeted: true };
+  const value = (action ? clause.slice(0, action.index) : clause).trim();
+  if (!value || value.length > 60 || /^\d/.test(value)) return { targeted: true };
+  return { targeted: true, value };
+}
 
 /** 추가 금액: "곰팡이 방지 처리 12만 원, 부가세 포함, 벽 안쪽까지 곰팡이가 퍼져서" → 항목 · 금액 · 부가세 · 이유 */
 export function parseExtra(text: string, today: string): ExtraFill {
   const out: ExtraFill = parseQuote(text, today);
   delete out.days;
   delete out.valid;
+  const explicit = targetedExtraTitle(text);
+  if (explicit.value) out.title = explicit.value;
   for (const raw of text.split(/,|\n/)) {
     const part = raw.trim();
     if (!part) continue;
     if (!out.reason && WHY.test(part)) { out.reason = part.replace(/[.。]\s*$/, ""); continue; }
-    if (!out.title && !/부가세|부가가치세|VAT|면세/i.test(part)) {
+    if (!out.title && !explicit.targeted && !EXTRA_NOT_FREE_TITLE.test(part) &&
+      !EXTRA_TITLE_UNCERTAIN.test(part) && !/부가세|부가가치세|VAT|면세/i.test(part)) {
       // 정정한 뒤 말은 항목 이름이 아니에요("곰팡이 방지 12만 원이 아니라 15만 원")
       const head = part.split(/아니라|아니고|말고/)[0];
       const t = head.replace(AMOUNT_WORD, "").replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
-      if (t && !/^\d/.test(t)) out.title = t.slice(0, 60);
+      if (t && !/^\d/.test(t) && !EXTRA_TITLE_DENIED.test(t)) out.title = t.slice(0, 60);
     }
   }
   return out;
