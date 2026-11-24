@@ -117,7 +117,7 @@ function shift(day: string, by: number): string {
 const num = (s: string) => Number(s.replace(/,/g, ""));
 const MAN_SCALE: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
 const COMPOUND_MAN = /(?<![\d.,천백십])(?:[\d천백십][ \t]*){1,24}만/g;
-export const SAID_AMOUNT = /\d\s*[억천백만원]|(?<![가-힣])[일이삼사오육칠팔구십백천만억]{1,8}\s*원|(?<![가-힣])[천백십]만(?=\s|[,.;!?]|$)/;
+export const SAID_AMOUNT = /\d\s*[억천백만원]|(?<![가-힣])[일이삼사오육칠팔구십백천만억]{1,8}\s*원|(?<![가-힣])[천백십]만(?=$|[\s,.;!?]|으로|은|을|이요|입니다)/;
 
 /** 만 앞의 혼합 표기를 통째로 읽어요. 천500만처럼 시작 숫자가 없으면 뒷부분도 쓰지 않아요. */
 function manOf(text: string): string | null {
@@ -285,16 +285,7 @@ function expandDateList(text: string, today: string): string | null {
 /** 공사 날짜: "12/8부터 12/10까지, 2명" → 그 사이 날 모두(안 된다고 한 날 · 공휴일 빼고, noWeekend면 토 · 일도 빼고).
  *  "12/8, 12/9, 12/11"처럼 늘어놓으면 그 날만(말한 날은 주말이어도 그대로 두고 서버가 다시 봐요) */
 export function parseDates(text: string, today: string, baseMonth?: string | null, holidays: string[] = [], noWeekend = false): DatesFill | null {
-  // 인원 단위가 있는 "한/두/세/네 명"만 읽어요. "네, ..."는 응답이고 "두세 명"은 범위예요.
-  const native: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4 };
-  const crewTerm = /(?<![가-힣\d])(?:(\d{1,2})|(한|두|세|네))\s*명/g;
-  const ambiguous = /(?:\d{1,2}|한|두|세|네)\s*(?:명\s*)?[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*명/;
-  const crews = new Set([...text.matchAll(crewTerm)].map((m) => m[1] ? Number(m[1]) : native[m[2]]));
-  const crew = !ambiguous.test(text) && crews.size === 1 ? [...crews][0] : undefined;
-  const said = text.replace(
-    /(?:\d{1,2}|한|두|세|네)\s*명\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:\d{1,2}|한|두|세|네)\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:한|두|세|네)\s*(?:한|두|세|네)\s*명|(?<![가-힣\d])(?:\d{1,2}|한|두|세|네)\s*명/g,
-    "",
-  );
+  const { value: crew, withoutCrew: said } = readCrew(text);
   const days: string[] = [];
   if (RANGE.test(said)) {
     const p = parsePeriod(said, today, baseMonth);
@@ -312,6 +303,26 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
   }
   if (!days.length && !crew) return null;
   return { days, crew };
+}
+
+const NATIVE_CREW: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10, 열두: 12 };
+const CREW_NUMBER = String.raw`(?:(?<![\d.])\d+(?:\.\d+)?|(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열두|열))`;
+const CREW_UNIT = String.raw`(?:명|인(?=$|[\s.,!?;~/∼–-]|으로|[은을도과]|부터|에서|입니다|이에요))`;
+const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼–-]|부터|에서|또는|혹은)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*명`, "g");
+const CREW_TERM = new RegExp(String.raw`(${CREW_NUMBER})\s*${CREW_UNIT}`, "g");
+
+/** 범위 표현을 먼저 걷어내서 '2/3인'의 일부를 날짜나 확정 인원으로 읽지 않는다. */
+export function readCrew(text: string) {
+  const single = text.replace(CREW_RANGE, " ");
+  const ambiguous = single !== text;
+  const counts = new Set<number>();
+  const withoutCrew = single.replace(CREW_TERM, (_, raw: string) => {
+    counts.add(NATIVE_CREW[raw] ?? Number(raw));
+    return " ";
+  });
+  const [n] = counts;
+  return { mentioned: ambiguous || counts.size > 0, withoutCrew,
+    value: !ambiguous && counts.size === 1 && Number.isInteger(n) && n > 0 && n < 100 ? n : undefined };
 }
 
 export type ExtraFill = QuoteFill & { title?: string; reason?: string };

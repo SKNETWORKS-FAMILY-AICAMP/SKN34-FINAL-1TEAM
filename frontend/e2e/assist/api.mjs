@@ -40,6 +40,10 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/notifications/unread") return json(res, { unread: 0 });
   if (url.pathname === "/notifications") return json(res, { items: [], unread: 0 });
   if (url.pathname === "/vendor/profile") return json(res, MOCK_PROFILE);
+  if (req.method === "POST" && (
+    /^\/vendor\/visits\/[^/]+\/quote\/send$/.test(url.pathname) ||
+    /^\/vendor\/jobs\/[^/]+\/(?:extras|dates)$/.test(url.pathname)
+  )) return json(res, {});
   if (url.pathname.endsWith("/extras/preview")) return json(res, { supply: 120000, vat: 0, total: 120000 });
   const quote = url.pathname.match(/^\/vendor\/visits\/([^/]+)\/quote$/);
   if (quote) {

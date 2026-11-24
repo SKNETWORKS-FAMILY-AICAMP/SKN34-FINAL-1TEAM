@@ -111,7 +111,7 @@ type Scenario = {
 test("복합 금액은 전체 원 단위로 확인한 뒤에만 견적서에 저장해요", async ({ page, request }) => {
   const box = await open(page, `/vendor/requests/${VISITED}/quote`);
   const amount = page.getByLabel("견적 금액", { exact: true });
-  for (const [text, expected] of [["견적 1천500만 원", 15_000_000], ["견적 2천300만 원", 23_000_000]] as const) {
+  for (const [text, expected] of [["견적 1천500만 원, 부가세 별도", 15_000_000], ["견적 2천300만 원, 부가세 별도", 23_000_000]] as const) {
     const before = writes(await recorded(request)).length;
     await send(page, text);
     await expect(box.getByRole("checkbox", { name: "금액 적용 선택" })).toBeEnabled();
@@ -138,51 +138,75 @@ test("예약된 견적 자동 저장을 멈추고 같은 금액을 다시 확인
 });
 
 for (const form of ["quote", "extra"] as const) {
-  test(`${form}: 읽지 못한 금액은 다른 칸을 고쳐도 옛 금액으로 발송하지 않아요`, async ({ page, request }) => {
-    await open(page, form === "quote" ? `/vendor/requests/${VISITED}/quote` : `/vendor/jobs/${WORKING}?step=extra`);
-    const amount = page.getByLabel(form === "quote" ? "견적 금액" : "금액", { exact: true });
-    if (form === "extra") {
-      await page.getByLabel("항목", { exact: true }).fill("추가 보강");
-      await page.getByLabel("이유", { exact: true }).fill("현장 요청");
-    }
-    await amount.fill("1000000");
-    await queueAnswer(request, { status: 503, message: "시험용 연결 실패" });
-    await send(page, "견적 천만, 부가세 별도");
-    await expect(page.getByText(/말씀하신 금액을 확인하지 못했어요/).first()).toBeVisible();
-    if (form === "quote") {
-      await page.getByLabel("공사 기간", { exact: true }).fill("3");
-      await page.getByRole("button", { name: "임시 저장", exact: true }).click();
-    } else {
-      await page.getByLabel("이유", { exact: true }).fill("사유만 직접 고침");
-    }
-    await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
-    await page.waitForTimeout(950);
-    expect(writes(await recorded(request))).toHaveLength(0);
-    await amount.fill("1500000");
-    await expect(page.getByText(/말씀하신 금액을 확인하지 못했어요/)).toHaveCount(0);
-    if (form === "quote") {
-      await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.entered_amount).toBe(1_500_000);
-    }
-  });
+  for (const phrase of ["견적 천만, 부가세 별도", "견적 천만으로, 부가세 별도"]) {
+    test(`${form}: ${phrase} 차단 후 금액만 고치면 정확한 값으로 한 번 발송해요`, async ({ page, request }) => {
+      await open(page, form === "quote" ? `/vendor/requests/${VISITED}/quote` : `/vendor/jobs/${WORKING}?step=extra`);
+      const amount = page.getByLabel(form === "quote" ? "견적 금액" : "금액", { exact: true });
+      if (form === "extra") {
+        await page.getByLabel("항목", { exact: true }).fill("추가 보강");
+        await page.getByLabel("이유", { exact: true }).fill("현장 요청");
+        await page.getByRole("radio", { name: "포함", exact: true }).check();
+      } else {
+        // 실제 첨부가 존재하는 견적 초안을 열고 날짜 유효성도 별도로 충족한다.
+        await expect(page.getByText("마루와벽_상계동_견적서.pdf", { exact: true })).toBeVisible();
+        await page.getByLabel("유효기간", { exact: true }).fill("2028-12-31");
+      }
+      await page.clock.install();
+      await amount.fill("1000000");
+      if (phrase.includes("으로")) {
+        await queueAnswer(request, { fields: [set("amount", 100_000, "천만"), set("vat", "excluded", "별도")] });
+      } else {
+        await queueAnswer(request, { status: 503, message: "시험용 연결 실패" });
+      }
+      await send(page, phrase);
+      await expect(page.getByText(/말씀하신 금액을 확인하지 못했어요/).first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "폼에 적용" })).toBeEnabled();
+      await page.getByRole("button", { name: "폼에 적용" }).click();
+      await expect(amount).toHaveValue("1,000,000");
+      if (form === "quote") {
+        await page.getByLabel("공사 기간", { exact: true }).fill("3");
+        await page.getByRole("button", { name: "임시 저장", exact: true }).click();
+      } else {
+        await page.getByLabel("이유", { exact: true }).fill("사유만 직접 고침");
+      }
+      await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+      await page.clock.fastForward(1200);
+      expect(writes(await recorded(request))).toHaveLength(0);
+      await amount.fill("1500000");
+      await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+      const postPath = form === "quote" ? QUOTE_PATH + "/send" : `/vendor/jobs/${WORKING}/extras`;
+      await expect.poll(async () => writes(await recorded(request)).filter((r) => r.method === "POST" && r.path === postPath).length).toBe(1);
+      const saved = writes(await recorded(request));
+      if (form === "quote") {
+        expect(saved.map((r) => [r.method, r.path])).toEqual([["PUT", QUOTE_PATH], ["POST", postPath]]);
+        expect(saved[0].body?.file_ids).toHaveLength(1);
+      } else {
+        expect(saved).toHaveLength(1);
+        expect(saved[0].body?.reason).toBe("사유만 직접 고침");
+      }
+      expect(saved[0].body).toMatchObject({ entered_amount: 1_500_000, vat_mode: "excluded" });
+    });
+  }
 }
 
-test("범위 밖이거나 미정인 인원을 확인하기 전에는 기존 인원으로 보내지 않아요", async ({ page, request }) => {
-  const box = await open(page, `/vendor/jobs/${DATES}`);
-  const days = ["2027-12-08", "2027-12-09"];
-  await queueAnswer(request, { fields: [set("days", days, "12월 8일, 9일")] });
-  await send(page, "2027년 12월 8일, 9일에 작업합니다");
-  await box.getByRole("button", { name: "폼에 적용" }).click();
-  for (const phrase of ["12명", "10명", "2~3명"]) {
-    await queueAnswer(request, { fields: [set("crew", 2, phrase)] });
-    await send(page, "공사 인원은 " + phrase);
+for (const phrase of ["12명", "10명", "2~3명", "12인", "2~3인"]) {
+  test(`인원 ${phrase}: 기존값 발송을 막고 직접 고른 3명으로만 보내요`, async ({ page, request }) => {
+    const box = await open(page, `/vendor/jobs/${DATES}`);
+    const days = ["2027-12-08", "2027-12-09"];
+    await queueAnswer(request, { fields: [set("days", days, "12월 8일, 9일"), set("crew", 2, phrase)] });
+    await send(page, "2027년 12월 8일부터 9일까지, " + phrase);
     await expect(page.getByText(/말씀하신 인원을 확정할 수 없어요/).first()).toBeVisible();
+    await box.getByRole("button", { name: "폼에 적용" }).click();
     await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
     expect(writes(await recorded(request))).toHaveLength(0);
-  }
-  await page.getByLabel("인원", { exact: true }).selectOption("3");
-  await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
-  await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.crew).toBe(3);
-});
+    await page.getByLabel("인원", { exact: true }).selectOption("3");
+    await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+    await expect.poll(async () => writes(await recorded(request)).length).toBe(1);
+    expect(writes(await recorded(request))[0]).toMatchObject({
+      method: "POST", path: `/vendor/jobs/${DATES}/dates`, body: { days, crew: 3 },
+    });
+  });
+}
 
 const scenarios: Scenario[] = [
   {

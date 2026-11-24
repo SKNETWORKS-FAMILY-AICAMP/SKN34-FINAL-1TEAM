@@ -1,4 +1,4 @@
-import { parseDates, parsePeriod, parseQuote, recognizedCompoundAmount, SAID_AMOUNT } from "./parse";
+import { parseDates, parsePeriod, parseQuote, readCrew, recognizedCompoundAmount, SAID_AMOUNT } from "./parse";
 import type { AssistForm, RuleOptions } from "./protocol";
 
 /** 규칙이 한 금액으로 축약하지 못해도 명시적으로 새로 확정한 금액은 서버 후보와 대조해요. */
@@ -15,7 +15,6 @@ export function amountToConfirm(text: string, today: string): number | undefined
 
 type Issues = Partial<Record<"amount" | "crew" | "days" | "period", string>>;
 const DATE_WORD = /\d\s*(?:일|월|\/)|오늘|내일|모레|이번\s*주|다음\s*주|요일/;
-const CREW_WORD = /(?:\d|[한두세네다섯여섯일곱여덟아홉열])\s*명/;
 
 export function assistInputIssues(form: AssistForm, text: string, opts: RuleOptions, confirmedAmount?: number): Issues {
   const issues: Issues = {};
@@ -28,10 +27,11 @@ export function assistInputIssues(form: AssistForm, text: string, opts: RuleOpti
   }
   if (form === "dates") {
     const parsed = parseDates(text, opts.today, opts.baseMonth, opts.holidays, opts.noWeekend);
-    if (CREW_WORD.test(text) && (!parsed?.crew || parsed.crew > (opts.crewMax ?? 6))) {
+    const crew = readCrew(text);
+    if (crew.mentioned && (!crew.value || crew.value > (opts.crewMax ?? 6))) {
       issues.crew = "말씀하신 인원을 확정할 수 없어요. 보낼 인원을 다시 골라 주세요.";
     }
-    if (DATE_WORD.test(text) && !parsed?.days.some((day) => day > opts.today)) {
+    if (DATE_WORD.test(crew.withoutCrew) && !parsed?.days.some((day) => day > opts.today)) {
       issues.days = "말씀하신 날짜를 넣지 못했어요. 달력에서 공사할 날을 다시 골라 주세요.";
     }
   }

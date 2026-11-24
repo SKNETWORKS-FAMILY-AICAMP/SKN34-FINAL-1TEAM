@@ -35,15 +35,28 @@ _SHORT_RANGE_TAIL = re.compile(
 )
 
 
-_CREW = re.compile(r"(?<!\d)(?<!\d[,.])(?:(\d{1,2})|(?<![가-힣])(한|두|세|네))\s*(?:명|인)(?!\d)")
+_NATIVE_CREW = {
+    "한": 1,
+    "두": 2,
+    "세": 3,
+    "네": 4,
+    "다섯": 5,
+    "여섯": 6,
+    "일곱": 7,
+    "여덟": 8,
+    "아홉": 9,
+    "열두": 12,
+    "열": 10,
+}
+_CREW_WORDS = "|".join(_NATIVE_CREW)
+_CREW_UNIT = r"(?:명(?!\d)|인(?=$|[\s.,!?;~/∼–-]|으로|[은을도과]|부터|에서|입니다|이에요))"
+_CREW = re.compile(rf"(?<!\d)(?<!\d[,.])(?:(\d{{1,2}})|(?<![가-힣])({_CREW_WORDS}))\s*{_CREW_UNIT}")
+_CREW_COUNT = rf"(?:(?<!\d)\d+|(?<![가-힣])(?:{_CREW_WORDS}))"
 _CREW_RANGE_LINK = r"(?:[~\-–—－∼〜/]|부터|에서|또는|혹은)"
 _CREW_RANGE = re.compile(
-    rf"(?:\d+|한|두|세|네)\s*(?:명|인)\s*{_CREW_RANGE_LINK}\s*"
-    r"(?:\d{1,2}|한|두|세|네)\s*(?:명|인)"
-    rf"|(?:\d+|한|두|세|네)\s*{_CREW_RANGE_LINK}\s*(?:\d+|한|두|세|네)\s*(?:명|인)"
-    r"|(?:한|두|세|네)\s*(?:한|두|세|네)\s*(?:명|인)"
+    rf"{_CREW_COUNT}\s*(?:{_CREW_UNIT}\s*)?{_CREW_RANGE_LINK}\s*{_CREW_COUNT}\s*{_CREW_UNIT}"
+    rf"|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*{_CREW_UNIT}"
 )
-_NATIVE_CREW = {"한": 1, "두": 2, "세": 3, "네": 4}
 
 
 @dataclass(frozen=True)
