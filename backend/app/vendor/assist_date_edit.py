@@ -88,7 +88,24 @@ _DAY_SHAPE = re.compile(
     r"(?!\s*(?:간|동안|정도|째|걸|소요|후|전|차|뒤))"
 )
 _MONTH_SHAPE = re.compile(r"(?<!\d)\d{1,2}\s*월")
-_CREW_REPLACEMENT = re.compile(r"(?<!\d)\d+\s*명\s*에서\s*\d+\s*명")
+
+
+def _changes_crew(text: str) -> bool:
+    """'2명에서 3명'처럼 인원도 교체하면 단일 날짜 변경으로 보지 않는다."""
+    parts = text.split("에서")
+    for left, right in pairwise(parts):
+        left = left.rstrip()
+        count, unit, _ = right.partition("명")
+        if (
+            left.endswith("명")
+            and left[:-1].rstrip()[-1:].isdecimal()
+            and unit
+            and count.strip().isdecimal()
+        ):
+            return True
+    return False
+
+
 _UNCERTAIN = re.compile(
     r"[?？]|아마|혹시|미정|보류|불확실|모르겠|어쩌면|일단|"
     r"(?:될|할)\s*것\s*같|(?:수도|지도|정도|쯤)|"
@@ -294,7 +311,7 @@ def validated_date_edit(
         not any(item.start <= shape.start() and shape.end() <= item.end for item in mentions)
         for regex in (_DAY_SHAPE, _MONTH_SHAPE)
         for shape in regex.finditer(text)
-    ) or _CREW_REPLACEMENT.search(text):
+    ) or _changes_crew(text):
         return None
     if len(re.findall(r"대신|말고|->|→", text)) > 1:
         return None
