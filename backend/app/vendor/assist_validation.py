@@ -701,7 +701,7 @@ def _reaffirmed_value(
     if (form, field) == ("dates", "days"):
         dates = date_tokens(body, context)
         remainder = re.sub(r"\s+", "", _without_tokens(body, dates))
-        remainder = re.sub(r"이랑|부터|까지|랑|과|와|및", "", remainder)
+        remainder = re.sub(r"그리고|하고|이랑|부터|까지|랑|과|와|및", "", remainder)
         return (
             isinstance(value, list)
             and bool(dates)

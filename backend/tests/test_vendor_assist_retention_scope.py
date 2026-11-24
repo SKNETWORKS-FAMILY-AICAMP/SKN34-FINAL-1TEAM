@@ -236,6 +236,10 @@ def test_previous_amount_reaffirmation_binds_complete_value(monkeypatch, text, e
             "작업 날짜는 방금 말한 12월 8일, 10일 그대로 유지해 주세요.",
             "방금 말한 12월 8일, 10일 그대로",
         ),
+        (
+            "인원은 화면에서 고쳤어요. 날짜는 앞서 정한 12월 8일하고 10일 그대로 유지해주세요.",
+            "앞서 정한 12월 8일하고 10일 그대로 유지해주세요",
+        ),
     ],
 )
 def test_previous_date_list_reaffirmation_checks_all_dates(monkeypatch, text, evidence):
