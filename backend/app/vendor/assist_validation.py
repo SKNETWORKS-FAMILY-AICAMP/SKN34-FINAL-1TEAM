@@ -364,7 +364,8 @@ def _targeted_retention(
             right = len(raw)
         else:
             right = right_break.end() if right_break.group() in ("?", "？") else right_break.start()
-        prefix = raw[left:verb_at]
+        # '아까 제안한 공사 기간만 그대로'처럼 유지 표현 안에 대상이 들어가기도 한다.
+        prefix = raw[left : at + retained.end()]
 
         # 보통 '금액과 부가세는 앞서 정한 안으로 두고'처럼 여러 대상이
         # 한 조사로 묶인다. 가장 가까운 명사구의 연결된 대상만 인정한다.

@@ -184,3 +184,12 @@ def test_unrelated_field_cannot_claim_explicit_vat_retention(monkeypatch, eviden
     text = "금액은 610만 원으로 바꾸고 " + evidence + " 진행해 주세요."
     result, _ = _quote(monkeypatch, text, [_retain("amount", text)])
     _not_restored(result["amount"])
+
+
+def test_field_within_prior_reference_phrase(monkeypatch):
+    evidence = "방금 제안한 견적 금액만 그대로 사용해 주세요"
+    result, _ = _quote(
+        monkeypatch, evidence, [_retain("amount", evidence), _retain("vat", evidence)]
+    )
+    _valid(result["amount"], 5_900_000)
+    _not_restored(result["vat"])
