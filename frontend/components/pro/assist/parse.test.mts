@@ -385,9 +385,9 @@ test("명시적인 과거 날짜나 잘못된 날짜는 다른 연도나 부분 
 test("읽지 못한 한글 금액은 조사나 띄어쓰기와 상관없이 두 금액 폼에서 저장을 막아요", () => {
   const unresolved = [
     "견적 이천만으로", "견적 오백만으로", "견적 천 만으로", "견적 천만요",
-    "이 천 오 백 만 원으로", "삼백만은", "십오만으로", "삼만으로",
+    "이 천 오 백 만으로", "삼백만은", "십오만으로", "삼만으로",
     "금액은 이만으로", "추가금액은 오만으로", "견적 100만 원에서 삼만으로",
-    "견적 100만 원에서 이천만으로", "이천오백만원입니다", "일억으로",
+    "견적 100만 원에서 이천만으로", "이천오백만입니다", "일억으로",
   ];
   for (const phrase of unresolved) {
     const text = phrase + ", 부가세 별도";
@@ -434,5 +434,49 @@ test("추측·보류·취소한 복합 금액은 규칙 후보와 확인 금액�
     assert.equal(parseQuote(text, T).amount, undefined, text);
     assert.equal(amountToConfirm(text, T), undefined, text);
     assert.match(assistInputIssues("quote", text, { today: T }).amount ?? "", /금액을 확인하지 못했어요/, text);
+  }
+});
+
+test("명시적인 원 단위 한글 금액은 서버의 정확한 후보를 확인할 때만 허용해요", () => {
+  for (const [text, value] of [
+    ["현장 추가 물량까지 다시 잡았어요. 이번 견적 금액은 천이백육십만 원으로 넣어 주세요.", 12_600_000],
+    ["천만 원이요", 10_000_000], ["삼백만원입니다", 3_000_000],
+    ["이 천 오 백 만 원으로", 25_000_000], ["오십육만칠천팔백구십 원", 567_890],
+    ["일억 이천삼백사십오만 육천칠백팔십구 원", 123_456_789], ["십억 원", 1_000_000_000],
+    ["오 원", 5], ["이천오백만원입니다", 25_000_000], ["공사 3일, 금액 삼백만 원", 3_000_000],
+  ] as const) {
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.equal(amountToConfirm(text, T, form), value, text);
+      assert.equal(assistInputIssues(form, text, { today: T }, value).amount, undefined, text);
+      assert.ok(assistInputIssues(form, text, { today: T }, value + 1).amount, text);
+      assert.ok(assistInputIssues(form, text, { today: T }).amount, text);
+    }
+  }
+  assert.equal(parseExtra("합판 보강 일억 이천삼백사십오만 육천칠백팔십구 원", T).title, "합판 보강");
+});
+
+test("한글 금액의 잘못된 단위·복수·범위·조건·혼합·부분 표기는 금액 확인을 보류해요", () => {
+  for (const text of [
+    "견적 천만으로", "견적 일백백만원", "견적 일억만 원", "견적 이십오백만원",
+    "견적 십억 일 원", "견적 영 원", "견적 삼백만 500원", "견적 1억 삼백만원",
+    "견적 삼백만 5,000원", "견적 천500만원", "견적은삼 500만원", "견적은삼백만 500원",
+    "견적 삼.백만원", "견적 삼점 오백만원", "견적 삼백만원자재",
+    "견적 삼백만원,사백만원", "견적 삼백만원,금액은사백만원", "견적 삼백만원~사백만원",
+    "견적 삼~사백만원", "견적 삼~400만원", "견적 삼백~400만원", "견적 삼백만원, 이만",
+    "견적 삼백만원 또는 400만원", "견적 삼백만원, 4000000",
+    "견적 삼백만원 이상", "견적 삼백만원 내외", "견적 한 삼백만원", "견적 -삼백만원",
+    "견적 삼백만원으로 할까?", "견적 삼백만원으로 넣지 마세요", "견적 삼백만원, 취소해 주세요",
+    "견적 삼백만원은 미정", "아까 300만원이라고 했는데 사백만원으로 고칠게요",
+    "아까 삼백만원이라고 했는데 400만원으로 고칠게요",
+  ]) {
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.equal(amountToConfirm(text, T, form), undefined, text);
+      assert.ok(assistInputIssues(form, text, { today: T }).amount, text);
+      assert.ok(assistInputIssues(form, text, { today: T }, 3_000_000).amount, text);
+    }
   }
 });

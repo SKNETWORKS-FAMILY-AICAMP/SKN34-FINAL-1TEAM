@@ -30,7 +30,9 @@ const server = createServer(async (req, res) => {
     }
     return json(res, {
       request_id: data.request_id, form: data.form, source: "llm", warnings: [],
-      fields: next?.fields || data.rule_fields.map((field) => ({ ...field, source: "llm", status: "valid", alternatives: [] })),
+      fields: next?.fields
+        ? next.fields.map((field) => next.bindCurrentOrigin ? { ...field, origin_request_id: data.request_id } : field)
+        : data.rule_fields.map((field) => ({ ...field, source: "llm", status: "valid", alternatives: [] })),
     });
   }
   if (url.pathname === "/me") return json(res, {

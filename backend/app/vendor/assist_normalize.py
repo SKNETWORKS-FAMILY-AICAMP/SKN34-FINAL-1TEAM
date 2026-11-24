@@ -57,6 +57,63 @@ _CREW_RANGE = re.compile(
     rf"{_CREW_COUNT}\s*(?:{_CREW_UNIT}\s*)?{_CREW_RANGE_LINK}\s*{_CREW_COUNT}\s*{_CREW_UNIT}"
     rf"|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*{_CREW_UNIT}"
 )
+_CREW_REPLACEMENT = re.compile(
+    rf"(?:(?:아까|앞서|방금|이전에)\s*)?"
+    rf"(?:(?:작업\s*인원|인원(?:수)?|작업자(?:\s*수)?|인부|사람)(?:은|는|만|을|를|이|가|:)?\s*)?"
+    rf"(?P<old>{_CREW_COUNT})\s*(?:{_CREW_UNIT})?\s*에서\s*"
+    rf"(?P<new_token>(?P<new>{_CREW_COUNT})\s*{_CREW_UNIT})\s*(?:으로|로)\s*"
+    r"(?:(?:정정|수정|변경|확정)\s*(?:할게요|하겠습니다|해\s*주세요|해\s*줘요|합니다|해요)"
+    r"|(?:바꿔|고쳐)\s*(?:주세요|줘요|요)|바꿀게요|고칠게요|바꾸겠습니다|고치겠습니다)"
+)
+_CREW_CLAUSE_BREAK = re.compile(r"(?<!\d)[,.]|[,.](?!\d)|[;!。\n]")
+_CREW_CORRECTION_UNCERTAIN = re.compile(
+    r"[?？]|아마|혹시|미정|보류|검토|취소|철회|고민|가능하면|예정|잠정|"
+    r"모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s*걸로|하지\s*마|하지\s*않"
+)
+
+
+@dataclass(frozen=True)
+class CrewReplacement:
+    old: int
+    new: int
+    old_span: tuple[int, int]
+    new_span: tuple[int, int]
+
+
+def crew_replacement(text: str) -> CrewReplacement | None:
+    """명시적인 인원 정정에서만 '에서'를 범위 대신 교체 연결로 읽는다."""
+    if _CREW_CORRECTION_UNCERTAIN.search(text):
+        return None
+    clauses = _CREW_CLAUSE_BREAK.split(text)
+    matches = [(clause, _CREW_REPLACEMENT.fullmatch(clause.strip())) for clause in clauses]
+    matches = [(clause, match) for clause, match in matches if match is not None]
+    if len(matches) != 1:
+        return None
+    clause, match = matches[0]
+    assert match is not None
+    if text.count(clause) != 1:
+        return None
+    offset = text.index(clause) + len(clause) - len(clause.lstrip())
+    other = text[: text.index(clause)] + " " + text[text.index(clause) + len(clause) :]
+    if _CREW.search(other) or _CREW_RANGE.search(other):
+        return None
+    numbers = []
+    for raw in (match["old"], match["new"]):
+        if raw in _NATIVE_CREW:
+            numbers.append(_NATIVE_CREW[raw])
+        elif re.fullmatch(r"[1-9]\d?", raw):
+            numbers.append(int(raw))
+        else:
+            return None
+    old, new = numbers
+    if old == new:
+        return None
+    return CrewReplacement(
+        old,
+        new,
+        (offset + match.start("old"), offset + match.end("old")),
+        (offset + match.start("new_token"), offset + match.end("new_token")),
+    )
 
 
 @dataclass(frozen=True)

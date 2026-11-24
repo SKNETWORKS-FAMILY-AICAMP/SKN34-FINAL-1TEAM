@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { VAT_MODE_LABEL } from "../text";
 import { AssistSession, type InputIssues } from "./session";
 import { AssistSlot } from "./slot";
-import type { AssistCurrent, AssistForm, AssistValue, RuleOptions, CandidateField, Alternative } from "./protocol";
+import type { AssistCurrent, AssistForm, AssistValue, RuleOptions, CandidateField, Alternative, AssistResponse } from "./protocol";
 import s from "./assist.module.css";
 
 const FIELD_LABEL: Record<string, string> = {
@@ -45,7 +45,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
   current: AssistCurrent;
   options: RuleOptions;
   /** 업체가 '폼에 적용'을 누른 뒤 선택·검증된 칸만 전달해요. */
-  onApply: (changes: AssistCurrent) => void;
+  onApply: (changes: AssistCurrent, response: AssistResponse) => void;
   onInputIssues?: (issues: InputIssues) => void;
 }) {
   const session = useMemo(() => new AssistSession(form, resourceId), [form, resourceId]);
@@ -61,6 +61,11 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
 
   function send() {
     if (session.send(text, latest.current.current, latest.current.options, onInputIssues)) setText("");
+  }
+
+  function apply() {
+    const response = session.view.response;
+    if (response) session.apply(latest.current.current, (changes) => latest.current.onApply(changes, response));
   }
 
   const response = view.response;
@@ -136,7 +141,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
           {!actionable ? <p className={s.help}>바꿀 수 있는 값이 없어요. 내용을 더 구체적으로 적어 주세요.</p> : null}
           {response.warnings.map((message, i) => <p key={i} className={s.warning} role="status">{message}</p>)}
           <div className={s.actions}>
-            <Button size="sm" onClick={() => session.apply(latest.current.current, latest.current.onApply)}
+            <Button size="sm" onClick={apply}
               disabled={pending || !actionable}>폼에 적용</Button>
             <Button size="sm" variant="secondary" onClick={() => session.cancel()}>취소</Button>
           </div>

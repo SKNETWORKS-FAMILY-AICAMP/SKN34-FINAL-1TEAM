@@ -6,6 +6,7 @@ import { AssistApiError, interpretAssist } from "./api.ts";
 import { parseDates, parseExtra } from "./parse.ts";
 import { ruleFields } from "./rules.ts";
 import { shouldAutosaveQuote } from "./quoteAutosave.ts";
+import { periodIssueScope, resolvePeriodHolds, type PeriodHolds } from "./periodHold.ts";
 import {
   freshPrevious, previousCandidate, readResponse, validSetValue,
   type AssistCurrent, type AssistRequest, type AssistForm, type CandidateField,
@@ -43,6 +44,74 @@ test("인원 범위를 말하면 API가 한쪽 숫자를 반환해도 인원 후
   await flush();
   session.select("crew", true);
   assert.equal(session.apply(current, () => assert.fail("인원 적용")), false);
+});
+
+test("검증된 인원 정정은 새 값만 적용하며 적용 전에는 기존 인원 발송을 보류해요", async () => {
+  const api = pending();
+  const session = new AssistSession("dates", "deal-id", api.requester);
+  const current = { crew: 3, days: ["2026-12-08"] };
+  const opts = { today, crewMax: 6, requiredDays: 1 };
+  session.send("인원 5명", current, opts);
+  api.jobs[0].resolve(response(api.jobs[0].request, { crew: { action: "set", value: 5 } }));
+  await flush();
+  let held = false;
+  session.send("인원만 다섯에서 네 명으로 정정할게요", current, opts, (issues) => { held = !!issues.crew; });
+  assert.equal(held, true);
+  assert.equal(api.jobs[1].request.previous_candidate?.fields.find((field) => field.field === "crew")?.value, 5);
+  assert.equal(session.apply(current, () => assert.fail("검증 전 적용")), false);
+  api.jobs[1].resolve(response(api.jobs[1].request, { crew: {
+    action: "set", value: 4, origin_request_id: api.jobs[1].request.request_id,
+    correction: { kind: "replace", rejected_value: 5, rejected_evidence: "다섯", accepted_evidence: "네 명" },
+  } }));
+  await flush();
+  assert.equal(held, true);
+  assert.equal(session.apply({ ...current, crew: 2 }, () => assert.fail("직접 수정값 덮기")), false);
+  assert.equal(session.apply(current, (changes) => {
+    assert.deepEqual(changes, { crew: 4 });
+    if ("crew" in changes) held = false;
+  }), true);
+  assert.equal(held, false);
+});
+
+test("잘못된 정정 후보·이전 값 불일치·범위 초과·서버 실패는 인원 발송 보류를 유지해요", async () => {
+  const original = { crew: 3, days: ["2026-12-08"] };
+  const opts = { today, crewMax: 6, requiredDays: 1 };
+  const cases = [
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 5 },
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 4, wrongOrigin: true },
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 4, wrongOld: true },
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 4, missingProof: true },
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 4, stale: true },
+    { text: "인원만 다섯에서 네 명으로 정정할게요", next: 4, offline: true },
+    { text: "인원만 여섯에서 네 명으로 정정할게요", next: 4 },
+    { text: "인원만 다섯에서 일곱 명으로 정정할게요", next: 7 },
+    { text: "인원은 4~5명", next: 4 },
+    { text: "인원은 5에서 4명으로 정정할까요?", next: 4 },
+  ];
+  for (const c of cases) {
+    const api = pending();
+    const session = new AssistSession("dates", "deal-id", api.requester);
+    session.send("인원 5명", original, opts);
+    api.jobs[0].resolve(response(api.jobs[0].request, { crew: { action: "set", value: 5 } }));
+    await flush();
+    const current = c.stale ? { ...original, crew: 2 } : original;
+    let held = false;
+    session.send(c.text, current, opts, (issues) => { held = !!issues.crew; });
+    assert.equal(held, true, c.text);
+    if (c.offline) api.jobs[1].reject(new Error("offline"));
+    else api.jobs[1].resolve(response(api.jobs[1].request, { crew: {
+      action: "set", value: c.next,
+      origin_request_id: c.wrongOrigin ? api.jobs[0].request.request_id : api.jobs[1].request.request_id,
+      correction: c.missingProof ? undefined : {
+        kind: "replace", rejected_value: c.wrongOld ? 6 : 5,
+        rejected_evidence: "다섯", accepted_evidence: "네 명",
+      },
+    } }));
+    await flush();
+    session.select("crew", true);
+    assert.equal(session.apply(current, () => assert.fail("미확정 인원 적용")), false, c.text);
+    assert.equal(held, true, c.text);
+  }
 });
 
 test("인원 범위와 잘린 수는 명시적 날짜가 유효해도 서버·오프라인 후보에서 발송 보류해요", async () => {
@@ -121,6 +190,51 @@ function pending() {
 }
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("이전 금액의 정정은 신선한 같은 칸의 후보와 서버 검증을 모두 요구해요", async () => {
+  const cases = [
+    { form: "quote" as const, text: "앞서 455만 원이라고 적었는데 계산을 틀리게 했어요. 487만 2천 원으로 수정해 주세요." },
+    { form: "extra" as const, text: "부가세는 그대로, 455만 원이라고 말했던 추가 비용만 487만 2천 원으로 바꿀게요." },
+  ];
+  for (const { form, text } of cases) {
+    for (const mode of ["valid", "stale", "wrong-old", "wrong-new", "missing-relation", "wrong-origin", "offline", "conditional", "cancelled", "question"]) {
+      const api = pending();
+      const session = new AssistSession(form, "resource", api.requester);
+      const current = form === "quote"
+        ? { ...quote, amount: 6_000_000 }
+        : { title: null, reason: null, vat: null, amount: 6_000_000 };
+      session.send("금액 455만 원", current, quoteOptions);
+      const first = api.jobs[0];
+      first.resolve(response(first.request, { amount: { action: "set", value: mode === "wrong-old" ? 4_560_000 : 4_550_000 } }));
+      await flush();
+      const latest = mode === "stale" ? { ...current, amount: 6_100_000 } : current;
+      const phrase = mode === "conditional" ? "가능하면, " + text
+        : mode === "cancelled" ? text + " 금액 정정 취소할게요."
+        : mode === "question" ? text.replace(/\.$/, "?") : text;
+      let held = false;
+      session.send(phrase, latest, quoteOptions, (issues) => { held = !!issues.amount; });
+      assert.equal(held, true, form + " " + mode);
+      assert.equal(session.apply(latest, () => assert.fail("응답 전 적용")), false);
+      const job = api.jobs[1];
+      if (mode === "offline") job.reject(new AssistApiError(503, "unavailable", "연결 실패"));
+      else job.resolve(response(job.request, {
+        amount: {
+          action: "set", value: mode === "wrong-new" ? 4_870_000 : 4_872_000,
+          origin_request_id: mode === "wrong-origin" ? first.request.request_id : job.request.request_id,
+          correction: mode === "missing-relation" ? undefined : {
+            kind: "replace", rejected_value: 4_550_000,
+            rejected_evidence: "455만 원", accepted_evidence: "487만 2천 원",
+          },
+        },
+      }));
+      await flush();
+      let applied: AssistCurrent | undefined;
+      session.select("amount", true);
+      session.apply(latest, (changes) => { applied = changes; });
+      assert.equal(applied?.amount, mode === "valid" ? 4_872_000 : undefined, form + " " + mode);
+    }
+  }
+});
 
 test("기간·제외일·공사 날짜의 한도를 실제 업무 규칙과 맞춰요", () => {
   const days = Array.from({ length: 70 }, (_, index) =>
@@ -727,6 +841,65 @@ test("수동 수정 이후 오래된 후보와 부분 기간 충돌을 거부해
     assert.deepEqual(changes, { start: "2026-12-06", end: "2026-12-08", excluded: null })), true);
 });
 
+test("제외일만 옮기는 후보의 적용은 해당 보류만 풀고 미확정 기간 경계는 보존해요", async () => {
+  const current = { start: "2026-12-02", end: "2026-12-24", excluded: ["2026-12-09", "2026-12-16"] };
+  const phrase = "제외일 중 9일 쉬는 걸 11일 쉬는 걸로 옮겨주세요.";
+  for (const mode of ["only-exclusion", "prior-boundary", "unresolved-boundary"] as const) {
+    const api = pending();
+    const session = new AssistSession("period", "visit-id", api.requester);
+    let holds: PeriodHolds = mode === "prior-boundary" ? { boundary: "이전 기간 보류" } : {};
+    session.send(phrase, current, { today, baseMonth: "2026-12" }, (issues) => {
+      assert.ok(issues.period);
+      assert.equal(issues.periodScope, "excluded");
+      holds = { ...holds, [issues.periodScope!]: issues.period };
+    });
+    const { request } = api.jobs[0];
+    api.jobs[0].resolve(response(request, {
+      ...(mode === "unresolved-boundary" ? { end: { action: "uncertain", status: "uncertain" } } : {}),
+      excluded: {
+        action: "set", value: ["2026-12-11", "2026-12-16"], value_source: "derived",
+        correction: { kind: "replace", rejected_value: ["2026-12-09"], rejected_evidence: "9일", accepted_evidence: "11일" },
+      },
+    }));
+    await flush();
+    assert.ok(holds.excluded, "후보만 도착하면 보류 유지");
+    session.select("excluded", true);
+    assert.equal(session.apply(current, (changes) => {
+      assert.deepEqual(changes, { excluded: ["2026-12-11", "2026-12-16"] });
+      holds = resolvePeriodHolds(holds, changes, session.view.response!);
+    }), true);
+    if (mode === "only-exclusion") assert.deepEqual(holds, {});
+    else if (mode === "prior-boundary") assert.deepEqual(holds, { boundary: "이전 기간 보류" });
+    else assert.ok(holds.excluded);
+  }
+});
+
+test("기간 경계 언급 또는 범위 요청이 있으면 제외일 보류로 축소하지 않아요", () => {
+  for (const phrase of [
+    "종료일은 미정이고 제외일 9일을 11일로 옮겨 주세요.",
+    "12월 9일부터 11일까지 제외해 주세요.",
+    "제외일 9일을 옮겨 주세요. 11일은 가능할까요?",
+  ]) assert.equal(periodIssueScope(phrase), "boundary", phrase);
+  assert.equal(periodIssueScope("마감 날짜는 제가 방금 직접 수정했으니까 그 값 유지해주시고, 휴무 중 11일만 12월 12일로 옮겨주세요."), "excluded");
+});
+
+test("제외일 전체 해제는 선택과 적용 후에만 기존 제외일을 비워요", async () => {
+  const api = pending();
+  const session = new AssistSession("period", "visit-id", api.requester);
+  const current = { start: "2026-12-02", end: "2026-12-24", excluded: ["2026-12-09"] };
+  session.send("등록된 제외일은 모두 해제해주세요.", current, { today });
+  const { request } = api.jobs[0];
+  api.jobs[0].resolve(response(request, { excluded: { action: "clear", value: null } }));
+  await flush();
+  assert.equal(session.apply(current, () => assert.fail("선택 전 적용")), false);
+  session.select("excluded", true);
+  assert.equal(session.apply(current, (changes) => {
+    assert.deepEqual(changes, { excluded: null });
+    assert.deepEqual(resolvePeriodHolds({ excluded: "이전 제외일 보류" }, changes, session.view.response!), {});
+    assert.deepEqual(current.excluded, ["2026-12-09"]);
+  }), true);
+});
+
 test("취소·교체 후 늦은 응답은 이전 후보를 되살리지 않아요", async () => {
   const api = pending();
   const session = new AssistSession("quote", "visit-id", api.requester);
@@ -1148,5 +1321,58 @@ test("문장을 나눈 정정에서 질문·취소·조건·다른 필드·제3 
       session.select("amount", true);
       assert.equal(session.apply(current, () => assert.fail(phrase)), false, phrase);
     }
+  }
+});
+
+test("한글 견적 금액은 정확한 서버 후보를 명시적으로 적용할 때만 변경해요", async () => {
+  const text = "현장 추가 물량까지 다시 잡았어요. 이번 견적 금액은 천이백육십만 원으로 넣어 주세요.";
+  const evidence = "이번 견적 금액은 천이백육십만 원으로 넣어 주세요";
+  for (const form of ["quote", "extra"] as const) {
+    const current = form === "quote"
+      ? { amount: 2_820_000, days: 5, vat: "excluded", valid: "2026-12-18" }
+      : { amount: 2_820_000, title: "보강", reason: "현장 추가", vat: "excluded" };
+    for (const answer of [12_600_000, 2_600_000, 12_000_000, null]) {
+      const api = pending();
+      const session = new AssistSession(form, "resource-id", api.requester);
+      let held = false;
+      assert.equal(session.send(text, current, quoteOptions, (issues) => { held = !!issues.amount; }), true);
+      assert.equal(held, true);
+      assert.equal(session.apply(current, () => assert.fail("확인 전 적용")), false);
+      const job = api.jobs[0];
+      assert.equal(job.request.rule_fields.find((field) => field.field === "amount")?.action, "keep");
+      if (answer === null) job.reject(new Error("offline"));
+      else job.resolve(response(job.request, { amount: { action: "set", value: answer, evidence } }));
+      await flush();
+      const candidate = session.view.response?.fields.find((field) => field.field === "amount");
+      if (answer === 12_600_000) {
+        assert.equal(candidate?.status, "valid");
+        session.select("amount", true);
+        let applied: AssistCurrent = {};
+        assert.equal(session.apply(current, (changes) => { applied = changes; }), true);
+        assert.equal(applied.amount, 12_600_000);
+      } else {
+        assert.notEqual(candidate?.action, "set");
+        session.select("amount", true);
+        session.apply(current, (changes) => assert.equal(changes.amount, undefined));
+      }
+    }
+  }
+});
+
+test("잘린 한글 금액 및 혼합 정정은 서버가 숫자를 보내도 적용하지 않아요", async () => {
+  for (const text of [
+    "견적 삼백만 500원", "견적 삼백만원~사백만원", "견적 삼백만원 내외",
+    "아까 삼백만원이라고 했는데 400만원으로 고칠게요",
+    "아까 300만원이라고 했는데 사백만원으로 고칠게요",
+  ]) {
+    const api = pending();
+    const session = new AssistSession("quote", "visit-id", api.requester);
+    let held = false;
+    session.send(text, { ...quote, amount: 3_000_000 }, quoteOptions, (issues) => { held = !!issues.amount; });
+    assert.equal(held, true, text);
+    api.jobs[0].resolve(response(api.jobs[0].request, { amount: { action: "set", value: 4_000_000 } }));
+    await flush();
+    session.select("amount", true);
+    assert.equal(session.apply({ ...quote, amount: 3_000_000 }, () => assert.fail(text)), false);
   }
 });

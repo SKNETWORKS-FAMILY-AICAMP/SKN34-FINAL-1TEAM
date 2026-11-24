@@ -10,10 +10,11 @@ from app.calc.schedule import JOB_MAX_DAYS
 from app.quote.schemas import AMOUNT_MAX
 from app.schedule.models import EXTRA_AMOUNT_MAX
 from app.vendor.assist_boundary import affirmative_end_deadline, explicit_prior_end_reference
-from app.vendor.assist_date_edit import validated_date_edit
+from app.vendor.assist_date_edit import date_edit_reference_prefix, validated_date_edit
 from app.vendor.assist_normalize import (
     complete_range_evidence,
     crew_mentions,
+    crew_replacement,
     crew_tokens,
     date_mentions,
     date_tokens,
@@ -34,6 +35,7 @@ from app.vendor.assist_schemas import (
     Value,
     check_value,
 )
+from app.vendor.assist_written_money import written_money_tokens
 
 _MONEY_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
 _MONEY_SMALL = rf"{_MONEY_NUMBER}\s*[천백십]"
@@ -101,6 +103,9 @@ def _money_coefficient(text: str) -> tuple[Decimal, int] | None:
 
 def _amount_tokens(evidence: str) -> list[tuple[int, int, int]]:
     """완전한 금액만 원문 위치와 함께 반환하고 합성 금액의 조각은 내보내지 않는다."""
+    written = written_money_tokens(evidence)
+    if written is not None:
+        return written
     groups: list[tuple[int, int, int]] = []
     for item in MONEY.finditer(evidence):
         major = item["major"]
@@ -265,19 +270,20 @@ _EXCLUDED_DAY_REFERENCE = re.compile(
     r"\s*(?:날짜|날|일자|일)"
 )
 _EXCLUDED_RELEASE_ALL = re.compile(
-    r"(?:다|전부|모두|몽땅)\s*풀|"
-    r"(?:전체|모든)\s*(?:제외|빼|쉬)[^,;.!?？\n]{0,24}풀"
+    r"(?:다|전부|모두|몽땅)\s*(?:풀|해제)|"
+    r"(?:전체|모든)\s*(?:제외|빼|쉬)[^,;.!?？\n]{0,24}(?:풀|해제)"
 )
 _EXCLUDED_RELEASE_DIRECT = re.compile(
     r"(?:\s*[은는을를도])?\s*(?:이제\s*)?"
     r"(?:다|전부|모두|몽땅)\s*"
-    r"풀어\s*(?:줘(?:요)?|주(?:세요|셔요)|요)(?=\s|$|[.,;!])"
+    r"(?:풀어|해제\s*해)\s*(?:줘(?:요)?|주(?:세요|셔요)|요)(?=\s|$|[.,;!])"
 )
 _EXCLUDED_RELEASE_DENIAL = re.compile(
     r"풀(?:어\s*주)?(?:지|지는|면)\s*(?:말|마|않|안|못)|"
     r"풀(?:어\s*주)?는\s*건\s*아니|"
     r"풀(?:어\s*주)?는\s*것은\s*아니|"
-    r"풀어\s*(?:줘(?:요)?|주(?:세요|셔요)|요)\s*(?:말고|취소|보류|아니)"
+    r"(?:풀어|해제\s*해)\s*(?:줘(?:요)?|주(?:세요|셔요)|요)\s*(?:말고|취소|보류|아니)|"
+    r"해제\s*(?:하(?:지|지는|면)\s*(?:말|마|않|안|못)|하는\s*(?:건|것은)\s*아니)"
 )
 
 
@@ -843,6 +849,168 @@ def _verified_reaffirmation(
     return not _reaffirmation_conflicts(form, field, outside, context, value)
 
 
+_PRIOR_FIELD_WORDS = {
+    "start": r"착공일?|시작\s*(?:날짜|일자|일)|첫\s*(?:(?:공사|작업)\s*일|날짜|날)",
+    "end": r"준공일?|마감\s*(?:날짜|일자|일)?|종료\s*(?:날짜|일자|일)|끝나는\s*날|마지막\s*(?:(?:공사|작업)\s*일|날짜|날)|끝날",
+    "excluded": r"제외\s*(?:날짜|일자|일)|쉬는\s*날|빼는\s*날|작업\s*안\s*하는\s*날",
+    "amount": r"견적\s*(?:금액|총액)|추가\s*(?:금액|비용|금)|금액|가격|비용|총액|공사비",
+    "vat": r"부가세(?:\s*(?:조건|방식|구분))?|세금(?:\s*(?:조건|방식|구분))?",
+    "days": r"(?:공사|작업)\s*(?:날짜|일자|일수|기간|일정|일)|날짜|일정|일수|기간|공기",
+    "crew": r"(?:투입|작업)\s*인원|인원|인력|작업자",
+    "title": r"항목명|항목|제목|작업명",
+    "reason": r"사유|이유",
+    "valid": r"(?:견적\s*)?유효\s*기간|만료일",
+}
+_PRIOR_REFERENCE = (
+    r"(?P<when>아까|방금|앞서|앞에서|이전에|지난번에|그때|처음에|전에|"
+    r"좀\s*전에|조금\s*전에)\s*"
+    r"(?:말씀드린|말한|얘기한|알려드린|요청한|요청했던|정한|잡은|확정한|제안한|정리한|적은|전달한)"
+)
+_PRIOR_REFERENT = {
+    "start": r"날짜|일자|일정",
+    "end": r"날짜|일자|일정",
+    "excluded": r"날짜|일자|목록",
+    "amount": r"금액|가격|비용|총액",
+    "vat": r"조건|방식|구분",
+    "days": r"날짜|일정|기간|일수|공기|목록",
+    "crew": r"인원|인력",
+    "title": r"항목|제목",
+    "reason": r"사유|이유",
+    "valid": r"날짜|일자|기간",
+}
+_PRIOR_DIRECTIVE = re.compile(
+    r"(?:\s*(?:계속\s*)?(?:"
+    r"(?:해|잡아|맞춰|반영해|적용해|유지해|사용해|써)\s*(?:주세요|줘요|주십시오)"
+    r"|부탁(?:합니다|드립니다|해요|드려요)"
+    r"|가(?:고요?|죠|겠습니다|주세요|요)|두(?:고요?|세요|겠습니다)|둘게요|둡니다"
+    r"|(?:유지|사용|반영|적용)\s*(?:하고요?|할게요|하겠습니다)"
+    r"|하고요?|할게요|하겠습니다|쓰면\s*됩니다))"
+)
+_PRIOR_CANCEL_OR_CONDITION = re.compile(
+    r"(?:취소|철회|보류|없던\s*걸로|미정|검토|고민|나중에|추후|혹시|아마|"
+    r"가능하면|경우|조건부|하면|라면|으면|다면|할지|할까|않|아니|말고|지\s*마|지\s*말)"
+)
+
+
+def _prior_field_word(form: FormName, field: str) -> str:
+    if (form, field) == ("quote", "days"):
+        return r"(?:공사|작업)\s*(?:일수|기간)|기간|일수|공기"
+    return _PRIOR_FIELD_WORDS[field]
+
+
+def _prior_field_pattern(form: FormName) -> str:
+    # 긴 필드명 전체를 먼저 읽어 '유효기간'의 '기간'을 별도 대상으로 보지 않는다.
+    return "|".join(
+        f"(?P<{name}>{_prior_field_word(form, name)})"
+        for name in sorted(FORM_FIELDS[form], key=lambda name: name != "valid")
+    )
+
+
+def _prior_field_matches(form: FormName, text: str) -> list[re.Match]:
+    pattern = _prior_field_pattern(form)
+    return list(
+        re.finditer(rf"(?<![가-힣])(?:{pattern})(?=$|[\s,;.!?？은는이가을를만도과와])", text)
+    )
+
+
+def _unbound_retention_conflict(
+    form: FormName, field: str, text: str, context: AssistContext
+) -> bool:
+    # 목적어 없는 재정정·취소·조건부 요청을 다른 필드의 말로 추정하지 않는다.
+    if (
+        _PRIOR_CANCEL_OR_CONDITION.search(text)
+        or _RULE_QUESTION_OR_UNDECIDED.search(text)
+        or _deletion_requested(text)
+        or re.search(r"(?:바꿔|바꾸|고쳐|고치|수정|변경|정정|덮어)", text)
+    ):
+        return True
+    if field == "amount":
+        return bool(_amount_mentions(text))
+    if field == "crew":
+        return bool(crew_mentions(text))
+    if field == "vat":
+        return any(word in text for words in VAT_WORDS.values() for word in words)
+    if (form, field) == ("quote", "days"):
+        return bool(DAYS.search(text))
+    if field in ("start", "end", "valid", "excluded", "days"):
+        return bool(date_tokens(text, context))
+    return False
+
+
+def _reference_only_retention(
+    form: FormName,
+    field: str,
+    evidence: str,
+    text: str,
+    context: AssistContext,
+    previous: PreviousCandidate,
+    retained: FieldIntent,
+) -> bool | None:
+    """숫자 없는 명시적 이전 참조는 해당 필드의 독립된 긍정 지시로 확인한다."""
+    raw, needle = normalized(text), normalized(evidence)
+    if not needle or raw.count(needle) != 1:
+        return None
+    at = raw.index(needle)
+    target = _prior_field_word(form, field)
+    referent = r"기간|일수|공기" if (form, field) == ("quote", "days") else _PRIOR_REFERENT[field]
+    pattern = re.compile(
+        rf"(?<![가-힣])(?:{target})\s*[은는이가을를만도]\s*{_PRIOR_REFERENCE}\s*"
+        rf"(?:(?:{referent}|걸|것|거|값|내용|안|제안)\s*)?"
+        r"(?:그대로|대로|으로|로)"
+    )
+    matches = [
+        match
+        for match in pattern.finditer(raw)
+        if at <= match.start("when") < at + len(needle) and match.end() <= at + len(needle)
+    ]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        return False
+    match = matches[0]
+    directive = _PRIOR_DIRECTIVE.match(raw, match.end())
+    end = directive.end() if directive else match.end()
+    tail = raw[end:].lstrip()
+    if tail and tail[0] not in ",;.!":
+        # 접속형 뒤에는 독립적인 다른 필드 지시만 이어질 수 있다.
+        following = re.match(
+            rf"(?:그리고\s+)?(?:{_prior_field_pattern(form)})\s*[은는이가을를만도]",
+            tail,
+        )
+        if directive is None or not directive.group().endswith(("고", "고요")) or following is None:
+            return False
+        if following.lastgroup == field:
+            return False
+    if match["when"] == "처음에":
+        # 첫 요청 참조는 보존된 근거가 첫 턴에만 있을 때 인정한다.
+        history = previous.text.splitlines()
+        if not history or not evidence_matches(history[0], retained.evidence):
+            return False
+        if any(evidence_matches(turn, retained.evidence) for turn in history[1:]):
+            return False
+        if (
+            len(history) > 1
+            and previous.origins.get(field, previous.request_id) == previous.request_id
+        ):
+            return False
+    outside = raw[: match.start()] + " ; " + raw[end:]
+    for clause in re.split(r"(?<!\d),|,(?!\d)|(?<!\d)\.|\.(?!\d)|[;!?？]", outside):
+        targets = _prior_field_matches(form, clause)
+        if any(target.lastgroup == field for target in targets):
+            return False
+        if re.search(
+            r"(?:그\s*(?:요청|제안|거|건|것)|방금\s*(?:요청|말)|유지\s*요청)"
+            r"\s*[은는을를]?\s*(?:취소|철회|보류)",
+            clause,
+        ):
+            return False
+        unbound = clause[: targets[0].start()] if targets else clause
+        if _unbound_retention_conflict(form, field, unbound, context):
+            return False
+    # 동사를 생략한 기존 표현은 기존 검증에 맡긴다.
+    return True if directive else None
+
+
 def _rule_local_clauses(
     form: FormName, field: str, value: Value, text: str, context: AssistContext
 ) -> list[str]:
@@ -1011,6 +1179,40 @@ def _rule_field_proof(
     return False
 
 
+def _crew_span_covered(raw: str, evidence: str, span: tuple[int, int]) -> bool:
+    needle = normalized(evidence)
+    if not needle:
+        return False
+    return any(
+        match.start() <= span[0] and match.end() >= span[1]
+        for match in re.finditer(re.escape(needle), raw)
+    )
+
+
+def _verified_crew_replacement(
+    item: FieldIntent, text: str, context: AssistContext, previous: PreviousCandidate | None
+) -> bool:
+    raw = normalized(text)
+    replacement = crew_replacement(raw)
+    relation = item.correction
+    if replacement is None or relation is None or relation.kind != "replace" or previous is None:
+        return False
+    return (
+        type(item.value) is int
+        and type(relation.rejected_value) is int
+        and (relation.rejected_value, item.value) == (replacement.old, replacement.new)
+        and 1 <= replacement.old <= context.crew_max
+        and 1 <= replacement.new <= context.crew_max
+        and any(
+            old.field == "crew" and old.action == "set" and old.value == replacement.old
+            for old in previous.fields
+        )
+        and _crew_span_covered(raw, relation.rejected_evidence, replacement.old_span)
+        and _crew_span_covered(raw, relation.accepted_evidence, replacement.new_span)
+        and _crew_span_covered(raw, item.evidence, replacement.new_span)
+    )
+
+
 def _verified_historical_scalar(
     item: FieldIntent,
     form: FormName,
@@ -1045,6 +1247,10 @@ def _verified_historical_scalar(
         or old.value != relation.rejected_value
     ):
         return False
+    if item.field == "amount":
+        return _verified_historical_amount(
+            item, form, text, context, old_text, new_text, before, after
+        )
     raw = normalized(text)
     start = (
         max(
@@ -1167,19 +1373,20 @@ _DATE_EDIT_TOKEN = re.compile(
 )
 
 
-def _date_edit_reference(text: str) -> str | None:
+def _date_edit_reference(field: str, text: str) -> str | None:
     """교체 절의 출처 지시만 읽고 뒤따르는 다른 필드의 참조는 배제한다."""
-    connector = re.search(r"대신|말고|→|->|일\s*에서", text)
-    if connector:
-        prefix = text[: connector.start()]
-    else:
-        first_day = _DATE_EDIT_TOKEN.search(text)
-        prefix = text[: first_day.start()] if first_day else text
-    clause = re.split(r"[,;.!?？\n]", prefix)[-1]
-    markers = [
-        (match.start(), "previous") for match in _DATE_EDIT_PRIOR_REFERENCE.finditer(clause)
-    ] + [(match.start(), "current") for match in _DATE_EDIT_CURRENT_REFERENCE.finditer(clause)]
-    return max(markers)[1] if markers else None
+    clause = date_edit_reference_prefix(field, text)
+    if clause is None:
+        return None
+    prior = bool(_DATE_EDIT_PRIOR_REFERENCE.search(clause))
+    current = bool(_DATE_EDIT_CURRENT_REFERENCE.search(clause))
+    if prior and current:
+        return "ambiguous"
+    if current:
+        return "current"
+    if prior or re.search(r"그\s*중(?:에)?", clause):
+        return "previous"
+    return None
 
 
 def _date_edit_bases(
@@ -1204,7 +1411,9 @@ def _date_edit_bases(
         if previous is not None and field in previous.baselines
         else data.current.get(field)
     )
-    reference = _date_edit_reference(data.text)
+    reference = _date_edit_reference(field, data.text)
+    if reference == "ambiguous":
+        return []
     if reference == "previous":
         return [earlier.value] if earlier is not None and isinstance(earlier.value, list) else []
     if reference == "current":
@@ -1317,6 +1526,129 @@ _EXTRA_AMOUNT_UNDECIDED = re.compile(
 _EXTRA_AMOUNT_FOLLOWUP_CANCEL = re.compile(
     r"취소|철회|보류|미정|없던걸로|원래대로|그대로두|하지마|안할|다시고민"
 )
+
+
+_HIST_AMOUNT_LABEL = {
+    "quote": r"(?:견적(?:가|금액)?|총액|합계|금액|공사비|비용)",
+    "extra": r"(?:추가(?:공사)?(?:금액|금|비용|비)|금액|합계|비용)",
+}
+_HIST_AMOUNT_REPORT_VERB = r"(?:했|말했|말씀드렸|적었|썼|입력했|전달했|기재했)"
+_HIST_AMOUNT_REPORT_START = re.compile(
+    r"원?(?:이라고|라고|이라|라|으로|로)(?:제가)?"
+    rf"(?:{_HIST_AMOUNT_REPORT_VERB}|한|했던|말한|말했던|말씀드린|적은|썼던|입력한|던)"
+)
+_HIST_AMOUNT_ERROR_SENTENCE = (
+    r"(?:제가)?(?:(?:계산|합계|금액|금액계산|견적|숫자|단가)(?:을|를)?)?"
+    r"(?:잘못|틀리게)(?:했|봤|보았|계산했|말했|말씀드렸|적었|썼|입력했|전달했|기재했)"
+    r"(?:네요|어요|습니다|죠)[.!。]"
+)
+_HIST_AMOUNT_NEW_ACTION = re.compile(
+    r"원?(?:으로|로)"
+    r"(?:(?:정정|수정|변경|확정)(?:부탁해요|부탁드립니다|해주세요|해줘요|해주십시오"
+    r"|해요|할게요|하겠습니다|합니다)"
+    r"|(?:고쳐|바꿔)(?:주세요|줘요|주십시오|요)"
+    r"|(?:고칠|바꿀|올릴|내릴)게요|(?:고치|바꾸|올리|내리)겠습니다"
+    r"|(?:고칩|바꿉)니다)"
+)
+_HIST_AMOUNT_OTHER_FIELD = re.compile(
+    r"세금|부가세|사유|이유|제목|항목|인원|기간|일수|일정|유효기간"
+)
+_HIST_AMOUNT_RISK = re.compile(
+    r"가능하면|(?:다면|라면|으면|이면|하면)|경우|일때|취소|철회|보류|미정|"
+    r"없던걸로|원래대로|그대로두|하지마|하지않|안할|아니(?:요|라고|고|라)?|[?？]"
+)
+
+
+def _historical_amount_report(text: str) -> bool:
+    """보고된 옛 금액은 이전 후보의 동일 필드로 검증해야 한다."""
+    raw = normalized(text)
+    return any(
+        _HIST_AMOUNT_REPORT_START.match(re.sub(r"\s+", "", raw[end:]))
+        for _, end, _ in _amount_tokens(raw)
+    )
+
+
+def _verified_historical_amount(
+    item: FieldIntent,
+    form: FormName,
+    text: str,
+    context: AssistContext,
+    old_text: str,
+    new_text: str,
+    before: int,
+    after: int,
+) -> bool:
+    """보고형 옛 금액과 새 확정 지시의 전체 절을 확인한다."""
+    relation = item.correction
+    label = _HIST_AMOUNT_LABEL.get(form)
+    if relation is None or label is None or type(item.value) is not int:
+        return False
+    raw = normalized(text)
+    groups = _amount_tokens(raw)
+    if len(groups) != 2:
+        return False
+    (old_start, old_end, old_amount), (new_start, new_end, new_amount) = groups
+    if (
+        (old_amount, new_amount) != (relation.rejected_value, item.value)
+        or not before <= old_start < old_end <= before + len(old_text)
+        or not after <= new_start < new_end <= after + len(new_text)
+    ):
+        return False
+    prefix_clauses = re.split(r"[,;.!?？。]", raw[:old_start])
+    prefix = re.sub(r"\s+", "", prefix_clauses[-1])
+    if not re.fullmatch(
+        rf"(?:(?:아까|앞서|지난번(?:에)?|이전에|예전에|방금|조금전)(?:에)?)?"
+        rf"(?:제가)?(?:{label}(?:은|는|이|가|을|를|:)?)?",
+        prefix,
+    ):
+        return False
+    link = re.sub(r"\s+", "", raw[old_end:new_start])
+    # 보고 동사 뒤에 오류 인정 문장이 오거나, 'A라고 한 금액만'처럼
+    # 동일 금액을 명사구로 지칭할 수 있다. 다른 수식어·조건은 추측하지 않는다.
+    reported = (
+        rf"원?(?:이라고|라고|이라|라|으로|로)?(?:제가)?"
+        rf"{_HIST_AMOUNT_REPORT_VERB}(?:는데|다가|지만|고)"
+        rf"(?:{_HIST_AMOUNT_ERROR_SENTENCE})?"
+        rf"|원?(?:이라고|라고|이라|라)(?:한|했던|말한|말했던|말씀드린|적은|입력한|던)"
+        rf"{label}(?:만|은|는|을|를|이|가)?"
+    )
+    if not re.fullmatch(reported, link):
+        return False
+    tail_clauses = re.split(r"([,;.!?？。])", raw[new_end:], maxsplit=1)
+    if len(tail_clauses) > 1 and tail_clauses[1] in "?？":
+        return False
+    if not _HIST_AMOUNT_NEW_ACTION.fullmatch(re.sub(r"\s+", "", tail_clauses[0])):
+        return False
+    other_clauses = prefix_clauses[:-1] + (
+        re.split(r"[,;.!?？。]", tail_clauses[2]) if len(tail_clauses) > 2 else []
+    )
+    for clause in other_clauses:
+        compact = re.sub(r"\s+", "", clause)
+        if not (
+            _HIST_AMOUNT_RISK.search(compact)
+            or _EXTRA_AMOUNT_UNDECIDED.search(compact)
+            or _HISTORICAL_DENIED_NEW.search(compact)
+            or _EXTRA_AMOUNT_FOLLOWUP_CANCEL.search(compact)
+        ):
+            continue
+        if re.search(r"금액|추가금|견적|공사비|총액|합계", compact):
+            return False
+        if not _HIST_AMOUNT_OTHER_FIELD.search(compact):
+            return False
+    try:
+        check_value(form, item.field, relation.rejected_value)
+        return _grounded(
+            form,
+            item.field,
+            relation.rejected_value,
+            relation.rejected_evidence,
+            context,
+            text=text,
+        ) and _grounded(
+            form, item.field, item.value, relation.accepted_evidence, context, text=text
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
 
 
 def _verified_extra_amount_error_correction(
@@ -1500,6 +1832,8 @@ def _verified_correction(
         item, form, text, context, previous, old_text, new_text, before, after
     ):
         return relation
+    if item.field == "amount" and _historical_amount_report(text):
+        return None
     if (
         form == "extra"
         and item.field == "amount"
@@ -1743,6 +2077,13 @@ def _review_one(
             return reject(
                 "stale_context" if data.previous_candidate is not None else "reference_missing"
             )
+        reference_only = _reference_only_retention(
+            data.form, item.field, item.evidence, text, context, previous, retained
+        )
+        if reference_only is False:
+            return reject("ambiguous_intent")
+        if reference_only is True:
+            return _candidate_from_previous(retained, previous)
         reaffirmed = (
             _verified_reaffirmation(
                 data.form, item.field, retained.value, item.evidence, text, context
@@ -1767,6 +2108,16 @@ def _review_one(
     if intent == "ambiguous" or item.action == "uncertain":
         if item.evidence and not evidence_matches(text, item.evidence):
             return reject("evidence_missing")
+        if previous is not None and item.action == "uncertain" and item.correction is None:
+            retained = next((field for field in previous.fields if field.field == item.field), None)
+            if (
+                retained is not None
+                and _reference_only_retention(
+                    data.form, item.field, item.evidence, text, context, previous, retained
+                )
+                is True
+            ):
+                return _candidate_from_previous(retained, previous)
         return reject("ambiguous_intent", uncertain=True)
     if intent != "explicit_change" or item.action not in ("set", "clear"):
         return reject("ambiguous_intent")
@@ -1821,6 +2172,19 @@ def _review_one(
             return reject("type_mismatch")
         if item.value_source in ("previous", "current"):
             return reject("reference_missing")
+        if data.form == "dates" and item.field == "crew" and crew_replacement(normalized(text)):
+            if not _verified_crew_replacement(item, text, context, previous):
+                return reject("correction_unverified", uncertain=True)
+            return CandidateField(
+                **common,
+                action="set",
+                value=item.value,
+                evidence=item.evidence,
+                status="valid",
+                intent_kind="explicit_change",
+                value_source="utterance",
+                correction=item.correction,
+            )
         # 참조 지시 자체를 새 제목으로 추출한 규칙 후보는 실제 제목이 아니다.
         if (
             source == "rule"
@@ -1952,11 +2316,15 @@ def _reverify_derived_history(
         field_named = (
             any(word in line for word in ("공사 날짜", "공사할 날", "공사일", "작업일", "일정"))
             if item.field == "days"
-            else any(word in line for word in ("제외", "빼는 날", "빼는 날짜", "안 되는 날"))
+            else any(
+                word in line
+                for word in ("제외", "빼는 날", "빼는 날짜", "안 되는 날", "휴무", "쉬는")
+            )
         )
         changed_word = re.search(
             r"(?:대신|말고|→|->|지워|지우|삭제|비워|비우|초기화|없애|"
-            r"바꾸|바꿔|변경|수정|정정|다시|재설정|미정|보류|[?？])",
+            r"바꾸|바꿔|변경|수정|정정|옮기|옮겨|옮길|미루|미뤄|미룰|"
+            r"당기|당겨|당길|해제|다시|재설정|미정|보류|[?？])",
             line,
         )
         dates_mentioned = bool(re.search(r"(?:\d{1,2}\s*일|20\d{2}-\d{2}-\d{2})", line))
@@ -1968,12 +2336,19 @@ def _reverify_derived_history(
         )
 
     def initial_dates(line: str) -> list[str] | None:
+        # 이미 교체로 읽힌 절을 새 전체 목록의 출발점으로 사용하지 않는다.
+        if (
+            date_edit_reference_prefix(item.field, line) is not None
+            or _RULE_QUESTION_OR_UNDECIDED.search(line)
+            or _RULE_NEGATED_ACTION.search(line)
+        ):
+            return None
         if item.field == "days":
             if not any(word in line for word in ("공사", "날짜", "일정", "작업")):
                 return None
             source = line
         else:
-            if not any(word in line for word in ("제외", "빼", "안 되는")):
+            if not any(word in line for word in ("제외", "빼", "안 되는", "휴무", "쉬는")):
                 return None
             # 기간 경계가 함께 적힌 문장에서는 제외일 절만 증거로 쓴다.
             source = line.split("가능")[-1].strip(" ,")
@@ -1994,7 +2369,17 @@ def _reverify_derived_history(
     if last_edit is None or not evidence_matches(lines[last_edit], item.evidence):
         return False
 
-    def replay(seed: list[str] | None, start: int) -> bool:
+    previous_data = data.previous_candidate
+    raw_base = data.current.get(item.field)
+    baseline = (
+        raw_base
+        if isinstance(raw_base, list)
+        and previous_data is not None
+        and previous_data.baselines.get(item.field) == raw_base
+        else None
+    )
+
+    def replay(seed: list[str] | None, start: int, *, has_prior: bool) -> bool:
         if seed is None:
             return False
         state = list(seed)
@@ -2002,26 +2387,56 @@ def _reverify_derived_history(
         seen_edit = False
         for index in range(start, len(lines)):
             line = lines[index]
-            changed = validated_date_edit(item.field, line, state, context)
-            if changed is not None:
+            reference = _date_edit_reference(item.field, line)
+            if reference == "previous":
+                bases = [state] if has_prior else []
+            elif reference == "current":
+                bases = [baseline] if baseline is not None else []
+            elif reference == "ambiguous":
+                bases = []
+            else:
+                bases = [baseline] if baseline is not None else []
+                if has_prior and state != baseline:
+                    bases.append(state)
+            matches = [
+                (base, changed)
+                for base in bases
+                if (
+                    changed := validated_date_edit(
+                        item.field, line, base, context, require_affirmative=True
+                    )
+                )
+                is not None
+            ]
+            if len(matches) == 1:
+                base, changed = matches[0]
                 if index == last_edit:
-                    before_last = list(state)
+                    before_last = list(base)
                 state = changed
                 seen_edit = True
-            elif unverified_change(line):
+                has_prior = True
+            elif date_edit_reference_prefix(item.field, line) is not None or unverified_change(
+                line
+            ):
                 # 실패한 중간 교체가 있으면 오래된 값을 되살리지 않는다.
                 return False
         return seen_edit and state == item.value and before_last == relation.rejected_value
 
     # 최초 제안이 대화에 있던 경우: 최초 원문으로 전체 목록을 재구성한다.
-    verified = len(lines) > 1 and last_edit > 0 and replay(initial_dates(lines[0]), 1)
+    # 앞 턴의 다른 필드 발화는 날짜 목록의 시작 근거가 아니다. 첫 날짜
+    # 목록이 등장할 때까지 해당 필드의 변경 이력이 없는 경우만 건너뛴다.
+    verified = False
+    for index in range(last_edit):
+        seed = initial_dates(lines[index])
+        if seed is not None:
+            verified = replay(seed, index + 1, has_prior=True)
+            break
+        if unverified_change(lines[index]):
+            break
     # 최초 기준이 화면의 목록인 경우: 동일 필드의 원래 baseline이 지금도
     # 그대로일 때에만 검증한다. correction의 rejected_value를 기준으로 믿지 않는다.
-    previous_data = data.previous_candidate
-    if not verified and previous_data is not None:
-        base = data.current.get(item.field)
-        if isinstance(base, list) and base and previous_data.baselines.get(item.field) == base:
-            verified = replay(base, 0)
+    if not verified and baseline:
+        verified = replay(baseline, 0, has_prior=False)
     if not verified:
         return False
     effective = dict(data.current)
@@ -2036,6 +2451,58 @@ def _reverify_derived_history(
     return _business_ok(
         form, item.field, item.value, validation_data, context, {item.field: item.value}
     )
+
+
+def _reverify_crew_history(item: FieldIntent, history: str, context: AssistContext) -> bool:
+    """단위가 생략된 인원 정정은 이전 발화 순서에서 같은 값의 교체를 재검증한다."""
+    value = None
+    matched = False
+    for utterance in history.splitlines():
+        raw = normalized(utterance)
+        replacement = crew_replacement(raw)
+        if replacement is not None:
+            if value != replacement.old or not 1 <= replacement.new <= context.crew_max:
+                value, matched = None, False
+                continue
+            value = replacement.new
+            matched = value == item.value and _crew_span_covered(
+                raw, item.evidence, replacement.new_span
+            )
+            if matched and item.correction is not None:
+                relation = item.correction
+                matched = (
+                    relation.kind == "replace"
+                    and relation.rejected_value == replacement.old
+                    and _crew_span_covered(raw, relation.rejected_evidence, replacement.old_span)
+                    and _crew_span_covered(raw, relation.accepted_evidence, replacement.new_span)
+                )
+            continue
+        counts = crew_mentions(raw)
+        if counts:
+            value, matched = None, False
+            if len(counts) != 1:
+                continue
+            count = next(iter(counts))
+            candidate = CandidateField(
+                field="crew",
+                action="set",
+                value=count,
+                evidence=raw,
+                source="rule",
+                status="valid",
+                alternatives=[],
+            )
+            if 1 <= count <= context.crew_max and _rule_field_proof(
+                "dates", candidate, raw, context
+            ):
+                value = count
+        elif _target_word("dates", "crew", raw) and not (
+            _RETAIN.search(raw)
+            and not _RETAIN_NEGATED.search(raw)
+            and not _RULE_QUESTION_OR_UNDECIDED.search(raw)
+        ):
+            value, matched = None, False
+    return matched and value == item.value
 
 
 def review_previous(
@@ -2087,6 +2554,25 @@ def review_previous(
             ordinary.append(item.model_copy(update={"value_source": "utterance"}))
             derived.remove(item)
     checked, _ = review_fields(ordinary, "rule", data, context, text=previous.text)
+    for item in ordinary:
+        if (
+            data.form == "dates"
+            and item.field == "crew"
+            and sum(part.field == "crew" for part in previous.fields) == 1
+            and checked["crew"].status != "valid"
+            and item.action == "set"
+            and _reverify_crew_history(item, previous.text, context)
+        ):
+            checked["crew"] = CandidateField(
+                field="crew",
+                action="set",
+                value=item.value,
+                evidence=item.evidence,
+                source="rule",
+                status="valid",
+                alternatives=[],
+                value_source="utterance",
+            )
     for item in derived:
         if _reverify_derived_history(item, previous.text, data.form, context, data, checked):
             checked[item.field] = CandidateField(

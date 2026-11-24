@@ -2,6 +2,8 @@
 // 금액은 적은 숫자 그대로 옮기고 더하거나 곱하지 않아요. 저장 · 보내기는 하지 않아요.
 // 애매하면 칸을 채우지 않아요(틀린 값을 넣는 것보다 비워 두고 업체가 적는 편이 안전해요).
 
+import { writtenMoney } from "./writtenMoney";
+
 /** outside: 안 된다고 했지만 기간 밖이라 넣지 않은 날 */
 export type PeriodFill = { start: string; end: string; excluded: string[]; outside: string[] };
 export type QuoteFill = { amount?: number; vat?: "included" | "excluded" | "exempt"; days?: number; valid?: string };
@@ -134,7 +136,7 @@ function shift(day: string, by: number): string {
 const num = (s: string) => Number(s.replace(/,/g, ""));
 const MAN_SCALE: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
 const COMPOUND_MAN = /(?<![\d.,천백십])(?:[\d천백십][ \t]*){1,24}만/g;
-const MONEY_END = String.raw`(?=$|[\s,.;!?？。:)]|원|으로|로|[은는이가을를도요]|부터|까지|예요|쯤|정도)`;
+const MONEY_END = String.raw`(?=$|[\s,.;!?？。:)]|원|으로|로|[은는이가을를도요]|부터|까지|예요|입니다|쯤|정도)`;
 const WRITTEN_START = String.raw`(?<![가-힣\d])(?<!\d[ \t]+)`;
 // '이만'이나 '기간만'은 금액이 아닐 수 있어요. 원이 없으면 숫자 단위나 명시적 금액 대상을 확인해요.
 const WRITTEN_AMOUNT = new RegExp([
@@ -285,7 +287,7 @@ function daysOf(text: string): number | undefined {
 export function parseQuote(text: string, today: string): QuoteFill {
   const out: QuoteFill = {};
   const normalized = manOf(text);
-  const amount = normalized === null || uncertainCompoundAmount(text) ? undefined : amountIn(normalized);
+  const amount = normalized === null || writtenMoney(text).mentioned || uncertainCompoundAmount(text) ? undefined : amountIn(normalized);
   if (amount) out.amount = amount;
   const vat = vatIn(text);
   if (vat) out.vat = vat;
@@ -348,6 +350,23 @@ const CREW_NUMBER = String.raw`(?:(?<![\d./월-])\d+(?:,\d+)+(?:\.\d+)?|(?<![\d.
 const CREW_UNIT = String.raw`(?:명|인(?=$|[\s.,!?;~/∼〜–—－-]|으로|[은을도과]|부터|에서|입니다|이에요))`;
 const CREW_RANGE = new RegExp(String.raw`${CREW_NUMBER}\s*(?:${CREW_UNIT}\s*)?(?:[~/∼〜–—－-]|부터|에서|또는|혹은)\s*${CREW_NUMBER}\s*${CREW_UNIT}|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*${CREW_UNIT}`, "g");
 const CREW_TERM = new RegExp(String.raw`(${CREW_NUMBER})\s*${CREW_UNIT}`, "g");
+const CREW_REPLACEMENT = new RegExp(String.raw`^(?:(?:아까|앞서|방금|이전에)\s*)?(?:(?:작업\s*인원|인원(?:수)?|작업자(?:\s*수)?|인부|사람)(?:은|는|만|을|를|이|가|:)?\s*)?(${CREW_NUMBER})\s*(?:${CREW_UNIT})?\s*에서\s*(${CREW_NUMBER})\s*${CREW_UNIT}\s*(?:으로|로)\s*(?:(?:정정|수정|변경|확정)\s*(?:할게요|하겠습니다|해\s*주세요|해\s*줘요|합니다|해요)|(?:바꿔|고쳐)\s*(?:주세요|줘요|요)|바꿀게요|고칠게요|바꾸겠습니다|고치겠습니다)$`);
+const CREW_CORRECTION_UNCERTAIN = /[?？]|아마|혹시|미정|보류|검토|취소|철회|고민|가능하면|예정|잠정|모르|애매|정도|쯤|또는|아니면|사이|원래대로|없던\s*걸로|하지\s*마|하지\s*않/;
+
+/** 후보 검증에만 쓰는 인원 정정 관계. 규칙 단독으로 새 값을 적용하지 않아요. */
+export function readCrewReplacement(text: string): { old: number; next: number } | undefined {
+  const raw = text.normalize("NFKC").trim();
+  if (CREW_CORRECTION_UNCERTAIN.test(raw)) return undefined;
+  const clauses = raw.split(/(?<!\d)[,.]|[,.](?!\d)|[;!。\n]/);
+  const matches = clauses.map((clause) => clause.trim().match(CREW_REPLACEMENT));
+  const found = matches.flatMap((match, i) => match ? [{ match, i }] : []);
+  if (found.length !== 1) return undefined;
+  const { match, i } = found[0];
+  if (readCrew(clauses.filter((_, index) => index !== i).join(" ")).mentioned) return undefined;
+  const count = (value: string) => NATIVE_CREW[value] ?? (/^[1-9]\d?$/.test(value) ? Number(value) : NaN);
+  const old = count(match[1]), next = count(match[2]);
+  return Number.isInteger(old) && Number.isInteger(next) && old !== next ? { old, next } : undefined;
+}
 
 /** 범위 표현을 먼저 걷어내서 '2/3인'의 일부를 날짜나 확정 인원으로 읽지 않는다. */
 export function readCrew(text: string) {
@@ -366,7 +385,7 @@ export function readCrew(text: string) {
 export type ExtraFill = QuoteFill & { title?: string; reason?: string };
 const WHY = /(?<!견적|계약|문|청구|확인)서\s*요?\s*$|때문/;
 /** 항목 이름에서 지울 금액: 만 · 원이 붙은 숫자만("2평 · 3장"은 둬요) */
-const AMOUNT_WORD = /[일이삼사오육칠팔구십백천만억]{1,8}\s*만?\s*원(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*억\s*(?:[\d,]*\s*만)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*만\s*(?:\d\s*천)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*\s*원(?:이|가|은|는)?/g;
+const AMOUNT_WORD = /(?<![가-힣\d])[일이삼사오육칠팔구십백천만억](?:[ \t]*[일이삼사오육칠팔구십백천만억])*[ \t]*원(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*억\s*(?:[\d,]*\s*만)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*만\s*(?:\d\s*천)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*\s*원(?:이|가|은|는)?/g;
 /** 명시적인 제목 지시가 있으면 앞쪽의 '사유 말고'를 제목으로 읽지 않아요. */
 const EXTRA_TITLE_TARGET = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*)?(?:항목명|작업명|제목|항목|이름)\s*(?::|=|은|는|을|를)\s*/g;
 const EXTRA_TITLE_PREFIX = /^(?:추가금|추가금액)?(?:사유|이유)[은는을를]?(?:말고|대신)$/;

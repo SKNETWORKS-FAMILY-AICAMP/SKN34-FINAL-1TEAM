@@ -6,20 +6,64 @@ import {
   copyCurrent, formKeys, freshPrevious, mergeKeptFields, previousCandidate, readResponse, sameValue, validCombinedPeriod,
 } from "./protocol";
 import { ruleFields, ruleResponse } from "./rules";
-import { assistInputIssues, amountToConfirm } from "./guard";
+import { assistInputIssues, amountToConfirm, historicalAmountCorrection, historicalAmountReport } from "./guard";
+import { readCrewReplacement } from "./parse";
 
 export type InputIssues = ReturnType<typeof assistInputIssues>;
 
-function checkedNumericFields(response: AssistResponse, issues: InputIssues, amount: number | undefined): AssistResponse {
+function hasCrewCorrectionProof(raw: unknown, request: AssistRequest, old: number): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const fields = (raw as Record<string, unknown>).fields;
+  if (!Array.isArray(fields)) return false;
+  const matches = fields.filter((field): field is Record<string, unknown> =>
+    !!field && typeof field === "object" && field.field === "crew");
+  if (matches.length !== 1) return false;
+  const field = matches[0];
+  if (field.origin_request_id !== request.request_id || field.source !== "llm" ||
+    !field.correction || typeof field.correction !== "object") return false;
+  const proof = field.correction as Record<string, unknown>;
+  const normalize = (s: string) => s.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const utterance = normalize(request.text);
+  const present = (value: unknown) => typeof value === "string" && !!normalize(value) &&
+    utterance.includes(normalize(value));
+  return proof.kind === "replace" && proof.rejected_value === old &&
+    present(proof.rejected_evidence) && present(proof.accepted_evidence);
+}
+
+function checkedNumericFields(response: AssistResponse, issues: InputIssues, amount: number | undefined, confirmedCrew?: number): AssistResponse {
   return { ...response, fields: response.fields.map((field) => {
     if (field.field !== "amount" && field.field !== "crew") return field;
     if (field.action === "keep" && field.status === "valid") return field;
+    if (field.field === "crew" && confirmedCrew !== undefined && field.status === "valid" &&
+      field.action === "set" && field.value === confirmedCrew) return field;
     const wrongAmount = field.field === "amount" && amount !== undefined &&
       (field.action === "set" && field.value !== amount ||
        field.action === "clear" || field.alternatives.some((a) => a.action !== "set" || a.value !== amount));
     if (!issues[field.field] && !wrongAmount) return field;
     return { ...field, status: "invalid", action: "uncertain", value: null, alternatives: [] };
   }) };
+}
+
+// Scalar correction metadata is deliberately not carried into previousCandidate.
+// For a reported amount, check it on this server response before allowing Apply.
+function serverVerifiedAmount(
+  raw: unknown, request: AssistRequest, correction: { old: number; next: number },
+): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const fields = (raw as Record<string, unknown>).fields;
+  if (!Array.isArray(fields)) return false;
+  const amounts = fields.filter((field): field is Record<string, unknown> =>
+    !!field && typeof field === "object" && (field as Record<string, unknown>).field === "amount");
+  if (amounts.length !== 1) return false;
+  const field = amounts[0];
+  if (field.status !== "valid" || field.action !== "set" || field.value !== correction.next ||
+    field.origin_request_id !== request.request_id || !field.correction || typeof field.correction !== "object") return false;
+  const relation = field.correction as Record<string, unknown>;
+  const normalized = (value: string) => value.normalize("NFKC").replace(/\s+/g, "");
+  const utterance = normalized(request.text);
+  return relation.kind === "replace" && relation.rejected_value === correction.old &&
+    [relation.rejected_evidence, relation.accepted_evidence].every((evidence) =>
+      typeof evidence === "string" && !!normalized(evidence) && utterance.includes(normalized(evidence)));
 }
 
 export type FieldChoice = { selected: boolean; alternative: number | null };
@@ -149,15 +193,27 @@ export class AssistSession {
       immutableFields: [...(options.immutableFields ?? [])],
     };
     const id = requestId();
+    const reported = (this.form === "quote" || this.form === "extra") && historicalAmountReport(utterance);
+    const historical = reported ? historicalAmountCorrection(utterance, opts.today, this.form) : undefined;
+    const oldMatches = historical && previous?.fields.some((field) =>
+      field.field === "amount" && field.status === "valid" && field.action === "set" && field.value === historical.old);
     const confirmedAmount = this.form === "quote" || this.form === "extra" ? amountToConfirm(utterance, opts.today, this.form) : undefined;
     const issues = assistInputIssues(this.form, utterance, opts, confirmedAmount);
+    if (reported && !oldMatches) issues.amount = "이전 금액을 확인하지 못했어요. 금액을 직접 적어 주세요.";
+    const crewReplacement = this.form === "dates" ? readCrewReplacement(utterance) : undefined;
+    const priorCrew = previous?.fields.find((field) => field.field === "crew" && field.action === "set")?.value;
+    const confirmedCrew = crewReplacement && priorCrew === crewReplacement.old &&
+      crewReplacement.old <= (opts.crewMax ?? 6) && crewReplacement.next <= (opts.crewMax ?? 6)
+      ? crewReplacement.next : undefined;
+    if (crewReplacement) issues.crew = "인원 후보를 확인해 적용하거나 보낼 인원을 다시 골라 주세요.";
     // 확인되지 않은 금액으로 다른 칸만 저장되는 것을 요청을 보내는 순간부터 막아요.
-    const hold = confirmedAmount !== undefined && confirmedAmount !== snapshot.amount && !issues.amount
+    const hold = (reported || confirmedAmount !== undefined && confirmedAmount !== snapshot.amount) && !issues.amount
       ? { ...issues, amount: "금액 후보를 확인해 적용하거나 금액을 직접 입력해 주세요." } : issues;
     onInputIssues?.(hold);
     const parsed = ruleFields(this.form, utterance, opts);
-    const fallback = checkedNumericFields(ruleResponse(this.form, id, utterance, opts, parsed), issues, confirmedAmount);
-    const preview = checkedNumericFields(mergeKeptFields(previous, fallback), issues, confirmedAmount);
+    const fallbackIssues = reported ? hold : issues;
+    const fallback = checkedNumericFields(ruleResponse(this.form, id, utterance, opts, parsed), fallbackIssues, confirmedAmount);
+    const preview = checkedNumericFields(mergeKeptFields(previous, fallback), fallbackIssues, confirmedAmount);
     const token = ++this.sequence;
     this.controller?.abort();
     const abort = new AbortController();
@@ -184,7 +240,11 @@ export class AssistSession {
       try {
         const raw = await this.requester(request, abort.signal);
         if (this.disposed || abort.signal.aborted || token !== this.sequence) return;
-        const response = checkedNumericFields(readResponse(raw, request, opts), issues, confirmedAmount);
+        const verifiedCrew = confirmedCrew !== undefined && crewReplacement &&
+          hasCrewCorrectionProof(raw, request, crewReplacement.old) ? confirmedCrew : undefined;
+        const responseIssues = reported && (!historical || !oldMatches || !serverVerifiedAmount(raw, request, historical))
+          ? hold : issues;
+        const response = checkedNumericFields(readResponse(raw, request, opts), responseIssues, confirmedAmount, verifiedCrew);
         // 서버의 keep/보류가 이전 후보를 제외했다면 화면에서 다시 되살리지 않아요.
         this.baselines = baselinesFor(response, previous, priorBaselines, snapshot);
         this.publish({

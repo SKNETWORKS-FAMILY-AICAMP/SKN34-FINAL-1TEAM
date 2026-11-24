@@ -26,13 +26,21 @@ _BARE_DAY = re.compile(
 _REPLACE_GAP = re.compile(r"^(?:은|는|이|가|을|를)?(?:대신|말고)$")
 _EDIT_GAP = re.compile(r"^(?:을|를|은|는|에서|(?:을|를|은|는)?만)$")
 _EDIT_SUFFIX = re.compile(
-    r"^\s*(?:로|으로)\s*(?:바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|옮기)"
+    r"^\s*(?:로|으로)\s*(?:바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|"
+    r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길)"
+)
+_EXCLUSION_MOVE_GAP = re.compile(r"^(?:은|는|에)?쉬는(?:걸|것을)(?:만)?$")
+_EXCLUSION_MOVE_SUFFIX = re.compile(r"^\s*쉬는\s*(?:걸|것으)로\s*(?:옮기|옮겨|옮길)")
+# 이유를 설명한 바로 다음 절에서 그날의 작업만 옮기는 지시.
+_ANAPHOR_MOVE_GAP = re.compile(
+    r"^\s*(?:에|은|는)\s*[^,.!?！？;\n]+[.!。]\s*"
+    r"(?:그\s*날|해당\s*일|그\s*날짜)의?\s*(?:작업|공사|시공)(?:만|을|를)\s*$"
 )
 _SHIFT_GAP = re.compile(r"^(?:은|는)?만?하루밀려서$")
 _DIRECTION = frozenset(("->", "→"))
 _KEEP_OTHERS_TRAILER = re.compile(
-    r"(?:나머지(?:는|도)?|나머진|다른날(?:은|도)?)"
-    r"(?:그대로|유지)(?:요|입니다)?$"
+    r"(?:나머지|다른)(?:작업일|공사일|날짜|날|휴무일|휴무)?(?:은|는|도)?"
+    r"(?:그대로|유지)(?:요|예요|입니다)?$|나머진(?:그대로|유지)(?:요|예요|입니다)?$"
 )
 _CONFIRMED_ENDINGS = frozenset(
     (
@@ -46,6 +54,15 @@ _CONFIRMED_ENDINGS = frozenset(
         "바꿔주세요",
         "바꿀게요",
         "옮겨주세요",
+        "옮기죠",
+        "옮길게요",
+        "옮기겠습니다",
+        "미뤄주세요",
+        "미룰게요",
+        "미루겠습니다",
+        "당겨주세요",
+        "당길게요",
+        "당기겠습니다",
         *(
             verb + ending
             for verb in ("수정", "정정", "변경", "교체", "대체")
@@ -67,6 +84,8 @@ def _confirmed_suffix(text: str, field: str, *, shifted: bool) -> bool:
         return True
     if field == "excluded" and ending == "쉬는걸로요":
         return True
+    if field == "excluded":
+        ending = re.sub(r"^쉬는(?:걸|것으)로", "", ending)
     for particle in ("으로", "로", "을", "를", "에"):
         if ending.startswith(particle):
             ending = ending[len(particle) :]
@@ -82,11 +101,18 @@ def _confirmed_suffix(text: str, field: str, *, shifted: bool) -> bool:
 
 _EDIT_WORD = (
     r"바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|"
-    r"옮기|추가|넣|삭제|지우|비우|초기화|늘리|줄이|조정"
+    r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길|추가|넣|삭제|지우|비우|초기화|늘리|줄이|조정"
 )
 _OTHER_EDIT = re.compile(_EDIT_WORD)
-_FOLLOWING_EDIT = re.compile(rf"^\s*(?:(?:로|으로|을|를|만)\s*)?(?P<verb>{_EDIT_WORD})")
+_FOLLOWING_EDIT = re.compile(
+    rf"^\s*(?:(?:로|으로|을|를|만|쉬는\s*(?:걸|것으)로)\s*)?(?P<verb>{_EDIT_WORD})"
+)
 _UNCHANGED_EDIT = re.compile(r"^변경\s*없")
+_MANUAL_BOUNDARY_RETENTION = re.compile(
+    r"^(?:시작|종료|마감)\s*(?:일|날짜?)\s*(?:은|는|이|가)?\s*"
+    r"(?:제가\s*)?(?:방금\s*|이미\s*)?직접\s*(?:수정|변경)했(?:으니까|으니|기\s*때문에)\s*"
+    r"(?:그\s*값|현재\s*값)\s*(?:그대로\s*)?유지(?:해\s*주(?:시고|세요)|하고|해요)$"
+)
 _KEEP = re.compile(
     r"^\s*(?:(?:은|는|이|가|을|를|도|만)\s*)?"
     r"(?:그대로|유지|기존대로|원래대로|변함\s*없|변경\s*없|동일|같(?:게|아요|습니다))"
@@ -130,9 +156,10 @@ _UNCERTAIN = re.compile(
     r"(?:잠정|임시|아직|예정|듯(?:해|합니다|한데))"
 )
 _NEGATED_EDIT = re.compile(
-    r"(?:바꾸|고치|수정|변경|정정|교체|대체|옮기)"
+    r"(?:바꾸|고치|수정|변경|정정|교체|대체|옮기|미루|당기)"
     r"(?:지(?:는)?\s*(?:않|말|마|못)|는\s*(?:게|건|것)\s*아니|\s*안\s*(?:할|해|하))"
     r"|(?:안\s*(?:돼|되|됨|바꾸|바꿔|바꿀|고치|수정|변경|교체)|"
+    r"안\s*(?:옮기|옮겨|미루|미뤄|당기|당겨)|"
     r"아니|아닌|아닐|아님|아닙니다|취소|하지\s*(?:마|않|말)|안\s*(?:갈|가)|철회)"
 )
 _EXCLUDED_SCOPE = re.compile(
@@ -140,11 +167,16 @@ _EXCLUDED_SCOPE = re.compile(
     r"빼\s*(?:는|야\s*하는|야\s*할|줄)\s*날|"
     r"(?:쉬는|휴무)\s*(?:날|날짜?)|"
     r"(?:못\s*(?:가|하는)|빠지는)\s*날|"
-    r"불가\s*(?:일|날)|일정에서\s*제외"
+    r"불가\s*(?:일|날)|일정에서\s*제외|휴무(?:일|날짜?)?"
 )
-_EXCLUDED_RESULT = re.compile(r"(?:[은는]\s*)?쉬는\s*걸로요(?=\s|[.,;。!，\n]|$)")
+_EXCLUDED_RESULT = re.compile(
+    r"(?:[은는]\s*)?쉬는\s*(?:걸로요(?=\s|[.,;。!，\n]|$)|"
+    r"(?:걸|것으)로\s*(?:옮기|옮겨|옮길))"
+)
 _DAY_SCOPE = re.compile(r"작업\s*(?:일|날짜?)|공사\s*(?:일|날짜?)|시공\s*(?:일|날짜?)")
-_OTHER_SCOPE = re.compile(r"시작\s*(?:일|날짜?)|종료\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간")
+_OTHER_SCOPE = re.compile(
+    r"시작\s*(?:일|날짜?)|(?:종료|마감)\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간"
+)
 
 
 @dataclass(frozen=True)
@@ -252,11 +284,22 @@ def _single_replacement(text: str, mentions: list[_Mention], field: str) -> tupl
     """연속된 두 날짜 사이에서 분명한 교체 관계 하나만 찾는다."""
     candidates: list[tuple[int, int]] = []
     for index, (old, new) in enumerate(pairwise(mentions)):
-        gap = re.sub(r"\s+", "", text[old.end : new.start])
+        raw_gap = text[old.end : new.start]
+        gap = re.sub(r"\s+", "", raw_gap)
         suffix = text[new.end :]
         if (
             _REPLACE_GAP.fullmatch(gap)
             or (_EDIT_GAP.fullmatch(gap) and _EDIT_SUFFIX.match(suffix))
+            or (
+                field == "excluded"
+                and _EXCLUSION_MOVE_GAP.fullmatch(gap)
+                and _EXCLUSION_MOVE_SUFFIX.match(suffix)
+            )
+            or (
+                field == "days"
+                and _ANAPHOR_MOVE_GAP.fullmatch(raw_gap)
+                and _EDIT_SUFFIX.match(suffix)
+            )
             or _SHIFT_GAP.fullmatch(gap)
             or gap in _DIRECTION
         ):
@@ -269,6 +312,22 @@ def _single_replacement(text: str, mentions: list[_Mention], field: str) -> tupl
     ):
         return None
     return old_index, new_index
+
+
+def date_edit_reference_prefix(field: str, text: str) -> str | None:
+    """교체 대상이 있는 절에서만 현재/이전 참조를 판별할 수 있게 한다."""
+    mentions = _mentions(text)
+    pair = _single_replacement(text, mentions, field)
+    return _local_prefix(text, mentions[pair[0]].start) if pair else None
+
+
+def _retained_manual_boundary(text: str, action_at: int, field: str) -> bool:
+    if field != "excluded":
+        return False
+    left = max((m.end() for m in _CLAUSE_BREAK.finditer(text, 0, action_at)), default=0)
+    right = _CLAUSE_BREAK.search(text, action_at)
+    clause = text[left : right.start() if right else len(text)].strip()
+    return bool(_MANUAL_BOUNDARY_RETENTION.fullmatch(clause))
 
 
 def _verified_prior(prior: list[str] | None) -> list[date] | None:
@@ -353,6 +412,7 @@ def validated_date_edit(
     if any(
         action.start() != allowed_action
         and not (action.group() == "변경" and _UNCHANGED_EDIT.match(text[action.start() :]))
+        and not _retained_manual_boundary(text, action.start(), field)
         for action in _OTHER_EDIT.finditer(text)
     ):
         return None
@@ -376,6 +436,13 @@ def validated_date_edit(
     except ValueError:
         return None
     if shifted and replacement != existing + timedelta(days=1):
+        return None
+    if following and (
+        following.group("verb") in ("미루", "미뤄", "미룰")
+        and replacement <= existing
+        or following.group("verb") in ("당기", "당겨", "당길")
+        and replacement >= existing
+    ):
         return None
     if replacement == existing or replacement in before:
         return None
