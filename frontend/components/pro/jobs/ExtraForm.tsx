@@ -26,7 +26,9 @@ import { AssistBox } from "../assist/AssistBox";
 import s from "./jobs.module.css";
 
 type Vat = "included" | "excluded" | "exempt";
+// 서버 한도(EXTRA_AMOUNT_MAX)와 같아요. 11자리까지 받아서, 넘는 값을 몰래 잘라 다른 금액으로 만들지 않고 막아요
 const AMOUNT_MAX = 1_000_000_000;
+const OVER = "10억 원까지 넣을 수 있어요.";
 const digits = (v: string) => v.replace(/\D/g, "").slice(0, 11);
 
 export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
@@ -42,6 +44,9 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<Record<string, string | undefined>>({});
   const [busy, setBusy] = useState(false);
+  // hold: 도우미가 말한 금액을 넣지 못한 까닭(한도 초과 · 못 읽음). 칸에는 옛 금액이 남아 있어서,
+  // 업체가 금액 칸을 직접 고치거나 도우미가 맞는 금액을 넣기 전까지 보내기를 막아요
+  const [hold, setHold] = useState<string | null>(null);
   const [key] = useState(newKey);
   const refs = { title: useRef<HTMLInputElement>(null), reason: useRef<HTMLInputElement>(null), amount: useRef<HTMLInputElement>(null) };
   const back = `/vendor/jobs/${enc(job.deal_id)}`;
@@ -52,8 +57,9 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
     const e: Record<string, string> = {};
     if (!title.trim()) e.title = "무엇에 드는 돈인지 적어 주세요. 예: 곰팡이 방지 처리";
     if (!reason.trim()) e.reason = "왜 더 드는지 한 줄로 적어 주세요.";
-    if (!amount || Number(amount) <= 0) e.amount = "금액을 원 단위로 넣어 주세요.";
-    else if (Number(amount) > AMOUNT_MAX) e.amount = "10억 원까지 넣을 수 있어요.";
+    if (hold) e.amount = hold;
+    else if (!amount || Number(amount) <= 0) e.amount = "금액을 원 단위로 넣어 주세요.";
+    else if (Number(amount) > AMOUNT_MAX) e.amount = OVER;
     if (!vat) e.vat = "부가세를 어떻게 적었는지 골라 주세요.";
     setErr(e);
     if (e.title) { refs.title.current?.focus(); return; }
@@ -71,6 +77,7 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
     }
   }
 
+
   return (
     <>
       <Main narrow>
@@ -85,10 +92,11 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
             vatModes: fixed ? [fixed] : ["included", "excluded", "exempt"],
             immutableFields: fixed ? ["vat"] : [],
           }}
+          onInputIssues={(issues) => { if (issues.amount) setHold(issues.amount); }}
           onApply={(changes) => {
             if ("title" in changes) setTitle(typeof changes.title === "string" ? changes.title : "");
             if ("reason" in changes) setReason(typeof changes.reason === "string" ? changes.reason : "");
-            if ("amount" in changes) setAmount(typeof changes.amount === "number" ? String(changes.amount) : "");
+            if ("amount" in changes) { setAmount(typeof changes.amount === "number" ? String(changes.amount) : ""); setHold(null); }
             if ("vat" in changes && !fixed) setVat(typeof changes.vat === "string" ? changes.vat as Vat : null);
             setErr({});
           }} />
@@ -96,7 +104,7 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
           {/* CF-65: 칸 이름 '무엇' → '항목' */}
           <Field ref={refs.title} label="항목" maxLength={60} value={title} error={err.title} onChange={(e) => { setTitle(e.target.value); setErr((x) => ({ ...x, title: undefined })); }} />
           <Field ref={refs.reason} label="이유" maxLength={200} value={reason} error={err.reason} onChange={(e) => { setReason(e.target.value); setErr((x) => ({ ...x, reason: undefined })); }} />
-          <Field ref={refs.amount} label={taxKind === "simplified" ? "받을 금액" : "금액"} unit="원" num inputMode="numeric" value={amount ? Number(amount).toLocaleString("ko-KR") : ""} error={err.amount} onChange={(e) => { const n = digits(e.target.value); setAmount(n); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? "10억 원까지 넣을 수 있어요." : undefined })); }} />
+          <Field ref={refs.amount} label={taxKind === "simplified" ? "받을 금액" : "금액"} unit="원" num inputMode="numeric" value={amount ? Number(amount).toLocaleString("ko-KR") : ""} error={hold ?? err.amount} onChange={(e) => { const n = digits(e.target.value); setAmount(n); setHold(null); setErr((x) => ({ ...x, amount: Number(n) > AMOUNT_MAX ? OVER : undefined })); }} />
           {fixed ? (
             <Small>{fixed === "exempt" ? "면세 업체라 부가세가 없어요." : "간이과세라 부가세를 따로 붙이지 않아요. 적은 금액이 고객이 보는 금액이에요."}</Small>
           ) : (
@@ -123,7 +131,7 @@ export function ExtraForm({ job, taxKind }: { job: JobV3; taxKind: string }) {
 /** 보내기 전 미리 보기(엔진 값, 저장하지 않아요). 예시 모드 · 금액 없음 · 부가세 안 고름이면 null */
 function usePreview(dealId: string, amount: string, vat: Vat | null): Schemas["ExtraPreviewOut"] | null {
   const [out, setOut] = useState<Schemas["ExtraPreviewOut"] | null>(null);
-  const key = amount && Number(amount) > 0 && Number(amount) <= AMOUNT_MAX && vat ? `${amount}|${vat}` : "";
+  const key = amount && Number(amount) > 0 && vat ? `${amount}|${vat}` : "";
   useEffect(() => {
     if (MOCK || !key) { setOut(null); return; }
     const [entered, mode] = key.split("|");

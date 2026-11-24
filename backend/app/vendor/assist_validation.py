@@ -14,6 +14,7 @@ from app.vendor.assist_date_edit import validated_date_edit
 from app.vendor.assist_normalize import (
     complete_range_evidence,
     crew_mentions,
+    crew_tokens,
     date_mentions,
     date_tokens,
 )
@@ -34,25 +35,28 @@ from app.vendor.assist_schemas import (
     check_value,
 )
 
-MONEY = re.compile(
-    r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*"
-    r"(천만원|백만원|십만원|억원|만원|천원|백원|억|만|천|백|원)?"
+_MONEY_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
+_MONEY_SMALL = rf"{_MONEY_NUMBER}\s*[천백십]"
+_MONEY_SMALL_SEQUENCE = rf"{_MONEY_SMALL}(?:\s*{_MONEY_SMALL})*"
+_MONEY_COEFFICIENT = rf"(?:{_MONEY_SMALL_SEQUENCE}(?:\s*{_MONEY_NUMBER})?|{_MONEY_NUMBER})"
+_MONEY_MAJOR_SEQUENCE = (
+    rf"(?:{_MONEY_COEFFICIENT}\s*억(?:\s*{_MONEY_COEFFICIENT}\s*만)?"
+    rf"|{_MONEY_COEFFICIENT}\s*만)"
 )
-MONEY_UNIT = {
-    "억원": 100_000_000,
-    "억": 100_000_000,
-    "천만원": 10_000_000,
-    "백만원": 1_000_000,
-    "십만원": 100_000,
-    "만원": 10_000,
-    "만": 10_000,
-    "천원": 1_000,
-    "천": 1_000,
-    "백원": 100,
-    "백": 100,
-    "원": 1,
-    "": 1,
-}
+_MONEY_REMAINDER = (
+    rf"(?:{_MONEY_SMALL_SEQUENCE}(?:\s*{_MONEY_NUMBER}(?=\s*원))?"
+    rf"|{_MONEY_NUMBER}(?=\s*원))"
+)
+MONEY = re.compile(
+    rf"(?<![\d십백천만억])(?<!\d[,.])"
+    rf"(?:(?P<major>{_MONEY_MAJOR_SEQUENCE})(?:\s*(?P<remainder>{_MONEY_REMAINDER}))?"
+    rf"|(?P<small>{_MONEY_SMALL_SEQUENCE})(?:\s*(?P<tail>{_MONEY_NUMBER})(?=\s*원))?"
+    rf"|(?P<plain>{_MONEY_NUMBER}))(?P<won>\s*원)?"
+)
+_MONEY_COMPONENT = re.compile(rf"({_MONEY_NUMBER})(?:\s*([천백십]))?")
+_MONEY_MAJOR_COMPONENT = re.compile(rf"({_MONEY_COEFFICIENT})\s*([억만])")
+_MONEY_SMALL_UNIT = {"천": 1_000, "백": 100, "십": 10, None: 1}
+_MONEY_MAJOR_UNIT = {"억": 100_000_000, "만": 10_000}
 DAYS = re.compile(r"(?<!\d)(\d{1,3})\s*(?:일간|일)(?!\d)")
 CLEAR = re.compile(r"(?:지워|지우|삭제|비워|비우|없애|제거|초기화)")
 CLEAR_NEGATED = re.compile(
@@ -77,25 +81,65 @@ def evidence_matches(text: str, evidence: str) -> bool:
     return bool(evidence.strip()) and normalized(evidence) in normalized(text)
 
 
-def _amount_mentions(evidence: str) -> set[int]:
-    out: set[int] = set()
-    tokens: list[tuple[int, int, int, int]] = []
+def _money_coefficient(text: str) -> tuple[Decimal, int] | None:
+    """'1천500'처럼 큰 단위 앞에 오는 숫자는 먼저 하나로 읽는다."""
+    total = Decimal(0)
+    first_scale = 0
+    previous_scale = 10_000
+    for part in _MONEY_COMPONENT.finditer(text):
+        scale = _MONEY_SMALL_UNIT[part[2]]
+        if scale >= previous_scale:
+            return None
+        try:
+            total += Decimal(part[1].replace(",", "")) * scale
+        except InvalidOperation:
+            return None
+        first_scale = first_scale or scale
+        previous_scale = scale
+    return total, first_scale
+
+
+def _amount_tokens(evidence: str) -> list[tuple[int, int, int]]:
+    """완전한 금액만 원문 위치와 함께 반환하고 합성 금액의 조각은 내보내지 않는다."""
+    groups: list[tuple[int, int, int]] = []
     for item in MONEY.finditer(evidence):
-        unit = item[2] or ""
+        major = item["major"]
+        remainder = item["remainder"]
+        small = item["small"]
+        won = item["won"]
+        bare = not (major or small or won)
         # 날짜 조각·공사 일수·인원 숫자를 금액으로 재활용하지 않는다.
         before = evidence[item.start() - 1 : item.start()] if item.start() else ""
         after = evidence[item.end() : item.end() + 4]
-        if before in ("-", "−", "/") or (
-            not unit
-            and (
-                after.startswith(("-", "/", "."))
-                or after.lstrip().startswith(
-                    ("일", "명", "인", "월", "년", "개", "주", "시", "분", "%", "㎡", "평", "대")
+        if (
+            re.match(r"\d|[,.]\d", after)
+            or before in ("-", "−", "/")
+            or (
+                bare
+                and (
+                    after.startswith(("-", "/", "."))
+                    or after.lstrip().startswith(
+                        (
+                            "일",
+                            "명",
+                            "인",
+                            "월",
+                            "년",
+                            "개",
+                            "주",
+                            "시",
+                            "분",
+                            "%",
+                            "㎡",
+                            "평",
+                            "대",
+                        )
+                    )
                 )
             )
         ):
             continue
-        if not unit:
+        if bare:
             # '견적 5000'처럼 숫자와 바로 연결된 금액 문구만 허용한다.
             nearby = evidence[max(item.start() - 28, 0) : item.start()]
             nearby = re.split(r"[,;.!?\n]", nearby)[-1]
@@ -105,29 +149,66 @@ def _amount_mentions(evidence: str) -> set[int]:
                 nearby,
             ):
                 continue
-        multiplier = MONEY_UNIT[unit]
-        try:
-            n = Decimal(item[1].replace(",", "")) * multiplier
-        except InvalidOperation:
+        if major:
+            n = Decimal(0)
+            for part in _MONEY_MAJOR_COMPONENT.finditer(major):
+                parsed = _money_coefficient(part[1])
+                if parsed is None:
+                    break
+                n += parsed[0] * _MONEY_MAJOR_UNIT[part[2]]
+            else:
+                if remainder:
+                    parsed = _money_coefficient(remainder)
+                    if parsed is None:
+                        continue
+                    n += parsed[0]
+                parsed = (n, 0)
+        else:
+            coefficient = small or item["plain"]
+            if item["tail"]:
+                coefficient += " " + item["tail"]
+            parsed = _money_coefficient(coefficient)
+        if parsed is None:
             continue
+        n = parsed[0]
         if n != n.to_integral_value():
             continue
         amount = int(n)
-        out.add(amount)
-        if unit:
-            tokens.append((item.start(), item.end(), amount, multiplier))
+        # '원'은 큰/작은 단위 뒤에서 생략할 수 있지만 숫자 단독 근거는 허용하지 않는다.
+        if remainder:
+            end = item.end("remainder") if remainder[-1] in "천백십" else item.end()
+        elif major:
+            end = item.end("major")
+        elif small and not item["tail"]:
+            end = item.end("small")
+        else:
+            end = item.end()
+        groups.append((item.start(), end, amount))
+    return groups
 
-    # '1억 2천만원'처럼 단위가 감소하며 이어진 금액은 합한 값도 원문 근거다.
-    for i, token in enumerate(tokens):
-        total = token[2]
-        end, scale = token[1], token[3]
-        for next_token in tokens[i + 1 :]:
-            if evidence[end : next_token[0]].strip() or next_token[3] >= scale:
-                break
-            total += next_token[2]
-            out.add(total)
-            end, scale = next_token[1], next_token[3]
-    return out
+
+def _amount_mentions(evidence: str) -> set[int]:
+    return {value for _, _, value in _amount_tokens(evidence)}
+
+
+def _scalar_grounded(field: str, value: Value, evidence: str, text: str | None) -> bool:
+    if type(value) is not int:
+        return False
+    needle = normalized(evidence)
+    tokens = _amount_tokens if field == "amount" else crew_tokens
+    mentions = [(start, end) for start, end, number in tokens(needle) if number == value]
+    if not mentions:
+        return False
+    if text is None:
+        return True
+    raw = normalized(text)
+    # 같은 숫자가 다른 곳에 있어도 잘린 근거를 통과시키지 않는다.
+    full = {(start, end) for start, end, number in tokens(raw) if number == value}
+    return any(
+        (match.start() + start, match.start() + end) in full
+        for match in re.finditer(re.escape(needle), raw)
+        for start, end in mentions
+    )
 
 
 def _grounded(
@@ -139,10 +220,8 @@ def _grounded(
     *,
     text: str | None = None,
 ) -> bool:
-    if field == "amount":
-        return type(value) is int and value in _amount_mentions(evidence)
-    if field == "crew":
-        return type(value) is int and value in crew_mentions(evidence)
+    if field in ("amount", "crew"):
+        return _scalar_grounded(field, value, evidence, text)
     if form == "quote" and field == "days":
         return type(value) is int and value in {int(x) for x in DAYS.findall(evidence)}
     if field == "vat":
@@ -783,8 +862,15 @@ def _verified_historical_scalar(
     try:
         check_value(form, item.field, relation.rejected_value)
         return _grounded(
-            form, item.field, relation.rejected_value, relation.rejected_evidence, context
-        ) and _grounded(form, item.field, item.value, relation.accepted_evidence, context)
+            form,
+            item.field,
+            relation.rejected_value,
+            relation.rejected_evidence,
+            context,
+            text=text,
+        ) and _grounded(
+            form, item.field, item.value, relation.accepted_evidence, context, text=text
+        )
     except (TypeError, ValueError, KeyError):
         return False
 
@@ -1025,35 +1111,6 @@ _EXTRA_AMOUNT_FOLLOWUP_CANCEL = re.compile(
 )
 
 
-def _extra_amount_groups(
-    text: str,
-) -> tuple[list[tuple[int, int, int]], set[int]] | None:
-    """'21만 5천 원'은 하나의 금액으로 묶고 다른 금액 선택지는 따로 센다."""
-    groups: list[tuple[int, int, int]] = []
-    components: set[int] = set()
-    last_scale = 0
-    for token in MONEY.finditer(text):
-        unit = token[2]
-        if not unit:
-            continue
-        value = Decimal(token[1].replace(",", "")) * MONEY_UNIT[unit]
-        if value != value.to_integral_value():
-            return None
-        amount = int(value)
-        components.add(amount)
-        if (
-            groups
-            and MONEY_UNIT[unit] < last_scale
-            and not text[groups[-1][1] : token.start()].strip()
-        ):
-            start, _, previous = groups[-1]
-            groups[-1] = (start, token.end(), previous + amount)
-        else:
-            groups.append((token.start(), token.end(), amount))
-        last_scale = MONEY_UNIT[unit]
-    return groups, components
-
-
 def _verified_extra_amount_error_correction(
     item: FieldIntent,
     text: str,
@@ -1071,19 +1128,23 @@ def _verified_extra_amount_error_correction(
         check_value("extra", "amount", relation.rejected_value)
         if not (
             _grounded(
-                "extra", "amount", relation.rejected_value, relation.rejected_evidence, context
+                "extra",
+                "amount",
+                relation.rejected_value,
+                relation.rejected_evidence,
+                context,
+                text=text,
             )
-            and _grounded("extra", "amount", item.value, relation.accepted_evidence, context)
+            and _grounded(
+                "extra", "amount", item.value, relation.accepted_evidence, context, text=text
+            )
         ):
             return False
     except (TypeError, ValueError, KeyError):
         return False
 
     raw = normalized(text)
-    parsed = _extra_amount_groups(raw)
-    if parsed is None:
-        return False
-    groups, components = parsed
+    groups = _amount_tokens(raw)
     if len(groups) != 2:
         return False
     (old_start, old_end, old_amount), (new_start, new_end, new_amount) = groups
@@ -1091,7 +1152,6 @@ def _verified_extra_amount_error_correction(
         (old_amount, new_amount) != (relation.rejected_value, item.value)
         or not before <= old_start < before + len(old_text)
         or not after <= new_start < after + len(new_text)
-        or not _amount_mentions(raw) <= components | {old_amount, new_amount}
     ):
         return False
     if not _EXTRA_AMOUNT_OLD_ERROR.fullmatch(re.sub(r"\s+", "", raw[old_end:new_start])):
@@ -1217,9 +1277,9 @@ def _verified_correction(
         return None
     try:
         check_value(form, item.field, relation.rejected_value)
-        if not _grounded(form, item.field, relation.rejected_value, old, context):
+        if not _grounded(form, item.field, relation.rejected_value, old, context, text=text):
             return None
-        if not _grounded(form, item.field, item.value, new, context):
+        if not _grounded(form, item.field, item.value, new, context, text=text):
             return None
     except (ValueError, TypeError, KeyError):
         return None
@@ -1249,7 +1309,7 @@ def _independent_same_value_rule(
             or not evidence_matches(text, rule.evidence)
         ):
             continue
-        if not _grounded(data.form, item.field, rule.value, rule.evidence, context):
+        if not _grounded(data.form, item.field, rule.value, rule.evidence, context, text=text):
             continue
         if not _business_ok(
             data.form, item.field, rule.value, data, context, {item.field: rule.value}

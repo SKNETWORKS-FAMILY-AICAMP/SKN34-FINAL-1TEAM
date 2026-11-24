@@ -22,7 +22,8 @@ import { daysText } from "./days";
 import { AssistBox } from "../assist/AssistBox";
 import s from "./jobs.module.css";
 
-// #176의 희망 시작일·공사 기간에 맞춘 예시를 유지해요. 날짜 표시용 문장만 만들어요.
+/** 예시 글: 희망 시작일부터 공사 기간만큼 "12/8부터 12/10까지, 2명" */
+/** 예시 글: 희망 시작일부터 공사 기간만큼(주말에 안 하는 집이면 평일로 세요) "12/8부터 12/10까지, 2명". 날짜 글만 만들어요 */
 function example(start: string, n: number, noWeekend: boolean): string {
   const d = new Date(`${start}T00:00:00Z`);
   const md = (x: Date) => `${x.getUTCMonth() + 1}/${x.getUTCDate()}`;
@@ -47,6 +48,9 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
   const [crew, setCrew] = useState(String(job.proposal?.crew ?? job.need.crew ?? 2));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 도우미가 말한 인원 · 날짜를 넣지 못한 까닭. 칸에는 옛 값이 남아 있어서, 업체가 인원을 다시 고르거나 달력을 누르기 전까지 보내기를 막아요
+  const [crewHold, setCrewHold] = useState<string | null>(null);
+  const [daysHold, setDaysHold] = useState<string | null>(null);
   const [idem] = useState(newKey);
   const today = dateSeoul(now);
 
@@ -58,6 +62,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
 
   async function go() {
     if (busy) return;
+    if (daysHold || crewHold) return; // 이유는 달력 아래 · 인원 칸에 이미 보여요
     if (need && days.length !== need) { setErr(`견적서 공사 기간 ${need}일과 같게 ${need}일을 골라 주세요. 지금 ${days.length}일 골랐어요.`); return; }
     setErr(null);
     setBusy(true);
@@ -71,6 +76,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
       setBusy(false);
     }
   }
+
 
   return (
     <>
@@ -90,9 +96,13 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
             noWeekend: !job.weekend_work,
             crewMax: 6, requiredDays: need,
           }}
+          onInputIssues={(issues) => {
+            if (issues.days) setDaysHold(issues.days);
+            if (issues.crew) setCrewHold(issues.crew);
+          }}
           onApply={(changes) => {
-            if ("days" in changes) setDays(Array.isArray(changes.days) ? changes.days : []);
-            if ("crew" in changes) setCrew(typeof changes.crew === "number" ? String(changes.crew) : "");
+            if ("days" in changes) { setDays(Array.isArray(changes.days) ? changes.days : []); setDaysHold(null); }
+            if ("crew" in changes) { setCrew(typeof changes.crew === "number" ? String(changes.crew) : ""); setCrewHold(null); }
             setErr(null);
           }} />
         <Group>
@@ -102,7 +112,7 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
             today={today}
             month={job.request?.wish_dates[0] ?? v.work_wish_on ?? today}
             value={days}
-            onChange={(x) => { setDays(x); setErr(null); }}
+            onChange={(x) => { setDays(x); setDaysHold(null); setErr(null); }}
             marks={marks}
             notes={notes}
             wide
@@ -113,7 +123,8 @@ export function DatesForm({ job, now }: { job: JobV3; now: string }) {
           <Rows label="보낼 공사 날짜">
             <Row label="고른 날" sub={need ? `견적서 공사 기간 ${need}일` : undefined} value={days.length ? daysText(days, true) : "—"} />
           </Rows>
-          <SelectField label="인원" options={CREW} value={crew} onChange={(e) => setCrew(e.target.value)} />
+          {daysHold ? <p className={s.err} role="alert"><Icon name="error" size={16} />{daysHold}</p> : null}
+          <SelectField label="인원" options={CREW} value={crew} error={crewHold} onChange={(e) => { setCrew(e.target.value); setCrewHold(null); setErr(null); }} />
           {err ? <p className={s.err} role="alert"><Icon name="error" size={16} />{err}</p> : null}
         </Group>
       </Main>

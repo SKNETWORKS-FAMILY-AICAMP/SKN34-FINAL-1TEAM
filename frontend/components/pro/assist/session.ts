@@ -6,6 +6,21 @@ import {
   copyCurrent, formKeys, freshPrevious, mergeKeptFields, previousCandidate, readResponse, sameValue, validCombinedPeriod,
 } from "./protocol";
 import { ruleFields, ruleResponse } from "./rules";
+import { assistInputIssues, amountToConfirm } from "./guard";
+
+export type InputIssues = ReturnType<typeof assistInputIssues>;
+
+function checkedNumericFields(response: AssistResponse, issues: InputIssues, amount: number | undefined): AssistResponse {
+  return { ...response, fields: response.fields.map((field) => {
+    if (field.field !== "amount" && field.field !== "crew") return field;
+    if (field.action === "keep" && field.status === "valid") return field;
+    const wrongAmount = field.field === "amount" && amount !== undefined &&
+      (field.action === "set" && field.value !== amount ||
+       field.action === "clear" || field.alternatives.some((a) => a.action !== "set" || a.value !== amount));
+    if (!issues[field.field] && !wrongAmount) return field;
+    return { ...field, status: "invalid", action: "uncertain", value: null, alternatives: [] };
+  }) };
+}
 
 export type FieldChoice = { selected: boolean; alternative: number | null };
 export type AssistPhase = "idle" | "loading" | "ready" | "applied" | "denied";
@@ -112,7 +127,7 @@ export class AssistSession {
     this.listener?.(value);
   }
 
-  send(text: string, current: AssistCurrent, options: RuleOptions): boolean {
+  send(text: string, current: AssistCurrent, options: RuleOptions, onInputIssues?: (issues: InputIssues) => void): boolean {
     if (this.disposed || this.state.phase === "loading") return false;
     const utterance = text.trim();
     if (!utterance || utterance.length > 1000) {
@@ -134,9 +149,15 @@ export class AssistSession {
       immutableFields: [...(options.immutableFields ?? [])],
     };
     const id = requestId();
+    const confirmedAmount = this.form === "quote" || this.form === "extra" ? amountToConfirm(utterance, opts.today) : undefined;
+    const issues = assistInputIssues(this.form, utterance, opts, confirmedAmount);
+    // 확인되지 않은 금액으로 다른 칸만 저장되는 것을 요청을 보내는 순간부터 막아요.
+    const hold = confirmedAmount !== undefined && confirmedAmount !== snapshot.amount && !issues.amount
+      ? { ...issues, amount: "금액 후보를 확인해 적용하거나 금액을 직접 입력해 주세요." } : issues;
+    onInputIssues?.(hold);
     const parsed = ruleFields(this.form, utterance, opts);
-    const fallback = ruleResponse(this.form, id, utterance, opts, parsed);
-    const preview = mergeKeptFields(previous, fallback);
+    const fallback = checkedNumericFields(ruleResponse(this.form, id, utterance, opts, parsed), issues, confirmedAmount);
+    const preview = checkedNumericFields(mergeKeptFields(previous, fallback), issues, confirmedAmount);
     const token = ++this.sequence;
     this.controller?.abort();
     const abort = new AbortController();
@@ -163,7 +184,7 @@ export class AssistSession {
       try {
         const raw = await this.requester(request, abort.signal);
         if (this.disposed || abort.signal.aborted || token !== this.sequence) return;
-        const response = readResponse(raw, request, opts);
+        const response = checkedNumericFields(readResponse(raw, request, opts), issues, confirmedAmount);
         // 서버의 keep/보류가 이전 후보를 제외했다면 화면에서 다시 되살리지 않아요.
         this.baselines = baselinesFor(response, previous, priorBaselines, snapshot);
         this.publish({

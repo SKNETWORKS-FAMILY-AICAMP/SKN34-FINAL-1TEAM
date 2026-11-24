@@ -4,7 +4,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 import { VAT_MODE_LABEL } from "../text";
-import { AssistSession } from "./session";
+import { AssistSession, type InputIssues } from "./session";
 import { AssistSlot } from "./slot";
 import type { AssistCurrent, AssistForm, AssistValue, RuleOptions, CandidateField, Alternative } from "./protocol";
 import s from "./assist.module.css";
@@ -37,7 +37,7 @@ function proposal(field: CandidateField | Alternative, key: string): string {
   return showValue(key, field.value);
 }
 
-export function AssistBox({ hint, examples, form, resourceId, current, options, onApply }: {
+export function AssistBox({ hint, examples, form, resourceId, current, options, onApply, onInputIssues }: {
   hint: string;
   examples: string[];
   form: AssistForm;
@@ -46,6 +46,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
   options: RuleOptions;
   /** 업체가 '폼에 적용'을 누른 뒤 선택·검증된 칸만 전달해요. */
   onApply: (changes: AssistCurrent) => void;
+  onInputIssues?: (issues: InputIssues) => void;
 }) {
   const session = useMemo(() => new AssistSession(form, resourceId), [form, resourceId]);
   const slot = useContext(AssistSlot);
@@ -59,7 +60,7 @@ export function AssistBox({ hint, examples, form, resourceId, current, options, 
   }, [session]);
 
   function send() {
-    if (session.send(text, latest.current.current, latest.current.options)) setText("");
+    if (session.send(text, latest.current.current, latest.current.options, onInputIssues)) setText("");
   }
 
   const response = view.response;

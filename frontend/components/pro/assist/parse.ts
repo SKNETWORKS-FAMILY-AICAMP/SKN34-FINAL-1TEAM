@@ -115,6 +115,43 @@ function shift(day: string, by: number): string {
 }
 
 const num = (s: string) => Number(s.replace(/,/g, ""));
+const MAN_SCALE: Record<string, number> = { 천: 1000, 백: 100, 십: 10 };
+const COMPOUND_MAN = /(?<![\d.,천백십])(?:[\d천백십][ \t]*){1,24}만/g;
+export const SAID_AMOUNT = /\d\s*[억천백만원]|(?<![가-힣])[일이삼사오육칠팔구십백천만억]{1,8}\s*원|(?<![가-힣])[천백십]만(?=\s|[,.;!?]|$)/;
+
+/** 만 앞의 혼합 표기를 통째로 읽어요. 천500만처럼 시작 숫자가 없으면 뒷부분도 쓰지 않아요. */
+function manOf(text: string): string | null {
+  let invalid = false;
+  const result = text.replace(COMPOUND_MAN, (word) => {
+    if (!/[천백십]/.test(word)) return word;
+    const body = word.slice(0, -1).replace(/\s/g, "");
+    const groups = /(\d+)([천백십]?)/gy;
+    let limit = Infinity;
+    let total = 0;
+    while (groups.lastIndex < body.length) {
+      const part = groups.exec(body);
+      if (!part) { invalid = true; break; }
+      const scale = MAN_SCALE[part[2]] ?? 1;
+      const value = Number(part[1]) * scale;
+      if (scale >= limit || value >= limit) { invalid = true; break; }
+      limit = scale;
+      total += value;
+    }
+    return total + "만";
+  });
+  // 소수·쉼표가 잘못 붙어 합성 단위를 전부 해석하지 못했으면 뒷자리만 채택하지 않는다.
+  return invalid || /[천백십][\d.,천백십 \t]*만/.test(result) ? null : result;
+}
+
+export function recognizedCompoundAmount(text: string): number | undefined {
+  const matches = [...text.matchAll(COMPOUND_MAN)];
+  if (matches.length !== 1 || !/[천백십]/.test(matches[0][0])) return undefined;
+  const [part] = matches;
+  const rest = text.slice(0, part.index) + text.slice(part.index + part[0].length);
+  if (SAID_AMOUNT.test(rest)) return undefined;
+  const normalized = manOf(text);
+  return normalized === null ? undefined : amountIn(normalized);
+}
 /** 금액 앞에 붙으면 '전체 금액'으로 보는 말 */
 const TOTAL = /(?:전체|총|합계|견적)\s*(?:금액|견적|은|는|이|가)?\s*$/;
 
@@ -210,7 +247,8 @@ function daysOf(text: string): number | undefined {
 /** "견적 455만 원, 부가세 포함, 공사 3일, 12/17까지 유효" → 견적서 칸 값. 읽은 칸만 돌려줘요 */
 export function parseQuote(text: string, today: string): QuoteFill {
   const out: QuoteFill = {};
-  const amount = amountIn(text);
+  const normalized = manOf(text);
+  const amount = normalized === null ? undefined : amountIn(normalized);
   if (amount) out.amount = amount;
   const vat = vatIn(text);
   if (vat) out.vat = vat;
@@ -250,7 +288,7 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
   // 인원 단위가 있는 "한/두/세/네 명"만 읽어요. "네, ..."는 응답이고 "두세 명"은 범위예요.
   const native: Record<string, number> = { 한: 1, 두: 2, 세: 3, 네: 4 };
   const crewTerm = /(?<![가-힣\d])(?:(\d{1,2})|(한|두|세|네))\s*명/g;
-  const ambiguous = /(?:\d{1,2}|한|두|세|네)\s*명\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:\d{1,2}|한|두|세|네)\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?:한|두|세|네)\s*(?:한|두|세|네)\s*명/;
+  const ambiguous = /(?:\d{1,2}|한|두|세|네)\s*(?:명\s*)?[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*명|(?<![가-힣])(?:한|두|세|네)\s*(?:한|두|세|네)\s*명/;
   const crews = new Set([...text.matchAll(crewTerm)].map((m) => m[1] ? Number(m[1]) : native[m[2]]));
   const crew = !ambiguous.test(text) && crews.size === 1 ? [...crews][0] : undefined;
   const said = text.replace(
@@ -279,7 +317,7 @@ export function parseDates(text: string, today: string, baseMonth?: string | nul
 export type ExtraFill = QuoteFill & { title?: string; reason?: string };
 const WHY = /(?<!견적|계약|문|청구|확인)서\s*요?\s*$|때문/;
 /** 항목 이름에서 지울 금액: 만 · 원이 붙은 숫자만("2평 · 3장"은 둬요) */
-const AMOUNT_WORD = /\d[\d,]*(?:\.\d+)?\s*만\s*(?:\d\s*천)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*\s*원(?:이|가|은|는)?/g;
+const AMOUNT_WORD = /[일이삼사오육칠팔구십백천만억]{1,8}\s*만?\s*원(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*억\s*(?:[\d,]*\s*만)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*(?:\.\d+)?\s*만\s*(?:\d\s*천)?\s*(?:[\d,]*\s*원)?(?:이|가|은|는)?|\d[\d,]*\s*원(?:이|가|은|는)?/g;
 /** 명시적인 제목 지시가 있으면 앞쪽의 '사유 말고'를 제목으로 읽지 않아요. */
 const EXTRA_TITLE_TARGET = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*)?(?:항목명|작업명|제목|항목|이름)\s*(?::|=|은|는|을|를)\s*/g;
 const EXTRA_TITLE_PREFIX = /^(?:추가금|추가금액)?(?:사유|이유)[은는을를]?(?:말고|대신)$/;
@@ -327,14 +365,14 @@ export function parseExtra(text: string, today: string): ExtraFill {
   delete out.valid;
   const explicit = targetedExtraTitle(text);
   if (explicit.value) out.title = explicit.value;
-  for (const raw of text.split(/,|\n/)) {
+  for (const raw of text.split(/(?<!\d),|,(?!\d{3})|\n/)) {
     const part = raw.trim();
     if (!part) continue;
     if (!out.reason && WHY.test(part)) { out.reason = part.replace(/[.。]\s*$/, ""); continue; }
     if (!out.title && !explicit.targeted && !EXTRA_NOT_FREE_TITLE.test(part) &&
-      !EXTRA_TITLE_UNCERTAIN.test(part) && !/부가세|부가가치세|VAT|면세/i.test(part)) {
+      !EXTRA_TITLE_UNCERTAIN.test(part)) {
       // 정정한 뒤 말은 항목 이름이 아니에요("곰팡이 방지 12만 원이 아니라 15만 원")
-      const head = part.split(/아니라|아니고|말고/)[0];
+      const head = (manOf(part) ?? part).split(/아니라|아니고|말고|부가세|부가가치세|VAT|면세/i)[0];
       const t = head.replace(AMOUNT_WORD, "").replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
       if (t && !/^\d/.test(t) && !EXTRA_TITLE_DENIED.test(t)) out.title = t.slice(0, 60);
     }

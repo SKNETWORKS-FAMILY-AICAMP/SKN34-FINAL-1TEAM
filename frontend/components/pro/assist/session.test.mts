@@ -14,6 +14,36 @@ import {
 const today = "2026-11-23";
 const quote = { amount: null, vat: null, days: null, valid: null };
 const quoteOptions = { today, daysMax: 40, vatModes: ["included", "excluded", "exempt"] };
+
+test("복합 금액은 전체 값 확인 전 저장을 막고 서버가 돌려준 끝자리 후보를 제외해요", async () => {
+  const api = pending();
+  const session = new AssistSession("quote", "visit-id", api.requester);
+  const current = { ...quote, amount: 1_000_000 };
+  let blocked = false;
+  session.send("견적 1천500만 원, 부가세 별도", current, quoteOptions, (issues) => { blocked = !!issues.amount; });
+  assert.equal(blocked, true);
+  const job = api.jobs[0];
+  job.resolve(response(job.request, { amount: { action: "set", value: 5_000_000 }, vat: { action: "set", value: "excluded" } }));
+  await flush();
+  let changes: AssistCurrent = {};
+  session.select("amount", true);
+  session.apply(current, (selected) => { changes = selected; });
+  assert.deepEqual(changes, { vat: "excluded" });
+});
+
+test("인원 범위를 말하면 API가 한쪽 숫자를 반환해도 인원 후보로 적용하지 않아요", async () => {
+  const api = pending();
+  const session = new AssistSession("dates", "deal-id", api.requester);
+  const current = { crew: 2, days: ["2026-12-08"] };
+  let held = false;
+  session.send("작업 인원은 2~3명", current, { today, crewMax: 6 }, (issues) => { held = !!issues.crew; });
+  assert.equal(held, true);
+  const job = api.jobs[0];
+  job.resolve(response(job.request, { crew: { action: "set", value: 3 } }));
+  await flush();
+  session.select("crew", true);
+  assert.equal(session.apply(current, () => assert.fail("인원 적용")), false);
+});
 type Data = Partial<Record<string, {
   origin_request_id?: string;
   evidence?: string;

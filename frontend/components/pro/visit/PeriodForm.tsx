@@ -39,6 +39,8 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
   const [busy, setBusy] = useState(false);
   const [idem] = useState(newKey);
   const [decline, setDecline] = useState(false);
+  // 도우미가 말한 기간을 넣지 못함. 달력에 남은 옛 기간으로 보내지 않게, 달력을 다시 누르기 전까지 보내기를 막아요
+  const [hold, setHold] = useState<string | null>(null);
   // ?decline=1(알림 · 작업함에서 바로 '못 받아요')은 그린 뒤에 열어요(처음 그릴 때 연 창은 개발 모드 두 번 그리기에서 바로 닫혀요)
   useEffect(() => { if (openDecline) setDecline(true); }, [openDecline]);
   const ready = !!(p.start && p.end);
@@ -49,6 +51,7 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
 
   async function sendWindow() {
     if (busy) return;
+    if (hold) { setErr(hold); return; } // 기간 오류 칸 하나에만 보여요
     if (!ready) { setErr(p.start ? "끝나는 날을 눌러 주세요." : "갈 수 있는 기간의 시작 · 끝을 눌러 주세요."); return; }
     setErr(null);
     setBusy(true);
@@ -61,6 +64,7 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
       setBusy(false);
     }
   }
+
 
   const sendBtn = (size: "lg" | "sm") => <Button size={size} onClick={sendWindow} busy={busy} aria-describedby={err ? "period-err" : undefined}>{busy ? "보내는 중" : sendLabel}</Button>;
   const declineBtn = (size: "lg" | "sm") => <Button size={size} variant="secondary" onClick={() => setDecline(true)} disabled={busy}>못 받아요</Button>;
@@ -96,12 +100,14 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
                   examples={["12/2부터 12/5까지 돼요, 12/4는 안 돼요"]}
                   current={{ start: p.start, end: p.end, excluded: p.excluded }}
                   options={{ today: dateSeoul(now), baseMonth: v.wish_start }}
+                  onInputIssues={(issues) => { if (issues.period) { setHold(issues.period); setErr(issues.period); } }}
                   onApply={(changes) => {
                     setP((old) => ({
                       start: "start" in changes ? typeof changes.start === "string" ? changes.start : null : old.start,
                       end: "end" in changes ? typeof changes.end === "string" ? changes.end : null : old.end,
                       excluded: "excluded" in changes ? Array.isArray(changes.excluded) ? changes.excluded : [] : old.excluded,
                     }));
+                    if ("start" in changes || "end" in changes) setHold(null);
                     setErr(null);
                   }} />
                 <h2 className={s.calT}>갈 수 있는 기간</h2>
@@ -109,7 +115,7 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
                 <PeriodCalendar
                   label="갈 수 있는 기간 고르기"
                   value={p}
-                  onChange={(x) => { setP(x); setErr(null); }}
+                  onChange={(x) => { setP(x); setHold(null); setErr(null); }}
                   today={dateSeoul(now)}
                   wish={v.wish_start && v.wish_end ? { from: v.wish_start, to: v.wish_end } : null}
                   taken={v.taken}

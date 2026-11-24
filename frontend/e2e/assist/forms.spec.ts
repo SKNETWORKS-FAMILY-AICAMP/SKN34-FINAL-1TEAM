@@ -108,6 +108,82 @@ type Scenario = {
   firstChoice: string;
 };
 
+test("복합 금액은 전체 원 단위로 확인한 뒤에만 견적서에 저장해요", async ({ page, request }) => {
+  const box = await open(page, `/vendor/requests/${VISITED}/quote`);
+  const amount = page.getByLabel("견적 금액", { exact: true });
+  for (const [text, expected] of [["견적 1천500만 원", 15_000_000], ["견적 2천300만 원", 23_000_000]] as const) {
+    const before = writes(await recorded(request)).length;
+    await send(page, text);
+    await expect(box.getByRole("checkbox", { name: "금액 적용 선택" })).toBeEnabled();
+    await page.getByRole("button", { name: "임시 저장", exact: true }).click();
+    expect(writes(await recorded(request))).toHaveLength(before);
+    await box.getByRole("button", { name: "폼에 적용" }).click();
+    await expect(amount).toHaveValue(expected.toLocaleString("ko-KR"));
+    await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.entered_amount).toBe(expected);
+  }
+});
+
+test("예약된 견적 자동 저장을 멈추고 같은 금액을 다시 확인하면 한 번 저장해요", async ({ page, request }) => {
+  await open(page, `/vendor/requests/${VISITED}/quote`);
+  const amount = page.getByLabel("견적 금액", { exact: true });
+  await page.clock.install();
+  await amount.fill("6000000");
+  await send(page, "견적 천만, 부가세 별도");
+  await page.clock.fastForward(1000);
+  expect(writes(await recorded(request))).toHaveLength(0);
+  await amount.fill("600000");
+  await amount.fill("6000000");
+  await page.clock.fastForward(1000);
+  await expect.poll(async () => writes(await recorded(request)).map((w) => w.body?.entered_amount)).toEqual([6_000_000]);
+});
+
+for (const form of ["quote", "extra"] as const) {
+  test(`${form}: 읽지 못한 금액은 다른 칸을 고쳐도 옛 금액으로 발송하지 않아요`, async ({ page, request }) => {
+    await open(page, form === "quote" ? `/vendor/requests/${VISITED}/quote` : `/vendor/jobs/${WORKING}?step=extra`);
+    const amount = page.getByLabel(form === "quote" ? "견적 금액" : "금액", { exact: true });
+    if (form === "extra") {
+      await page.getByLabel("항목", { exact: true }).fill("추가 보강");
+      await page.getByLabel("이유", { exact: true }).fill("현장 요청");
+    }
+    await amount.fill("1000000");
+    await queueAnswer(request, { status: 503, message: "시험용 연결 실패" });
+    await send(page, "견적 천만, 부가세 별도");
+    await expect(page.getByText(/말씀하신 금액을 확인하지 못했어요/).first()).toBeVisible();
+    if (form === "quote") {
+      await page.getByLabel("공사 기간", { exact: true }).fill("3");
+      await page.getByRole("button", { name: "임시 저장", exact: true }).click();
+    } else {
+      await page.getByLabel("이유", { exact: true }).fill("사유만 직접 고침");
+    }
+    await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+    await page.waitForTimeout(950);
+    expect(writes(await recorded(request))).toHaveLength(0);
+    await amount.fill("1500000");
+    await expect(page.getByText(/말씀하신 금액을 확인하지 못했어요/)).toHaveCount(0);
+    if (form === "quote") {
+      await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.entered_amount).toBe(1_500_000);
+    }
+  });
+}
+
+test("범위 밖이거나 미정인 인원을 확인하기 전에는 기존 인원으로 보내지 않아요", async ({ page, request }) => {
+  const box = await open(page, `/vendor/jobs/${DATES}`);
+  const days = ["2027-12-08", "2027-12-09"];
+  await queueAnswer(request, { fields: [set("days", days, "12월 8일, 9일")] });
+  await send(page, "2027년 12월 8일, 9일에 작업합니다");
+  await box.getByRole("button", { name: "폼에 적용" }).click();
+  for (const phrase of ["12명", "10명", "2~3명"]) {
+    await queueAnswer(request, { fields: [set("crew", 2, phrase)] });
+    await send(page, "공사 인원은 " + phrase);
+    await expect(page.getByText(/말씀하신 인원을 확정할 수 없어요/).first()).toBeVisible();
+    await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+    expect(writes(await recorded(request))).toHaveLength(0);
+  }
+  await page.getByLabel("인원", { exact: true }).selectOption("3");
+  await page.getByRole("button", { name: "고객에게 보내기", exact: true }).click();
+  await expect.poll(async () => writes(await recorded(request)).at(-1)?.body?.crew).toBe(3);
+});
+
 const scenarios: Scenario[] = [
   {
     form: "period", route: `/vendor/requests/${SANGGYE}`, resourceId: SANGGYE,

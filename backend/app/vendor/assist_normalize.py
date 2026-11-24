@@ -35,11 +35,12 @@ _SHORT_RANGE_TAIL = re.compile(
 )
 
 
-_CREW = re.compile(r"(?<![가-힣\d])(?:(\d{1,2})|(한|두|세|네))\s*(?:명|인)(?!\d)")
+_CREW = re.compile(r"(?<!\d)(?<!\d[,.])(?:(\d{1,2})|(?<![가-힣])(한|두|세|네))\s*(?:명|인)(?!\d)")
+_CREW_RANGE_LINK = r"(?:[~\-–—－∼〜/]|부터|에서|또는|혹은)"
 _CREW_RANGE = re.compile(
-    r"(?:\d{1,2}|한|두|세|네)\s*(?:명|인)\s*[~\-–∼]\s*"
+    rf"(?:\d+|한|두|세|네)\s*(?:명|인)\s*{_CREW_RANGE_LINK}\s*"
     r"(?:\d{1,2}|한|두|세|네)\s*(?:명|인)"
-    r"|(?:\d{1,2}|한|두|세|네)\s*[~\-–∼]\s*(?:\d{1,2}|한|두|세|네)\s*(?:명|인)"
+    rf"|(?:\d+|한|두|세|네)\s*{_CREW_RANGE_LINK}\s*(?:\d+|한|두|세|네)\s*(?:명|인)"
     r"|(?:한|두|세|네)\s*(?:한|두|세|네)\s*(?:명|인)"
 )
 _NATIVE_CREW = {"한": 1, "두": 2, "세": 3, "네": 4}
@@ -221,12 +222,19 @@ def date_mentions(
     return found
 
 
-def crew_mentions(evidence: str) -> set[int]:
-    """'네 명' 등 인원 단위가 있는 수량만 반환한다. 범위·'두세 명'은 보류한다."""
+def crew_tokens(evidence: str) -> list[tuple[int, int, int]]:
+    """범위·'두세 명'을 제외한 인원 수와 원문 위치를 반환한다."""
     uncertain = [(m.start(), m.end()) for m in _CREW_RANGE.finditer(evidence)]
-    values: set[int] = set()
+    values = []
     for match in _CREW.finditer(evidence):
         if any(match.start() < b and match.end() > a for a, b in uncertain):
             continue
-        values.add(int(match[1]) if match[1] else _NATIVE_CREW[match[2]])
+        values.append(
+            (match.start(), match.end(), int(match[1]) if match[1] else _NATIVE_CREW[match[2]])
+        )
     return values
+
+
+def crew_mentions(evidence: str) -> set[int]:
+    """'네 명' 등 인원 단위가 있는 수량만 반환한다. 범위·'두세 명'은 보류한다."""
+    return {value for _, _, value in crew_tokens(evidence)}
