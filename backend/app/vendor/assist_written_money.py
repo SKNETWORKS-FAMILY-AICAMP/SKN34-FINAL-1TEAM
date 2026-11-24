@@ -14,17 +14,15 @@ _RUN = re.compile(
 _WRITTEN_DIGIT = re.compile(r"[일이삼사오육칠팔구영공조경]")
 _HANGUL_RUN = re.compile(r"[일이삼사오육칠팔구영공십백천만억]+")
 _ATTACHED_UNIT = re.compile(r"[십백천]|[일이삼사오육칠팔구영공십백천][만억]")
-_ATTACHED_END = re.compile(r"[ \t]*(?:[0-9]|원)")
 _ATTACHED_LABEL = re.compile(
     r"(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를]"
 )
-_ATTACHED_LABEL_NUMBER = re.compile(r"[일이삼사오육칠팔구영공십백천만억]+\s*[0-9]")
+_HANGUL_NUMBER_CHARS = frozenset("일이삼사오육칠팔구영공십백천만억")
+_ASCII_DIGITS = frozenset("0123456789")
+_ASCII_NUMBER_CHARS = _ASCII_DIGITS | frozenset(",.")
 _OTHER_WRITTEN = re.compile(r"[일이삼사오육칠팔구영공십백천만억조경]\s*원")
 _SPLIT_NUMBER = re.compile(r"[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$")
-_WRITTEN_RANGE_END = re.compile(
-    r"\s*(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)"
-    r"\s*[0-9][0-9,.]*\s*[억천백십만원]"
-)
+_RANGE_SEPARATORS = (*"~∼〜–—－−/.,·:-", "부터", "에서", "또는", "혹은", "아니면", "점")
 _END = re.compile(
     r"^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|"
     r"이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))"
@@ -52,6 +50,43 @@ _RANGE = re.compile(r"부터|까지|에서|[+/<>-]")
 _BREAK = re.compile(r"[,;.!?？。]")
 
 
+def _skip_chars(text: str, pos: int, chars: frozenset[str]) -> int:
+    while pos < len(text) and text[pos] in chars:
+        pos += 1
+    return pos
+
+
+def _skip_spaces(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    return pos
+
+
+def _attached_end(text: str, pos: int) -> bool:
+    pos = _skip_chars(text, pos, frozenset(" \t"))
+    return pos < len(text) and text[pos] in "0123456789원"
+
+
+def _written_range_end(text: str, pos: int) -> bool:
+    pos = _skip_spaces(text, pos)
+    separator = next((s for s in _RANGE_SEPARATORS if text.startswith(s, pos)), None)
+    if separator is None:
+        return False
+    pos = _skip_spaces(text, pos + len(separator))
+    if pos >= len(text) or text[pos] not in _ASCII_DIGITS:
+        return False
+    pos = _skip_spaces(text, _skip_chars(text, pos, _ASCII_NUMBER_CHARS))
+    return pos < len(text) and text[pos] in "억천백십만원"
+
+
+def _attached_label_number(text: str, pos: int) -> bool:
+    end = _skip_chars(text, pos, _HANGUL_NUMBER_CHARS)
+    if end == pos:
+        return False
+    end = _skip_spaces(text, end)
+    return end < len(text) and text[end] in _ASCII_DIGITS
+
+
 def _attached_or_mixed(text: str, *, include_range: bool = False) -> bool:
     """한글 숫자 묶음을 한 번씩 읽고, 끝 위치에서만 인접 단위·숫자를 확인한다."""
     for match in _HANGUL_RUN.finditer(text):
@@ -60,18 +95,18 @@ def _attached_or_mixed(text: str, *, include_range: bool = False) -> bool:
         before = text[start - 1] if start else ""
         # 낱말에 붙은 숫자나 숫자 묶음 중간부터 잘라 읽은 후보는 보류한다.
         suffix = body if "가" <= before <= "힣" else body[1:]
-        if _ATTACHED_UNIT.search(suffix) and _ATTACHED_END.match(text, end):
+        if _ATTACHED_UNIT.search(suffix) and _attached_end(text, end):
             return True
         if (
             include_range
             and not ("가" <= before <= "힣" or "0" <= before <= "9")
             and "만" not in body
             and "억" not in body
-            and _WRITTEN_RANGE_END.match(text, end)
+            and _written_range_end(text, end)
         ):
             return True
     return any(
-        _ATTACHED_LABEL_NUMBER.match(text, label.end()) for label in _ATTACHED_LABEL.finditer(text)
+        _attached_label_number(text, label.end()) for label in _ATTACHED_LABEL.finditer(text)
     )
 
 

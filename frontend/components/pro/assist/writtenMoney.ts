@@ -6,12 +6,13 @@ const RUN = /(?<![가-힣0-9])(?<![0-9][.,])(?!공사(?:\s|$)|[0-9]+\s*일\s)(?<
 const WRITTEN_DIGIT = /[일이삼사오육칠팔구영공조경]/;
 const HANGUL_RUN = /[일이삼사오육칠팔구영공십백천만억]+/g;
 const ATTACHED_UNIT = /[십백천]|[일이삼사오육칠팔구영공십백천][만억]/;
-const ATTACHED_END = /[ \t]*(?:[0-9]|원)/y;
 const ATTACHED_LABEL = /(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계)[은는이가을를]/g;
-const ATTACHED_LABEL_NUMBER = /[일이삼사오육칠팔구영공십백천만억]+\s*[0-9]/y;
+const HANGUL_NUMBER_CHARS = "일이삼사오육칠팔구영공십백천만억";
+const ASCII_DIGITS = "0123456789";
+const ASCII_NUMBER_CHARS = ASCII_DIGITS + ",.";
 const OTHER_WRITTEN = /[일이삼사오육칠팔구영공십백천만억조경]\s*원/;
 const SPLIT_NUMBER = /[일이삼사오육칠팔구영공십백천만억0-9]\s*[,./·:점]\s*$/;
-const WRITTEN_RANGE_END = /\s*(?:[~∼〜–—－−/.,·:-]|부터|에서|또는|혹은|아니면|점)\s*[0-9][0-9,.]*\s*[억천백십만원]/y;
+const RANGE_SEPARATORS = [..."~∼〜–—－−/.,·:-", "부터", "에서", "또는", "혹은", "아니면", "점"];
 const END = /^(?:$|[\s,.;!?？。:)]|으로|로|이에요|예요|입니다|이요|이네요|이죠|이라고|라고|[은는이가을를도만](?=$|\s|[,.;!?？。]))/;
 const MONEY_TARGET = /(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|계약금|잔금)\s*(?:[은는이가을를:=]\s*)?$/;
 const SHORT_OMITTED_END = /^(?:$|[,.;!?？。]|으로|로|입니다|이에요|예요|요)/;
@@ -20,23 +21,50 @@ const UNCERTAIN = /[?？~∼〜–—－−]|아마|혹시|미정|모르|애매|
 const RANGE = /부터|까지|에서|[+/<>-]/;
 const BREAK = /[,;.!?？。]/;
 
-// 숫자 묶음을 한 번씩 읽고 끝 위치에서만 검사해 반복 탐색을 피한다.
-function testAt(pattern: RegExp, text: string, index: number): boolean {
-  pattern.lastIndex = index;
-  return pattern.test(text);
+function skipChars(text: string, pos: number, chars: string): number {
+  while (pos < text.length && chars.includes(text[pos])) pos++;
+  return pos;
 }
 
+function skipSpaces(text: string, pos: number): number {
+  while (pos < text.length && /\s/.test(text[pos])) pos++;
+  return pos;
+}
+
+function attachedEnd(text: string, pos: number): boolean {
+  pos = skipChars(text, pos, " \t");
+  return pos < text.length && (ASCII_DIGITS + "원").includes(text[pos]);
+}
+
+function writtenRangeEnd(text: string, pos: number): boolean {
+  pos = skipSpaces(text, pos);
+  const separator = RANGE_SEPARATORS.find((s) => text.startsWith(s, pos));
+  if (separator === undefined) return false;
+  pos = skipSpaces(text, pos + separator.length);
+  if (pos >= text.length || !ASCII_DIGITS.includes(text[pos])) return false;
+  pos = skipSpaces(text, skipChars(text, pos, ASCII_NUMBER_CHARS));
+  return pos < text.length && "억천백십만원".includes(text[pos]);
+}
+
+function attachedLabelNumber(text: string, pos: number): boolean {
+  let end = skipChars(text, pos, HANGUL_NUMBER_CHARS);
+  if (end === pos) return false;
+  end = skipSpaces(text, end);
+  return end < text.length && ASCII_DIGITS.includes(text[end]);
+}
+
+// 숫자 묶음을 한 번씩 읽고 끝 위치에서만 검사해 반복 탐색을 피한다.
 function attachedOrMixed(text: string, includeRange = false): boolean {
   for (const match of text.matchAll(HANGUL_RUN)) {
     const start = match.index, end = start + match[0].length;
     const body = match[0], before = text[start - 1] ?? "";
     const suffix = /[가-힣]/.test(before) ? body : body.slice(1);
-    if (ATTACHED_UNIT.test(suffix) && testAt(ATTACHED_END, text, end)) return true;
+    if (ATTACHED_UNIT.test(suffix) && attachedEnd(text, end)) return true;
     if (includeRange && !/[가-힣0-9]/.test(before) && !/[만억]/.test(body) &&
-        testAt(WRITTEN_RANGE_END, text, end)) return true;
+        writtenRangeEnd(text, end)) return true;
   }
   for (const label of text.matchAll(ATTACHED_LABEL)) {
-    if (testAt(ATTACHED_LABEL_NUMBER, text, label.index + label[0].length)) return true;
+    if (attachedLabelNumber(text, label.index + label[0].length)) return true;
   }
   return false;
 }
