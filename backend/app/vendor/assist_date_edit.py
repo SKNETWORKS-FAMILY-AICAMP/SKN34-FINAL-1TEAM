@@ -68,16 +68,16 @@ _EDIT_WORD = (
     r"옮기|추가|넣|삭제|지우|비우|초기화|늘리|줄이|조정"
 )
 _OTHER_EDIT = re.compile(_EDIT_WORD)
-_FOLLOWING_EDIT = re.compile(rf"^\s*(?:로|으로|을|를|만)?\s*(?P<verb>{_EDIT_WORD})")
+_FOLLOWING_EDIT = re.compile(rf"^\s*(?:(?:로|으로|을|를|만)\s*)?(?P<verb>{_EDIT_WORD})")
 _UNCHANGED_EDIT = re.compile(r"^변경\s*없")
 _KEEP = re.compile(
-    r"^\s*(?:은|는|이|가|을|를|도|만)?\s*"
+    r"^\s*(?:(?:은|는|이|가|을|를|도|만)\s*)?"
     r"(?:그대로|유지|기존대로|원래대로|변함\s*없|변경\s*없|동일|같(?:게|아요|습니다))"
 )
 _POST_BOUNDARY_KEEP = re.compile(
-    r"^\s*(?:은|는|이|가)?\s*"
+    r"^\s*(?:(?:은|는|이|가)\s*)?"
     r"(?:시작\s*(?:일|날짜?)|종료\s*(?:일|날짜?)|끝나는\s*날)"
-    r"\s*(?:은|는|이|가)?\s*"
+    r"\s*(?:(?:은|는|이|가)\s*)?"
     r"(?:그대로|유지|기존대로|원래대로|변함\s*없|변경\s*없|건드리지\s*마|손대지\s*마)"
 )
 _KEEP_JOIN = re.compile(r"^\s*(?:,|，|과|와|랑|하고|및)\s*$")
@@ -88,7 +88,7 @@ _DAY_SHAPE = re.compile(
     r"(?!\s*(?:간|동안|정도|째|걸|소요|후|전|차|뒤))"
 )
 _MONTH_SHAPE = re.compile(r"(?<!\d)\d{1,2}\s*월")
-_CREW_REPLACEMENT = re.compile(r"\d+\s*명\s*에서\s*\d+\s*명")
+_CREW_REPLACEMENT = re.compile(r"(?<!\d)\d+\s*명\s*에서\s*\d+\s*명")
 _UNCERTAIN = re.compile(
     r"[?？]|아마|혹시|미정|보류|불확실|모르겠|어쩌면|일단|"
     r"(?:될|할)\s*것\s*같|(?:수도|지도|정도|쯤)|"

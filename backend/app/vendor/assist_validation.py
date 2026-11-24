@@ -1466,6 +1466,24 @@ def review_previous(
         for item in eligible
         if item.value_source == "derived" and item.field in ("days", "excluded")
     ]
+    # 첫 발화의 날짜 열거를 ISO로 바꾼 후보도 모델이 derived로 표시할 수 있다.
+    # 교체 이력이 없는 최초 요청에서 원문 근거가 목록 전체를 재현할 때만 일반 검증한다.
+    for item in derived.copy():
+        if (
+            data.form == "dates"
+            and item.field == "days"
+            and item.correction is None
+            and isinstance(item.value, list)
+            and previous.origins.get(item.field, previous.request_id) == previous.request_id
+            and "\n" not in previous.text
+            and not _DIRECT_REPLACE.search(previous.text)
+            and not _RULE_QUESTION_OR_UNDECIDED.search(previous.text)
+            and not _RULE_NEGATED_ACTION.search(previous.text)
+            and set(item.value)
+            == {day.isoformat() for day in date_mentions(item.evidence, context, expand=False)}
+        ):
+            ordinary.append(item.model_copy(update={"value_source": "utterance"}))
+            derived.remove(item)
     checked, _ = review_fields(ordinary, "rule", data, context, text=previous.text)
     for item in derived:
         if _reverify_derived_history(item, previous.text, data.form, context, data, checked):

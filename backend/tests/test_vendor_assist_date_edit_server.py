@@ -321,3 +321,31 @@ def test_date_edit_current_reference_ignores_other_field_previous_reference(monk
     assert trace["date_edit_reviewed"]
     assert fields["days"].value == ["2026-12-08", "2026-12-11", "2026-12-10"]
     assert fields["crew"].value == 3
+
+
+@pytest.mark.parametrize("third,valid", [("2026-12-12", True), ("2026-12-19", False)])
+def test_normalized_first_turn_list_requires_exact_grounding(monkeypatch, third, valid):
+    current = {"days": ["2026-12-03", "2026-12-04", "2026-12-05"], "crew": 2}
+    evidence = "12월 10일, 11일, 12일"
+    prior = PreviousCandidate(
+        request_id="first",
+        text="작업 날짜는 " + evidence,
+        fields=[
+            FieldIntent(
+                field="days",
+                action="set",
+                value=["2026-12-10", "2026-12-11", third],
+                evidence=evidence,
+                value_source="derived",
+            )
+        ],
+        baselines={"days": current["days"]},
+    )
+    result, _ = _run(
+        monkeypatch,
+        _request("dates", "지금 제안한 날 중 11일 대신 13일을 넣겠습니다.", current, prior),
+        [_model_field("days")],
+    )
+    assert (result["days"].status == "valid") is valid
+    if valid:
+        assert result["days"].value == ["2026-12-10", "2026-12-13", "2026-12-12"]
