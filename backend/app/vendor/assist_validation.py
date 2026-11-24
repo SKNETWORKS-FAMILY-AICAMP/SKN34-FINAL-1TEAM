@@ -210,12 +210,18 @@ _CLEAR_TARGETS: dict[str, tuple[str, ...]] = {
 _RETAIN = re.compile(
     r"(?:그대로|유지|바꾸지|변경하지|수정하지|건드리지|"
     r"전과\s*같|이전과\s*같|예전과\s*같|"
-    r"같아요|같습니다|같아|같은\s*상태|동일)"
+    r"같아요|같습니다|같아|같은\s*상태|동일|"
+    r"살려|이어서\s*사용|폼대로|"
+    r"(?:아까|앞서|이전|방금|지난)[^,;.!?？\n]{0,24}대로|"
+    r"(?:제안|변경|정리|정한|앞서|아까|방금|이전|지난)"
+    r"[^,;.!?？\n]{0,28}(?:안으로|걸로|내용으로)\s*(?:두|둘))"
 )
 _RETAIN_NEGATED = re.compile(
     r"(?:그대로|유지).{0,16}(?:말고|두지\s*말|않|아니|취소|빼고)"
     r"|(?:유지하지|그대로\s*두지)"
     r"|(?:같지\s*않|같은\s*건\s*아니|같은\s*게\s*아니|동일하지\s*않)"
+    r"|(?:살려|이어서\s*사용|(?:안으로|걸로|내용으로)\s*(?:두|둘))"
+    r"[^,;.!?？\n]{0,14}(?:지\s*마|지\s*말|지\s*않|안\s*해|취소)"
 )
 _UNCERTAIN_CHANGE = re.compile(r"(?:미정|모르|애매|정도|였나|일까|혹시|또는|아니면|사이|[?？])")
 _DIRECT_REPLACE = re.compile(r"(?:말고|아니고|아니라|대신|→|->)")
@@ -340,43 +346,124 @@ def _targeted_retention(
     if not evidence_matches(text, evidence):
         return False
     raw = normalized(text)
-    at = raw.find(normalized(evidence))
-    scope = raw[max(at - 16, 0) : at + len(normalized(evidence)) + 20]
-    if (
-        not _RETAIN.search(evidence)
-        or _RETAIN_NEGATED.search(scope)
-        or _RULE_QUESTION_OR_UNDECIDED.search(scope)
-    ):
+    needle = normalized(evidence)
+    # 같은 근거가 긍정/부정의 두 절에 반복되면 어떤 절인지 확정할 수 없다.
+    if raw.count(needle) != 1:
         return False
-    if _target_word(form, field, evidence):
-        return True
-    if form == "period" and field in ("start", "end") and "기간" in evidence:
-        return True
-    # 모델이 '전과 같아요'처럼 동사만 evidence로 잘라도 바로 앞의 명시적
-    # 필드 목적어를 확인한다. 다른 필드가 더 가까우면 유지 의도로 해석하지 않는다.
-    head = re.split(r"[,;.!?？\n]", raw[:at])[-1][-48:]
-    targets: list[tuple[int, int, str]] = []
-    for name in FORM_FIELDS[form]:
-        words = _CLEAR_TARGETS[name]
-        if form == "period" and name in ("start", "end"):
-            words = (*words, "기간")
-        for word in words:
-            for match in re.finditer(re.escape(word), head):
-                targets.append((match.end(), len(word), name))
+    at = raw.find(needle)
     generic_scope = any(
-        word in evidence for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")
+        word in needle for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")
     )
-    if targets and not generic_scope:
-        nearest = max((end, length) for end, length, _ in targets)
-        if any((end, length) == nearest and name == field for end, length, name in targets):
-            return True
-    # '나머지는 그대로'는 이번 글에서 별도로 바꾼 필드에는 적용하지 않는다.
-    if generic_scope:
-        without_evidence = normalized(text).replace(normalized(evidence), "", 1)
-        if _other_boundary_only(form, field, without_evidence):
-            return True
-        return not _mentions_field(form, field, without_evidence, context)
+    clause_break = re.compile(r"[,;.!?？\n]")
+    for retained in _RETAIN.finditer(needle):
+        verb_at = at + retained.start()
+        left = max((part.end() for part in clause_break.finditer(raw, 0, verb_at)), default=0)
+        right_break = clause_break.search(raw, verb_at)
+        # 물음표는 유지 자체가 질문이라는 근거라 검사 범위에 남긴다.
+        if right_break is None:
+            right = len(raw)
+        else:
+            right = right_break.end() if right_break.group() in ("?", "？") else right_break.start()
+        prefix = raw[left:verb_at]
+
+        # 보통 '금액과 부가세는 앞서 정한 안으로 두고'처럼 여러 대상이
+        # 한 조사로 묶인다. 가장 가까운 명사구의 연결된 대상만 인정한다.
+        targets: list[tuple[int, int, str]] = []
+        for name in FORM_FIELDS[form]:
+            words = _CLEAR_TARGETS[name]
+            if name == "vat":
+                words = (*words, "세금 조건", "세금조건", "세금 방식")
+            if name == "valid":
+                words = (*words, "유효 기간")
+            if form == "period" and name in ("start", "end"):
+                words = (*words, "기간", "시작일" if name == "start" else "종료일")
+            for word in words:
+                for match in re.finditer(re.escape(word), prefix):
+                    targets.append((match.start(), match.end(), name))
+
+        scope_start = left
+        bound = False
+        if targets:
+            nearest_end = max(end for _, end, _ in targets)
+            # 유효기간의 '기간'처럼 긴 필드명의 일부만 일치한 후보는 제외한다.
+            targets = [
+                part
+                for part in targets
+                if not any(start < part[0] and part[1] == end for start, end, _ in targets)
+            ]
+            nearest = [part for part in targets if part[1] == nearest_end]
+            names = {name for _, _, name in nearest}
+            first = min(start for start, _, _ in nearest)
+            # '금액과 부가세'는 양쪽 필드지만 '금액은 바꾸고 부가세는'
+            # 유지할 대상이 부가세뿐이다.
+            for start, end, name in sorted(targets, reverse=True):
+                if end > first:
+                    continue
+                if re.fullmatch(r"\s*(?:과|와|랑|및|하고|·|/)\s*", prefix[end:first]):
+                    names.add(name)
+                    first = start
+            bound = field in names
+            scope_start = left + first
+
+        # '나머지는 그대로'는 다른 필드만 갱신한 상황에서 사용한다.
+        if generic_scope and not _target_word(form, field, needle):
+            without_evidence = raw.replace(needle, "", 1)
+            if not (
+                _other_boundary_only(form, field, without_evidence)
+                or not _mentions_field(form, field, without_evidence, context)
+            ):
+                continue
+            generic_at = max(
+                (
+                    prefix.rfind(word)
+                    for word in ("나머지", "다른", "그 외", "전체", "전부", "모두")
+                ),
+                default=-1,
+            )
+            scope_start = left + max(generic_at, 0)
+            bound = True
+
+        if not bound:
+            continue
+        # 다른 필드의 새 절에 있는 불확실성·부정은 유지 지시를 무효화하지 않는다.
+        # 반대로 해당 필드의 '모르겠어요/두지 마세요'는 같은 국소 범위에서 거부한다.
+        for name in FORM_FIELDS[form]:
+            if name == field:
+                continue
+            for word in _CLEAR_TARGETS[name]:
+                next_target = raw.find(word, verb_at + len(retained.group()), right)
+                if next_target >= 0:
+                    right = min(right, next_target)
+        scope = raw[scope_start:right]
+        if _RETAIN_NEGATED.search(scope) or _RULE_QUESTION_OR_UNDECIDED.search(scope):
+            continue
+        return True
     return False
+
+
+def _retention_has_different_value(
+    form: FormName, field: str, value: Value, evidence: str, context: AssistContext
+) -> bool:
+    """새 발화에서 명시한 숫자·날짜가 옛 제안과 다르면 옛 값을 되살리지 않는다."""
+    mentioned: set[Value] | set[date]
+    if field == "crew":
+        mentioned = crew_mentions(evidence)
+    elif field == "amount":
+        mentioned = _amount_mentions(evidence)
+    elif field == "vat":
+        words = normalized(evidence)
+        mentioned = {
+            mode for mode, phrases in VAT_WORDS.items() if any(p in words for p in phrases)
+        }
+        # '미포함'에 들어 있는 '포함' 두 글자는 포함 지시가 아니다.
+        if "미포함" in words or "포함하지" in words:
+            mentioned.discard("included")
+    elif field in ("start", "end", "valid"):
+        mentioned = {day for _, _, day in date_tokens(evidence, context)}
+        value = date.fromisoformat(value) if isinstance(value, str) else value
+    else:
+        return False
+    return bool(mentioned) and value not in mentioned
 
 
 def _rule_local_clauses(
@@ -421,6 +508,15 @@ def _other_boundary_only(form: FormName, field: str, text: str) -> bool:
     """'시작일만'이라는 지시로 종료일의 기존 후보를 새 값처럼 보지 않는다."""
     if form != "period":
         return False
+    # 다른 경계만 언급된 단일 날짜는 이 필드의 수정 지시가 아니다.
+    # 범위('부터~까지')가 있으면 시작·종료를 모두 지정한 것일 수 있다.
+    if not _RULE_DATE_RANGE.search(text):
+        has_start = bool(re.search(r"시작|첫날", text))
+        has_end = bool(re.search(r"종료|끝나는\s*날|끝날|마지막\s*날", text))
+        if field == "start" and has_end and not has_start:
+            return True
+        if field == "end" and has_start and not has_end:
+            return True
     if field == "start":
         return bool(_RULE_END_ONLY.search(text)) and not _RULE_START_ONLY.search(text)
     if field == "end":
@@ -922,6 +1018,8 @@ def _review_one(
             return reject("evidence_missing")
         if not _targeted_retention(data.form, item.field, item.evidence, text, context):
             return reject("ambiguous_intent")
+        if re.search(r"(?:현재|지금)\s*(?:폼|화면|입력)|폼\s*값\s*대로", item.evidence):
+            return reject("ambiguous_intent")
         retained = (
             next((field for field in previous.fields if field.field == item.field), None)
             if previous
@@ -931,6 +1029,10 @@ def _review_one(
             return reject(
                 "stale_context" if data.previous_candidate is not None else "reference_missing"
             )
+        if retained.action == "set" and _retention_has_different_value(
+            data.form, item.field, retained.value, item.evidence, context
+        ):
+            return reject("ambiguous_intent")
         return _candidate_from_previous(retained, previous)
     if intent == "ambiguous" or item.action == "uncertain":
         if item.evidence and not evidence_matches(text, item.evidence):

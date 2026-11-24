@@ -783,3 +783,137 @@ test("브라우저 API는 정확히 1개 POST 요청을 보내고 인증 오류�
     globalThis.fetch = original;
   }
 });
+
+test("실제 HTTP JSON 3턴에서 미확정 금액·부가세의 원 출처와 최초 기준값을 누락하지 않아요", async () => {
+  const original = globalThis.fetch;
+  const sent: AssistRequest[] = [];
+  const current = { amount: 3_200_000, vat: null, days: 2, valid: null };
+  const messages = [
+    "금액은 590만 원, 부가세는 별도로 제안해 주세요.",
+    "금액은 방금 제안한 대로 유지하고 부가세 조건만 포함으로 정정해 주세요.",
+    "견적 금액과 부가세는 앞서 정리한 안으로 두고, 공사 기간은 3일로 조정해 주세요.",
+  ];
+  const session = new AssistSession("quote", "visit-id");
+  globalThis.fetch = (async (path: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(path), "/api/vendor/assist/interpret");
+    assert.equal(init?.method, "POST");
+    const wire = JSON.parse(String(init?.body)) as AssistRequest;
+    sent.push(wire);
+    const firstId = sent[0].request_id;
+    const secondId = sent[1]?.request_id;
+    const amount = {
+      action: "set" as const, value: 5_900_000, evidence: "590만 원",
+      origin_request_id: firstId, source: "llm" as const,
+    };
+    const vat = sent.length === 1 ? {
+      action: "set" as const, value: "excluded", evidence: "부가세는 별도로",
+      origin_request_id: firstId, source: "llm" as const,
+    } : {
+      action: "set" as const, value: "included", evidence: "부가세 조건만 포함으로",
+      origin_request_id: secondId, source: "rule" as const,
+    };
+    const days = sent.length >= 3 ? {
+      action: "set" as const, value: 3, evidence: "공사 기간은 3일",
+      origin_request_id: wire.request_id, source: "llm" as const,
+    } : undefined;
+    return {
+      ok: true, status: 200,
+      json: async () => response(wire, { amount, vat, ...(days ? { days } : {}) }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    for (const text of messages) {
+      assert.equal(session.send(text, current, quoteOptions), true);
+      await flush();
+      assert.equal(session.view.phase, "ready");
+    }
+    assert.equal(sent.length, 3);
+    assert.equal(sent[0].previous_candidate, null);
+    assert.deepEqual(sent[1].previous_candidate?.fields.map((field) => field.field), ["amount", "vat"]);
+    assert.deepEqual(sent[1].previous_candidate?.baselines, { amount: 3_200_000, vat: null });
+    assert.deepEqual(sent[2].previous_candidate?.fields.map((field) => field.field), ["amount", "vat"]);
+    assert.deepEqual(sent[2].previous_candidate?.baselines, { amount: 3_200_000, vat: null });
+    assert.deepEqual(sent[2].previous_candidate?.sources, { amount: "llm", vat: "rule" });
+    assert.deepEqual(sent[2].previous_candidate?.origins, {
+      amount: sent[0].request_id,
+      vat: sent[1].request_id,
+    });
+    assert.equal(sent[2].previous_candidate?.text, messages[0] + "\n" + messages[1]);
+    assert.deepEqual(sent[2].current, current);
+    assert.equal(sent[2].rule_fields.length, 4);
+    const actual: AssistCurrent[] = [];
+    assert.equal(session.apply(current, (changes) => actual.push(changes)), true);
+    assert.deepEqual(actual, [{ amount: 5_900_000, vat: "included", days: 3 }]);
+  } finally {
+    session.dispose();
+    globalThis.fetch = original;
+  }
+});
+
+test("실제 HTTP JSON: 부정된 제외일 삭제에는 이전 후보를 전송하고 수동 변경한 제외일만 제외해요", async () => {
+  const original = globalThis.fetch;
+  const sent: AssistRequest[] = [];
+  const current = {
+    start: "2026-12-05", end: "2026-12-22",
+    excluded: ["2026-12-09", "2026-12-16"],
+  };
+  const changed = { ...current, excluded: ["2026-12-11"] };
+  const options = { today };
+  const texts = [
+    "제외할 날을 12월 10일과 17일로 변경해 주세요.",
+    "제외 날짜를 삭제하라는 뜻이 아니에요. 바로 전 제외일 변경안은 그대로 두세요.",
+    "기간 종료일만 12월 24일로 바꿔 주세요. 제외일 제안은 그대로요.",
+    "종료일을 12월 26일로 바꿔 주세요.",
+  ];
+  const session = new AssistSession("period", "period-id");
+  globalThis.fetch = (async (path: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(path), "/api/vendor/assist/interpret");
+    const wire = JSON.parse(String(init?.body)) as AssistRequest;
+    sent.push(wire);
+    const excluded = sent.length < 4 ? {
+      action: "set" as const, value: ["2026-12-10", "2026-12-17"],
+      evidence: texts[0], origin_request_id: sent[0].request_id, source: "llm" as const,
+    } : undefined;
+    const end = sent.length >= 3 ? {
+      action: "set" as const, value: sent.length === 3 ? "2026-12-24" : "2026-12-26",
+      evidence: texts[sent.length - 1], origin_request_id: wire.request_id,
+      source: "rule" as const,
+    } : undefined;
+    return {
+      ok: true, status: 200,
+      json: async () => response(wire, { ...(excluded ? { excluded } : {}), ...(end ? { end } : {}) }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal(session.send(texts[i], current, options), true);
+      await flush();
+      assert.equal(session.view.phase, "ready");
+    }
+    assert.equal(sent.length, 3);
+    assert.equal(sent[1].rule_fields.find((field) => field.field === "excluded")?.action, "keep");
+    assert.deepEqual(sent[1].previous_candidate?.baselines, {
+      excluded: ["2026-12-09", "2026-12-16"],
+    });
+    assert.deepEqual(sent[2].previous_candidate?.fields.map((field) => field.field), ["excluded"]);
+    assert.deepEqual(sent[2].previous_candidate?.origins, { excluded: sent[0].request_id });
+    assert.deepEqual(sent[2].previous_candidate?.sources, { excluded: "llm" });
+    assert.deepEqual(sent[2].previous_candidate?.baselines, {
+      excluded: ["2026-12-09", "2026-12-16"],
+    });
+    assert.equal(sent[2].previous_candidate?.text, texts[0] + "\n" + texts[1]);
+    assert.equal(session.send(texts[3], changed, options), true);
+    const fourth = sent[3];
+    assert.deepEqual(fourth.current.excluded, ["2026-12-11"]);
+    assert.deepEqual(fourth.previous_candidate?.fields.map((field) => field.field), ["end"]);
+    assert.deepEqual(fourth.previous_candidate?.baselines, { end: "2026-12-22" });
+    assert.deepEqual(fourth.previous_candidate?.origins, { end: sent[2].request_id });
+    assert.equal(session.view.response?.fields.find((field) => field.field === "excluded")?.action, "keep");
+    await flush();
+    assert.equal(session.apply(changed, (changes) =>
+      assert.deepEqual(changes, { end: "2026-12-26" })), true);
+  } finally {
+    session.dispose();
+    globalThis.fetch = original;
+  }
+});
