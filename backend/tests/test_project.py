@@ -4,9 +4,10 @@ from app.shared.clock import today_seoul
 from tests.conftest import query
 from tests.helpers import PDF, make_admin, signup, upload, use, vendor_signup
 
-# 서비스와 같은 서울 날짜 기준 한 달 뒤 (2년 넘는 날짜는 받지 않는다)
-SOON = (today_seoul() + timedelta(days=30)).isoformat()
-SOON_END = (today_seoul() + timedelta(days=34)).isoformat()
+# 서울 기준 한 달 뒤 (2년 넘는 날짜는 받지 않는다)
+_TODAY = today_seoul()
+SOON = (_TODAY + timedelta(days=30)).isoformat()
+SOON_END = (_TODAY + timedelta(days=34)).isoformat()
 
 
 def body(photo_ids=(), plan_ids=(), **over) -> dict:
