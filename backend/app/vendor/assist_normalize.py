@@ -19,6 +19,7 @@ from app.vendor.assist_intent import (
     intent_clauses,
     polite_execution_risk_text,
 )
+from app.vendor.assist_lexical import skip_space, skip_space_back
 from app.vendor.assist_schemas import FormName
 
 if TYPE_CHECKING:
@@ -175,7 +176,18 @@ _DURATION_NON_QUANTITY = re.compile(
     r"^\s*(?:째|이후|이전|전(?:에|부터|까지|$)|후(?:에|부터|까지|$)|뒤(?:에|부터|까지|$)|"
     r"당|씩|치|분량|요일|짜리|날짜)|^(?:자(?:로|는|가|를|$)|정(?!도))"
 )
-_CALENDAR_PREFIX = re.compile(r"(?:\d+\s*(?:월|년)|(?:이번|다음|지난|매)\s*(?:달|월|해|년))\s*$")
+
+
+def _calendar_prefix(prefix: str) -> bool:
+    text = prefix.rstrip()
+    if not text or text[-1] not in "월년달해":
+        return False
+    before = text[:-1].rstrip()
+    return (text[-1] in "월년" and before[-1:].isdecimal()) or before.endswith(
+        ("이번", "다음", "지난", "매")
+    )
+
+
 _DURATION_MARKER = re.compile(r"^\s*(?:간|동안)")
 _DURATION_APPROX_PREFIX = re.compile(r"(?:최대|최소|대략|약|적어도|기껏해야)\s*$")
 _DURATION_ATTACHED_APPROX = re.compile(
@@ -204,7 +216,39 @@ _DURATION_COMPOUND_RANGE = re.compile(
 _DURATION_RANGE_PREFIX = re.compile(
     rf"(?:\d+|{_COUNTER_WORDS}|{_DAY_WORD_PATTERN})\s*(?:[~∼〜–—－/\-]|또는|혹은|아니면|이나|나)\s*$"
 )
-_DURATION_MALFORMED = re.compile(r"(?<![\d.,])(?:[+\-−]\s*\d+|\d+(?:[.,]\d+)+|\d{4,})\s*일|반나절")
+
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _duration_malformed(text: str) -> bool:
+    """부호·소수점·큰 수의 위험 판정은 완전한 숫자 단위로 검사한다."""
+    if "반나절" in text:
+        return True
+    for digits in _DIGIT_RUN.finditer(text):
+        start, end = digits.span()
+        left = skip_space_back(text, start)
+        if (
+            left > 0
+            and text[left - 1] in "+-−"
+            and (left == 1 or not (text[left - 2].isdecimal() or text[left - 2] in ".,"))
+            and text.startswith("일", skip_space(text, end))
+        ):
+            return True
+        if start and (text[start - 1].isdecimal() or text[start - 1] in ".,"):
+            continue
+        if end - start >= 4 and text.startswith("일", skip_space(text, end)):
+            return True
+        # 쉼표와 소수점으로 연결된 완전한 숫자열은 한 번만 읽는다.
+        last = end
+        while last + 1 < len(text) and text[last] in ".," and text[last + 1].isdecimal():
+            last += 2
+            while last < len(text) and text[last].isdecimal():
+                last += 1
+        if last > end and text.startswith("일", skip_space(text, last)):
+            return True
+    return False
+
+
 _DURATION_OTHER_UNIT_PREFIX = re.compile(
     rf"(?:\d+(?:[.,]\d+)?|{_COUNTER_WORDS})\s*(?:시간|분|주|개월|달)"
     r"\s*(?:하고|와|과|\+)?\s*$"
@@ -227,7 +271,7 @@ def duration_tokens(evidence: str) -> list[tuple[int, int, int]]:
         prefix, tail = evidence[:a], evidence[b:]
         if (
             _partial_quantity_prefix(evidence, a)
-            or _CALENDAR_PREFIX.search(prefix)
+            or _calendar_prefix(prefix)
             or not _DURATION_TAIL.match(tail)
             or _DURATION_NON_QUANTITY.match(tail)
             or any(a < end and b > start for start, end in calendar)
@@ -270,7 +314,7 @@ def duration_quantity_risk(evidence: str) -> bool:
     without_calendar = _FULL.sub(" ", evidence)
     if (
         _DURATION_COMPOUND_RANGE.search(evidence)
-        or _DURATION_MALFORMED.search(without_calendar)
+        or _duration_malformed(without_calendar)
         or _DURATION_ATTACHED_APPROX.search(evidence)
     ):
         return True

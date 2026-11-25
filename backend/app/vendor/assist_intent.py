@@ -1,9 +1,11 @@
 """업체 도우미 유지 요청의 실제 대상과 참조 범위를 구분한다."""
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from app.vendor.assist_lexical import skip_space, skip_space_back
 from app.vendor.assist_schemas import FORM_FIELDS, FormName
 from app.vendor.assist_vat_semantics import (
     VAT_LABEL,
@@ -74,11 +76,34 @@ EXTRA_LABEL_MARKER = (
     r"(?:\s*(?:칸|입력란|란))?(?:에는|[은는을를이가만도에])|"
     r"(?:\s*(?:칸|입력란|란))?\s+(?:에는|[은는을를이가만도에])(?=$|[\s:'\"“‘,.;!?！？。]))"
 )
-_EXTRA_IMPLICIT_LEAD = re.compile(
-    r"(?:^|[,，;.!?！？。\n])\s*(?:(?:그리고|또|다음으로|다만|가능하면|만약|조건부로|혹시|아마)\s+|"
-    r"[^,，;.!?！？。\n]{0,48}(?:라면|다면|으면|이면|하면|되면|경우)\s+)?$"
-    r"|(?:하고요?|하며|적고|쓰고|기입하고|주시고)\s*$"
+
+_EXTRA_LEAD_CONDITION = re.compile(
+    r"[^,，;.!?！？。\n]{0,48}(?:라면|다면|으면|이면|하면|되면|경우)"
 )
+
+
+def _extra_implicit_lead(prefix: str) -> bool:
+    trimmed = prefix.rstrip()
+    if trimmed.endswith(("하고", "하고요", "하며", "적고", "쓰고", "기입하고", "주시고")):
+        return True
+    clause = re.split(r"[,，;.!?！？。\n]", prefix)[-1]
+    word = clause.strip()
+    if not word:
+        return True
+    if not clause[-1].isspace():
+        return False
+    return word in (
+        "그리고",
+        "또",
+        "다음으로",
+        "다만",
+        "가능하면",
+        "만약",
+        "조건부로",
+        "혹시",
+        "아마",
+    ) or bool(_EXTRA_LEAD_CONDITION.fullmatch(word))
+
 
 # 공동 대상 뒤의 수량 표현은 별도 필드나 새 값이 아니다. 명시된
 # 대상의 개수와 맞는 경우에만 그 대상을 묶는 양화사로 사용한다.
@@ -183,7 +208,7 @@ def field_mentions(form: FormName, raw: str) -> tuple[FieldMention, ...]:
             and match.lastgroup == "title"
             and (
                 re.fullmatch(r"추가\s*(?:작업|공사|시공)", match.group())
-                and not _EXTRA_IMPLICIT_LEAD.search(raw[: match.start()])
+                and not _extra_implicit_lead(raw[: match.start()])
                 or any(a <= match.start() and match.end() <= b for a, b in quantified)
             )
         )
@@ -326,10 +351,23 @@ _LIST_MONTH_ANCHOR = re.compile(r"\d\s*(?:월|[/.-])\s*\d")
 _LIST_CONDITION_LEAD = re.compile(
     r"^\s*(?:가능하면|조건부로|[^\d,，;.!?！？。\n]{1,48}(?:라면|다면|으면|이면|하면|되면|경우))\s+"
 )
-_EXCLUSION_PREDICATE = re.compile(
-    r"(?:방문|실측|접수)?\s*(?:제외|휴무|불가|불가능|못\s*(?:가|하|받)|"
-    r"안\s*(?:돼|되|가)|쉬는|빼는)"
-)
+
+_EXCLUSION_WORD = re.compile(r"제외|휴무|불가|못|안|쉬는|빼는")
+
+
+def _exclusion_predicate_starts(raw: str) -> Iterator[int]:
+    """독립된 술어와 직전 소유 표지의 시작 좌표를 순차적으로 반환한다."""
+    for match in _EXCLUSION_WORD.finditer(raw):
+        word = match.group()
+        if word in ("못", "안"):
+            after = skip_space(raw, match.end())
+            suffixes = ("가", "하", "받") if word == "못" else ("돼", "되", "가")
+            if not raw.startswith(suffixes, after):
+                continue
+        start = skip_space_back(raw, match.start())
+        if start >= 2 and raw[start - 2 : start] in ("방문", "실측", "접수"):
+            start -= 2
+        yield start
 
 
 def date_list_prefix(
@@ -375,8 +413,8 @@ def postposed_exclusion_list(text: str) -> bool:
     if marks and date_list_prefix(text[: marks[0].start], allow_condition=True):
         return True
     return any(
-        date_list_prefix(text[: match.start()], allow_condition=True)
-        for match in _EXCLUSION_PREDICATE.finditer(text)
+        date_list_prefix(text[:start], allow_condition=True)
+        for start in _exclusion_predicate_starts(text)
     )
 
 
@@ -553,7 +591,13 @@ def _retention_scopes(
             or match["current"]
             or match["prefix_current"]
             or protection
-        ) and not re.match(r"그대로|이대로|유지|(?:전과|이전과|예전과)?\s*같|동일", positive):
+        ) and not (
+            positive.startswith(("그대로", "이대로", "유지", "같", "동일"))
+            or any(
+                positive.startswith(prefix) and positive[len(prefix) :].lstrip().startswith("같")
+                for prefix in ("전과", "이전과", "예전과")
+            )
+        ):
             continue
         end = match.end()
         tail = raw[end:].lstrip()
@@ -639,7 +683,17 @@ def _retention_scopes(
                 and not (explicit_current and explicit_previous)
                 and not (protection and (remaining or referent is not None))
                 and not (explicit_current and positive == "대로")
-                and (explicit_current or not re.match(r"(?:으로|로)?\s*(?:되)?돌", positive)),
+                and (
+                    explicit_current
+                    or not (
+                        positive.startswith(("돌", "되돌"))
+                        or any(
+                            positive.startswith(prefix)
+                            and positive[len(prefix) :].lstrip().startswith(("돌", "되돌"))
+                            for prefix in ("으로", "로")
+                        )
+                    )
+                ),
                 linked_prefix=linked_prefix,
             )
         )
@@ -829,7 +883,7 @@ def intent_clauses(form: FormName, raw: str) -> tuple[IntentClause, ...]:
             continue
         if any(
             other.end < mention.start
-            and re.fullmatch(r"\s*(?:하고|과|와|및|랑)\s*", raw[other.end : mention.start])
+            and raw[other.end : mention.start].strip() in ("하고", "과", "와", "및", "랑")
             for other in mentions
         ):
             continue
@@ -892,7 +946,7 @@ def intent_clauses(form: FormName, raw: str) -> tuple[IntentClause, ...]:
                 )
             if not part.retentions and (
                 part.fields == {"excluded"}
-                or _EXCLUSION_PREDICATE.search(raw[part.start : part.end])
+                or next(_exclusion_predicate_starts(raw[part.start : part.end]), None) is not None
             ):
                 first = len(owned)
                 while first and (

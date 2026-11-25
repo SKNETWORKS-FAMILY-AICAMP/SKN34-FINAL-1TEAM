@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from itertools import pairwise
 
+from app.vendor.assist_lexical import compact_whitespace
+
 # 기존 공개 내부 별칭 계약. 조합형 값은 아래 문법에서 처리한다.
 VAT_MODE_ALIASES = {
     "included": ("포함", "포함된"),
@@ -66,6 +68,23 @@ class VatToken:
     mode: str
 
 
+def _grammar_fullmatch(pattern: re.Pattern[str], text: str) -> bool:
+    return pattern.fullmatch(compact_whitespace(text)[0]) is not None
+
+
+def _grammar_match_end(pattern: re.Pattern[str], raw: str, start: int) -> int | None:
+    compact, offsets = compact_whitespace(raw[start:])
+    match = pattern.match(compact)
+    return start + offsets[match.end()] if match is not None else None
+
+
+def _vat_confirmation_inquiry(tail: str) -> bool:
+    text = tail.lstrip()
+    if text.startswith(("으로", "로")):
+        text = text[2 if text.startswith("으로") else 1 :].lstrip()
+    return text.startswith(("확인", "검토", "문의", "질문"))
+
+
 def vat_tokens(raw: str) -> tuple[VatToken, ...]:
     """원문 좌표의 의미 값. 필드 귀속이나 긍정 지시를 보장하지 않는다."""
     return tuple(
@@ -80,7 +99,7 @@ def vat_tokens(raw: str) -> tuple[VatToken, ...]:
             and _adjacent_label(
                 raw, VatToken(match.start(), match.end(), _TOKEN_MODES[match.lastgroup])
             )
-            and not re.match(r"\s*(?:으로|로)?\s*(?:확인|검토|문의|질문)", raw[match.end() :])
+            and not _vat_confirmation_inquiry(raw[match.end() :])
         )
     )
 
@@ -108,39 +127,39 @@ _STANDALONE_LEAD = re.compile(
     r"^(?:(?:우선|먼저|다시|그럼|그러면|그냥|최종적으로|이번에는|가능하면|혹시|아|네|예)\s+)*(?:(?:이번|해당|이|그)\s*건(?:은|는|만)\s*)?$"
 )
 _STANDALONE_TAIL = re.compile(
-    r"\s*(?:"
+    r"\s?(?:"
     # 청구하는 것/계산할 방식/받는 걸 → 선택의 내용
-    r"(?:(?:하(?:는|기|ㄴ)|할|한|받는|는|기)\s*"
-    r"(?:것|거|걸|방식|조건|구분|형태)(?:으로|로)?\s*)?"
-    r"(?:(?:방식|조건|구분|형태|것|거|걸|처리)(?:으로|로)?\s*)?"
-    r"(?:(?:청구|계산|부과)(?:으로|로)\s*)?"
-    r"(?:(?:으로|로|은|는|이|가|을|를|만|도)\s*)?"
-    r"(?:(?:새로|다시|우선|최종(?:적으로)?|먼저)\s+)*"
-    r"(?:(?:후보(?:안)?|초안|제안(?:안)?|안)(?:으로|로|에|을|를)?\s+)?"
+    r"(?:(?:하(?:는|기|ㄴ)|할|한|받는|는|기)\s?"
+    r"(?:것|거|걸|방식|조건|구분|형태)(?:으로|로)?\s?)?"
+    r"(?:(?:방식|조건|구분|형태|것|거|걸|처리)(?:으로|로)?\s?)?"
+    r"(?:(?:청구|계산|부과)(?:으로|로)\s?)?"
+    r"(?:(?:으로|로|은|는|이|가|을|를|만|도)\s?)?"
+    r"(?:(?:새로|다시|우선|최종(?:적으로)?|먼저)\s)*"
+    r"(?:(?:후보(?:안)?|초안|제안(?:안)?|안)(?:으로|로|에|을|를)?\s)?"
     r"(?:"
     r"(?:선택|확정|결정|설정|지정|처리|적용|입력|기입|기재|정리|표시|표기|반영|제안|제시|정|"
     r"변경|수정|정정|등록|추가|사용|채택|유지|청구|계산|부과)"
-    r"\s*(?:합니다|해요|할게요|하겠습니다|하고요?|하며|"
-    r"해\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요)|"
-    r"하지\s*(?:마세요|말아\s*주세요|않겠습니다)|할까요|할지|"
-    r"하면|한다면|할\s*경우|부탁(?:합니다|드립니다|드려요|해요)?|바랍니다|바라요)?"
-    r"|(?:해|정해|바꿔|골라|받아|넣어|적어|돌려|올려|보여|잡아)\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요)"
+    r"\s?(?:합니다|해요|할게요|하겠습니다|하고요?|하며|"
+    r"해\s?(?:주세요|줘요|주십시오|주시겠어요|주실래요)|"
+    r"하지\s?(?:마세요|말아\s?주세요|않겠습니다)|할까요|할지|"
+    r"하면|한다면|할\s?경우|부탁(?:합니다|드립니다|드려요|해요)?|바랍니다|바라요)?"
+    r"|(?:해|정해|바꿔|골라|받아|넣어|적어|돌려|올려|보여|잡아)\s?(?:주세요|줘요|주십시오|주시겠어요|주실래요)"
     r"|할게요|하겠습니다|합니다|해요|할까요|할지|하면|한다면|"
-    r"하지\s*(?:마세요|말아\s*주세요)|"
+    r"하지\s?(?:마세요|말아\s?주세요)|"
     r"하고요?|하며|잡고요?|이고|이며|정하고요?|정하며|정합니다|정할게요|정하겠습니다|"
     r"부탁(?:해요|합니다|드립니다)|맞습니다|맞아요|입니다|이에요|예요|아닙니다|아니에요|"
-    r"(?:돼|되어)\s*(?:있습니다|있어요|있는데|있음)|"
-    r"미정(?:입니다|이에요)?|고민\s*중(?:입니다|이에요)?|"
-    r"가능한지\s*(?:확인해|알려)\s*주세요"
+    r"(?:돼|되어)\s?(?:있습니다|있어요|있는데|있음)|"
+    r"미정(?:입니다|이에요)?|고민\s?중(?:입니다|이에요)?|"
+    r"가능한지\s?(?:확인해|알려)\s?주세요"
     r")?"
-    r")\s*[.!?！？。]?\s*$"
+    r")\s?[.!?！？。]?\s?$"
 )
 # 같은 절 안에서 실제 연결어로 이어진 값의 소유권만 계승한다.
 # 취소·경쟁·정정의 유효성은 해당 검증기가 판단한다.
 _MODE_LINK = re.compile(
-    r"\s*(?:은|는|이|가|을|를|으로|로)?\s*"
+    r"\s?(?:은|는|이|가|을|를|으로|로)?\s?"
     r"(?:아니고|아니라|말고|대신|에서|또는|혹은|이나|나|및|과|와)"
-    r"\s*[,，]?\s*"
+    r"\s?[,，]?\s?"
 )
 _LABEL_GAP = re.compile(r"\s*(?:(?:[은는이가을를만도]|:|=)\s*)?")
 _REVERSE_LABEL_GAP = re.compile(r"\s*(?:의\s*)?")
@@ -179,14 +198,14 @@ def _separate_word_is_value(raw: str, end: int) -> bool:
     tail = _VALUE_CLAUSE_END.split(raw[end:], maxsplit=1)[0]
     if _MODE_HEAD.match(tail):
         return True
-    if _STANDALONE_TAIL.fullmatch(tail):
+    if _grammar_fullmatch(_STANDALONE_TAIL, tail):
         return True
     if _QUOTED_PROPOSAL_TAIL.fullmatch(tail):
         return True
-    link = _MODE_LINK.match(raw, end)
-    if link and _TOKEN.match(raw, link.end()):
+    link_end = _grammar_match_end(_MODE_LINK, raw, end)
+    if link_end is not None and _TOKEN.match(raw, link_end):
         return True
-    if _SELECTION_TAIL.match(raw, end):
+    if _grammar_match_end(_SELECTION_TAIL, raw, end) is not None:
         return True
     return bool(
         re.match(rf"\s+{VAT_LABEL}(?=$|[\s,，;:.!?！？。]|{_PARTICLE})", tail, re.IGNORECASE)
@@ -199,11 +218,14 @@ def standalone_vat_modes(raw: str) -> set[str]:
     tokens = vat_tokens(text)
     if not tokens or not _STANDALONE_LEAD.fullmatch(text[: tokens[0].start]):
         return set()
-    if any(not _MODE_LINK.fullmatch(text[old.end : new.start]) for old, new in pairwise(tokens)):
+    if any(
+        not _grammar_fullmatch(_MODE_LINK, text[old.end : new.start])
+        for old, new in pairwise(tokens)
+    ):
         return set()
     tail = text[tokens[-1].end :]
-    if not _STANDALONE_TAIL.fullmatch(tail) and not any(
-        _STANDALONE_TAIL.fullmatch(tail[: j.end()])
+    if not _grammar_fullmatch(_STANDALONE_TAIL, tail) and not any(
+        _grammar_fullmatch(_STANDALONE_TAIL, tail[: j.end()])
         and re.match(
             r"나머지|다른\s*(?:후보|값|칸)|(?:추가(?:된)?\s*)?(?:사유|이유|제목|항목(?:명)?|금액|총액|비용|공사\s*기간|기간|일수|유효기간|만료일|부가세|세금)",
             tail[j.end() :],
@@ -242,7 +264,7 @@ def scoped_vat_tokens(raw: str) -> tuple[VatToken, ...]:
         if (
             VAT_LABEL_PATTERN.match(word)
             or _adjacent_label(raw, token)
-            or (scoped and _MODE_LINK.fullmatch(raw[scoped[-1].end : token.start]))
+            or (scoped and _grammar_fullmatch(_MODE_LINK, raw[scoped[-1].end : token.start]))
         ):
             scoped.append(token)
         elif (
@@ -250,9 +272,9 @@ def scoped_vat_tokens(raw: str) -> tuple[VatToken, ...]:
             and _STANDALONE_LEAD.fullmatch(raw[: token.start])
             and (
                 len(tokens) == 1
-                and _STANDALONE_TAIL.fullmatch(raw[token.end :])
+                and _grammar_fullmatch(_STANDALONE_TAIL, raw[token.end :])
                 or any(
-                    _MODE_LINK.fullmatch(raw[token.end : other.start])
+                    _grammar_fullmatch(_MODE_LINK, raw[token.end : other.start])
                     for other in tokens
                     if other.start > token.end
                 )
@@ -275,10 +297,10 @@ class VatSelection:
 
 
 _SELECTION_TAIL = re.compile(
-    r"\s*(?:(?:하(?:는|기)|할|한)\s*(?:것|거|걸|방식|조건|구분|형태))?"
-    r"\s*(?:으로|로)?\s*"
+    r"\s?(?:(?:하(?:는|기)|할|한)\s?(?:것|거|걸|방식|조건|구분|형태))?"
+    r"\s?(?:으로|로)?\s?"
     r"(?:선택|후보|제안|변경안|정정안|조건|방식|구분)"
-    r"(?=\s*[은는이가을를만도]?\s*(?:전부\s*|모두\s*|다\s*)?(?:취소|철회|없(?:던|었던)\s*))"
+    r"(?=\s?[은는이가을를만도]?\s?(?:전부\s?|모두\s?|다\s?)?(?:취소|철회|없(?:던|었던)\s?))"
 )
 
 
@@ -290,12 +312,12 @@ def vat_selection_mentions(raw: str) -> tuple[VatSelection, ...]:
         word = raw[token.start : token.end]
         if not (label or VAT_LABEL_PATTERN.match(word) or word == "면세"):
             continue
-        tail = _SELECTION_TAIL.match(raw, token.end)
-        if tail:
+        tail_end = _grammar_match_end(_SELECTION_TAIL, raw, token.end)
+        if tail_end is not None:
             selections.append(
                 VatSelection(
                     min(token.start, label.start()) if label else token.start,
-                    tail.end(),
+                    tail_end,
                     token.mode,
                 )
             )

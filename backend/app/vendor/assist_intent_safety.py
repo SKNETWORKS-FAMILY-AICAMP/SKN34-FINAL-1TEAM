@@ -138,9 +138,50 @@ def _selected_text(raw: str, value: str) -> str:
     return selected.rstrip(".!。").strip()
 
 
-_LITERAL_QUOTE = re.compile(r"""(?:"[^"\n]*"|'[^'\n]*'|“[^”\n]*”|‘[^’\n]*’)""")
+_QUOTE_CLOSE = dict(_QUOTE_PAIRS)
+_QUOTE_RIGHT = frozenset(_QUOTE_CLOSE.values())
+
+
+def _literal_quote_ends(raw: str) -> dict[int, int]:
+    """같은 줄에 있는 가장 가까운 닫는 인용부호를 한 번의 역방향 탐색으로 찾는다."""
+    nearest: dict[str, int] = {}
+    ends: dict[int, int] = {}
+    for index in range(len(raw) - 1, -1, -1):
+        char = raw[index]
+        if char == "\n":
+            nearest.clear()
+            continue
+        right = _QUOTE_CLOSE.get(char)
+        if right is not None and right in nearest:
+            ends[index] = nearest[right] + 1
+        if char in _QUOTE_RIGHT:
+            nearest[char] = index
+    return ends
+
+
+def _literal_quote(raw: str) -> bool:
+    if len(raw) < 2:
+        return False
+    right = _QUOTE_CLOSE.get(raw[0])
+    return right is not None and raw[-1] == right and right not in raw[1:-1] and "\n" not in raw
+
+
 _TEXT_LABEL_MARKER = re.compile(rf"^{EXTRA_LABEL_MARKER}")
-_TEXT_EXPLICIT_LEAD = re.compile(r"(?:^|[,;.!?！？。\n])\s*(?:그리고\s+|다만\s+)?$")
+
+
+def _text_explicit_lead(prefix: str) -> bool:
+    clause = re.split(r"[,;.!?！？。\n]", prefix)[-1]
+    return not clause.strip() or (clause[-1].isspace() and clause.strip() in ("그리고", "다만"))
+
+
+def _ends_with_clause_separator(text: str) -> bool:
+    trimmed = text.rstrip()
+    return (
+        trimmed.endswith((",", ";", ".", "!", "?", "！", "？", "。"))
+        or "\n" in text[len(trimmed) :]
+    )
+
+
 _REFERENCE_AS_VALUE = re.compile(
     r"^(?:(?:앞서|아까|방금|이전|기존|직전|지난번|앞에서)\s*"
     r"(?:(?:제시한|제안한|정한|말한|말씀드린|요청한)\s*)?"
@@ -152,7 +193,17 @@ _REFERENCE_AS_VALUE = re.compile(
 
 
 def _mask_quoted_spans(raw: str) -> str:
-    return _LITERAL_QUOTE.sub(lambda match: " " * len(match.group()), raw)
+    ends = _literal_quote_ends(raw)
+    masked = list(raw)
+    index = 0
+    while index < len(raw):
+        end = ends.get(index)
+        if end is None:
+            index += 1
+        else:
+            masked[index:end] = " " * (end - index)
+            index = end
+    return "".join(masked)
 
 
 def _explicit_text_labels(raw: str):
@@ -169,17 +220,19 @@ def _explicit_text_labels(raw: str):
             or (
                 mark.fields == {"amount"}
                 and (
-                    re.match(r"\s*\d", tail)
+                    tail.lstrip()[:1].isdecimal()
                     or any(a == 0 for a, _, _ in written_money_tokens(tail.lstrip()) or [])
                 )
             )
             or (
                 mark.fields == {"vat"}
-                and re.match(r"\s*(?:별도|포함|면세|미포함|제외|방식|조건|으로|로)", tail)
+                and tail.lstrip().startswith(
+                    ("별도", "포함", "면세", "미포함", "제외", "방식", "조건", "으로", "로")
+                )
             )
             or (
                 mark.fields.intersection(("title", "reason"))
-                and _TEXT_EXPLICIT_LEAD.search(prefix)
+                and _text_explicit_lead(prefix)
                 and masked[mark.start : mark.end].startswith(
                     ("추가 ", "추가작업", "추가항목", "추가사유")
                 )
@@ -203,6 +256,7 @@ def _explicit_text_labels(raw: str):
 def mask_bound_text_literals(raw: str) -> str:
     """명시 제목/사유의 인용값만 가린다. 다른 필드의 인용 수량은 보존한다."""
     masked = raw
+    ends = _literal_quote_ends(raw)
     labels = _explicit_text_labels(raw)
     for label in labels:
         if label.fields not in ({"title"}, {"reason"}):
@@ -212,9 +266,9 @@ def mask_bound_text_literals(raw: str) -> str:
             continue
         tail = raw[label.end + marker.end() :]
         start = label.end + marker.end() + len(tail) - len(tail.lstrip())
-        quote = _LITERAL_QUOTE.match(raw, start)
-        if quote is not None:
-            masked = masked[:start] + " " * (quote.end() - start) + masked[quote.end() :]
+        end = ends.get(start)
+        if end is not None:
+            masked = masked[:start] + " " * (end - start) + masked[end:]
     return masked
 
 
@@ -297,7 +351,7 @@ def _shared_nominal_end(raw: str, masked: str, labels, i: int, begin: int, end: 
     before = original[: case.start()].rstrip()
     if not before:
         return end
-    if _LITERAL_QUOTE.fullmatch(before):
+    if _literal_quote(before):
         return begin + len(before)
     # 조사와 동일한 일반 명사의 끝을 무조건 절단하지 않는다.
     # 실제 조사가 붙은 형태의 받침과 독립된 명사 어절을 확인한다.
@@ -362,7 +416,7 @@ def _explicit_assignment_spans(raw: str, field: str):
         if (
             suffix is None
             and not re.search(r"[:=]", marker.group())
-            and not _LITERAL_QUOTE.fullmatch(clause)
+            and not _literal_quote(clause)
             and (
                 _NOMINAL_CONTROL.search(tail)
                 or _TEXT_CLEAR_COMMAND.search(tail)
@@ -378,14 +432,14 @@ def _explicit_assignment_spans(raw: str, field: str):
         body = raw[begin:value_end].strip()
         if not body:
             continue
-        if not _LITERAL_QUOTE.fullmatch(body) and _VALUE_RELATION.search(masked[begin:value_end]):
+        if not _literal_quote(body) and _VALUE_RELATION.search(masked[begin:value_end]):
             continue
-        if not _LITERAL_QUOTE.fullmatch(body) and _HISTORY_REFERENCE_NOMINAL.fullmatch(body):
+        if not _literal_quote(body) and _HISTORY_REFERENCE_NOMINAL.fullmatch(body):
             yield label.start, -1, -1, end
             continue
         start = begin + len(raw[begin:value_end]) - len(raw[begin:value_end].lstrip())
         value_end = start + len(body)
-        if _LITERAL_QUOTE.fullmatch(body):
+        if _literal_quote(body):
             start += 1
             value_end -= 1
             while start < value_end and raw[start].isspace():
@@ -510,7 +564,7 @@ def text_value_scope_ok(field: str, value: str, text: str) -> bool:
                 and (
                     not owner
                     or _CONNECTED_LABEL.search(raw[a : label.start].rstrip(" ,，"))
-                    or re.search(r"[,;.!?！？。\n]\s*$", raw[a : label.start])
+                    or _ends_with_clause_separator(raw[a : label.start])
                 )
             )
             for label in labels

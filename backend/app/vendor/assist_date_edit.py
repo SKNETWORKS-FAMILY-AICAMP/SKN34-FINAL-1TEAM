@@ -17,6 +17,7 @@ from app.vendor.assist_intent import (
     intent_clauses,
     polite_execution_risk_text,
 )
+from app.vendor.assist_lexical import compact_whitespace
 from app.vendor.assist_schemas import AssistContext
 
 _ISO = re.compile(r"20\d{2}-\d{2}-\d{2}\Z")
@@ -291,9 +292,9 @@ _RELATION_ACTION = re.compile(rf"^\s*(?:로|으로)\s*(?:{DATE_CHANGE_ACTION})")
 _MOVE_ACTION = re.compile(r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길")
 # '이동'은 명사로도 쓰이므로 날짜에 직접 연결된 미완성 이동만 보류한다.
 _NOMINAL_MOVE_ACTION = re.compile(
-    r"^\s*(?:[은는이가을를]?만|[은는이가을를]|에서|으로|로)?\s*"
-    r"(?:(?:일정|작업일|공사일|작업\s*날짜|공사\s*날짜)\s*)?"
-    r"(?:안\s*)?이동(?=$|\s|[하해할은는이가을를만도])"
+    r"^\s?(?:[은는이가을를]?만|[은는이가을를]|에서|으로|로)?\s?"
+    r"(?:(?:일정|작업일|공사일|작업\s?날짜|공사\s?날짜)\s?)?"
+    r"(?:안\s?)?이동(?=$|\s|[하해할은는이가을를만도])"
 )
 _RELATION_GAP = re.compile(
     r"^(?:[은는이가을를]|에서|[은는이가을를]?만|[은는에]?쉬는(?:걸|것을)(?:만)?)$"
@@ -332,7 +333,7 @@ def date_replacement_requested(field: str, text: str) -> bool:
                 return True
         # 옛날/새날 중 하나가 빠진 이동 요청도 열거로 바꾸지 않는다.
         clause = re.split(r"[,;.!?？。\n]", tail, maxsplit=1)[0]
-        if _MOVE_ACTION.search(clause) or _NOMINAL_MOVE_ACTION.match(clause):
+        if _MOVE_ACTION.search(clause) or _NOMINAL_MOVE_ACTION.match(compact_whitespace(clause)[0]):
             return True
     return False
 
