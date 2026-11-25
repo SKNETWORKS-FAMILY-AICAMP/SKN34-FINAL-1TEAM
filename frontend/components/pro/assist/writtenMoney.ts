@@ -1,4 +1,4 @@
-import { amountRiskText } from "./requestIntent";
+import { amountRiskText, resolvedIntentSegments } from "./requestIntent";
 
 // 명시적인 원 단위 한글 정수 금액만 서버와 같은 문법으로 확인해요.
 const DIGIT: Record<string, number> = Object.fromEntries([..."일이삼사오육칠팔구"].map((c, i) => [c, i + 1]));
@@ -21,7 +21,6 @@ const SHORT_OMITTED_END = /^(?:$|[,.;!?？。]|으로|로|입니다|이에요|�
 const OTHER_MONEY = /[0-9]\s*[억천백만원]|(?:견적|금액|가격|비용|공사비|총액|추가금(?:액)?|합계|단가|청구)\s*(?:[은는이가을를:=]\s*)?[0-9]|[0-9](?=$|\s|[,.;!?])/;
 const UNCERTAIN = /[?？~∼〜–—－−]|아마|혹시|미정|모르|애매|일까|할까|할지|거죠|까요|또는|아니면|혹은|사이|정도|쯤|약\s|대략|내외|안팎|가량|언저리|고민|생각\s*중|검토\s*중|몇|취소|철회|보류|않|아니|아닙|말고|대신|지\s*(?:마|말|않|못)|원하지|거부|금지|안\s*(?:할|해|하|넣|적|맞)|최대|최소|미만|초과|이상|이하|이내|한도|라면|이면|조건|가능하면|경우|마이너스|음수|플러스|잘못|틀렸|지난|이전|기존|예전|과거|원래|(?:말했|말씀드렸|정했|적었|썼|입력했|했)(?:는데|지만|다가)/;
 const RANGE = /부터|까지|에서|[+/<>-]/;
-const BREAK = /[,;.!?？。]/;
 
 function skipChars(text: string, pos: number, chars: string): number {
   while (pos < text.length && chars.includes(text[pos])) pos++;
@@ -144,8 +143,10 @@ export function writtenMoney(text: string): { mentioned: boolean; amount?: numbe
   if (OTHER_MONEY.test(outside) || attachedOrMixed(outside) || OTHER_WRITTEN.test(outside)) return held;
   if (SPLIT_NUMBER.test(before) || /(?:^|\s)(?:한|두|세|네|두세|서너)\s*$/.test(before)) return held;
   if (body.length === 1 && match.groups!.won === "원" && !MONEY_TARGET.test(before)) return held;
-  const clause = before.split(BREAK).at(-1)! + match[0] + after.split(BREAK)[0];
-  if (RANGE.test(clause)) return held;
+  // 범위 어휘는 실제 금액 토큰을 포함한 공통 절 안에서 확인해요.
+  // 앞선 별개 설명의 '까지'나 다른 날짜 칸의 범위는 금액 범위가 아니에요.
+  if (resolvedIntentSegments("quote",raw).some(scope=>
+    scope.part.includes(match[0].trim())&&RANGE.test(scope.part))) return held;
   const amount = valueOf(body);
   return amount === undefined ? held : { mentioned: true, amount };
 }

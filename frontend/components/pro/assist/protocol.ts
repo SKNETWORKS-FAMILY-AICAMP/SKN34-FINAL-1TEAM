@@ -157,6 +157,10 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
   const status = ["valid", "conflict", "invalid", "uncertain"].includes(String(data.status))
     ? data.status as CandidateField["status"] : "invalid";
   const source: AssistSource = data.source === "llm" ? "llm" : "rule";
+  const reasonCode = typeof data.reason_code === "string" &&
+    ["evidence_missing", "unsupported_normalization", "type_mismatch", "business_constraint",
+      "stale_context", "ambiguous_intent", "combined_constraint", "reference_missing", "correction_unverified"].includes(data.reason_code)
+    ? data.reason_code as NonNullable<CandidateField["reason_code"]> : undefined;
   const origin = typeof data.origin_request_id === "string" && data.origin_request_id.length <= 80
     ? data.origin_request_id : null;
   const evidence = typeof data.evidence === "string" ? data.evidence.slice(0, 1000) : "";
@@ -166,6 +170,7 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
       if (!item || typeof item !== "object") return [];
       const alt = item as Record<string, unknown>;
       if ((alt.action !== "set" && alt.action !== "clear") || typeof alt.evidence !== "string" ||
+        !alt.evidence.trim() || (alt.source !== "rule" && alt.source !== "llm") ||
         (alt.action === "set" && !validSetValue(form, field, alt.value, opts)) ||
         (alt.action === "clear" && (alt.value !== null || opts.immutableFields?.includes(field)))) return [];
       return [{
@@ -174,9 +179,10 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
         evidence: alt.evidence.slice(0, 1000),
         source: alt.source === "llm" ? "llm" as const : "rule" as const,
       }];
-    }).slice(0, 8) : [];
+    }).filter((item, index, all) => all.findIndex(other =>
+      other.action === item.action && sameValue(other.value, item.value)) === index).slice(0, 8) : [];
   if (status === "conflict") {
-    return { field, action: "uncertain", value: null, evidence, source, status: alternatives.length ? "conflict" : "uncertain", alternatives, origin_request_id: origin };
+    return { field, action: "uncertain", value: null, evidence, source, status: alternatives.length >= 2 ? "conflict" : "uncertain", alternatives: alternatives.length >= 2 ? alternatives : [], origin_request_id: origin, ...(reasonCode ? { reason_code: reasonCode } : {}) };
   }
   const validAction = action === "set" ? validSetValue(form, field, value, opts) :
     action !== "uncertain" && value === null && (action !== "clear" || !opts.immutableFields?.includes(field));
@@ -186,7 +192,14 @@ function candidateFor(field: string, raw: unknown, form: AssistForm, opts: RuleO
     : safeStatus === "valid" && action === "keep" && evidence.trim() &&
       data.intent_kind === "retain_current" && data.value_source === "current"
       ? { intent_kind: "retain_current", value_source: "current" } : {};
-  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin, ...metadata };
+  if (safeStatus === "valid" && action === "keep" && !evidence.trim() && data.intent_kind === "no_mention") {
+    metadata.intent_kind = "no_mention";
+  }
+  if (safeStatus === "valid" && (action === "set" || action === "clear") && data.intent_kind === "retain_previous") {
+    metadata.intent_kind = "retain_previous";
+    if (data.value_source === "previous") metadata.value_source = "previous";
+  }
+  return { field, action, value: validAction ? value : null, evidence, source, status: safeStatus, alternatives: [], origin_request_id: origin, ...metadata, ...(safeStatus !== "valid" && reasonCode ? { reason_code: reasonCode } : {}) };
 }
 
 // 외부 응답의 형태·필드·값을 재확인하고 중복이나 알 수 없는 필드를 화면에서 버려요.

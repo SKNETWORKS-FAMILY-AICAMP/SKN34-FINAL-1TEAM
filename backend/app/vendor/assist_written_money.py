@@ -2,7 +2,8 @@
 
 import re
 
-from app.vendor.assist_normalize import scalar_clause_risk
+from app.vendor.assist_intent import WITHDRAW_IDIOM
+from app.vendor.assist_normalize import _scalar_lexical_scopes, scalar_clause_risk
 
 _DIGIT = dict(zip("일이삼사오육칠팔구", range(1, 10), strict=True))
 _SMALL = {"천": 1000, "백": 100, "십": 10}
@@ -42,14 +43,13 @@ _OTHER_MONEY = re.compile(
 _UNCERTAIN = re.compile(
     r"[?？~∼〜–—－−]|아마|혹시|미정|모르|애매|일까|할까|할지|거죠|까요|"
     r"또는|아니면|혹은|사이|정도|쯤|약\s|대략|내외|안팎|가량|언저리|"
-    r"고민|생각\s?중|검토\s?중|몇|취소|철회|보류|않|아니|아닙|말고|대신|"
+    rf"고민|생각\s?중|검토\s?중|몇|취소|철회|{WITHDRAW_IDIOM}|보류|않|아니|아닙|말고|대신|"
     r"지\s?(?:마|말|않|못)|원하지|거부|금지|안\s?(?:할|해|하|넣|적|맞)|"
     r"최대|최소|미만|초과|이상|이하|이내|한도|라면|이면|조건|가능하면|경우|"
     r"마이너스|음수|플러스|잘못|틀렸|지난|이전|기존|예전|과거|원래|"
     r"(?:말했|말씀드렸|정했|적었|썼|입력했|했)(?:는데|지만|다가)"
 )
 _RANGE = re.compile(r"부터|까지|에서|[+/<>-]")
-_BREAK = re.compile(r"[,;.!?？。]")
 
 
 def _skip_chars(text: str, pos: int, chars: frozenset[str]) -> int:
@@ -198,7 +198,8 @@ def written_money_tokens(text: str) -> list[tuple[int, int, int]] | None:
     if len(mentions) != 1 or omitted_short:
         return []
     match, body = mentions[0]
-    if scalar_clause_risk(text, "amount", [match.span()], _UNCERTAIN):
+    scopes = _scalar_lexical_scopes(text, "amount", None)
+    if scalar_clause_risk(text, "amount", [match.span()], _UNCERTAIN, scopes=scopes):
         return []
     if not match["won"] or not _END.match(text[match.end() :]):
         return []
@@ -218,8 +219,11 @@ def written_money_tokens(text: str) -> list[tuple[int, int, int]] | None:
     if len(body) == 1 and match["won"] == "원" and not _MONEY_TARGET.search(before):
         return []
     # 범위의 다른 끝이나 산식의 일부를 한 금액으로 채택하지 않는다.
-    clause = _BREAK.split(before)[-1] + match[0] + _BREAK.split(after)[0]
-    if _RANGE.search(clause):
+    owner = next(
+        (scope for scope in scopes if scope.start <= match.start() < match.end() <= scope.end),
+        None,
+    )
+    if owner is None or _RANGE.search(text[owner.start : owner.end]):
         return []
     value = _value(body)
     return [] if value is None else [(match.start(), match.end(), value)]

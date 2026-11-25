@@ -8,6 +8,7 @@ from app.vendor.assist_schemas import (
 )
 from app.vendor.assist_validation import (
     merge_candidates,
+    resolve_withdrawals,
     review_fields,
     review_previous,
     reviewed_date_edit,
@@ -44,20 +45,17 @@ async def interpret(
             decisions={},
         )
     previous, previous_rejected = review_previous(data, context)
+    withdrawals = resolve_withdrawals(data, previous, context)
     if trace is not None and previous is not None:
         trace["previous_verified"] = previous.model_dump(mode="json")
     if trace is not None:
         trace["previous_rejected"] = dict(previous_rejected)
     safe_request = data.model_copy(update={"previous_candidate": previous})
-    # 해당 필드 기준값이 아직 같은 이전 후보만 업무 검증의 문맥에 반영한다.
-    effective = dict(data.current)
-    if previous:
-        effective.update({item.field: item.value for item in previous.fields})
-    # 검증 단계에는 원래 previous_candidate를 보존해 거부된 이력의 존재도 확인한다.
-    # 모델에 보내는 safe_request는 계속 검증된 후보만 포함한다.
-    validation_request = data.model_copy(update={"current": effective})
+    # 실제 폼 값과 검증된 미적용 후보는 서로 다른 상태다.
+    # 후보 조합의 업무 검증은 review_fields/merge_candidates에 맡기고
+    # 원래 요청의 current 및 거부된 이전 후보 정보는 바꾸지 않는다.
     rule, warnings = review_fields(
-        data.rule_fields, "rule", validation_request, context, previous=previous
+        data.rule_fields, "rule", data, context, previous=previous, withdrawals=withdrawals
     )
     if trace is not None:
         trace["rule_reviewed"] = [item.model_dump(mode="json") for item in rule.values()]
@@ -76,7 +74,7 @@ async def interpret(
             if trace is not None:
                 trace["model_raw"] = [item.model_dump(mode="json") for item in result.fields]
             model, model_warnings = review_fields(
-                result.fields, "llm", validation_request, context, previous=previous
+                result.fields, "llm", data, context, previous=previous, withdrawals=withdrawals
             )
             rejected_relations = {
                 item.field
@@ -110,6 +108,7 @@ async def interpret(
         decisions=decisions if trace is not None else None,
         merged_out=merged_out if trace is not None else None,
         previous_rejected=previous_rejected,
+        withdrawals=withdrawals,
     )
     if any(item.reason_code == "combined_constraint" for item in fields):
         warnings.append("후보를 함께 적용하면 업무 조건이 맞지 않아 확인이 필요해요.")
