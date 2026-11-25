@@ -126,15 +126,16 @@ def vat_value_matches(value: str, raw: str) -> bool:
 _STANDALONE_LEAD = re.compile(
     r"^(?:(?:우선|먼저|다시|그럼|그러면|그냥|최종적으로|이번에는|가능하면|혹시|아|네|예)\s+)*(?:(?:이번|해당|이|그)\s*건(?:은|는|만)\s*)?$"
 )
-_STANDALONE_TAIL = re.compile(
-    r"\s?(?:"
+_STANDALONE_HEAD = (
+    r"\s?"
     # 청구하는 것/계산할 방식/받는 걸 → 선택의 내용
     r"(?:(?:하(?:는|기|ㄴ)|할|한|받는|는|기)\s?"
     r"(?:것|거|걸|방식|조건|구분|형태)(?:으로|로)?\s?)?"
     r"(?:(?:방식|조건|구분|형태|것|거|걸|처리)(?:으로|로)?\s?)?"
     r"(?:(?:청구|계산|부과)(?:으로|로)\s?)?"
     r"(?:(?:으로|로|은|는|이|가|을|를|만|도)\s?)?"
-    r"(?:(?:새로|다시|우선|최종(?:적으로)?|먼저)\s)*"
+)
+_STANDALONE_END = (
     r"(?:(?:후보(?:안)?|초안|제안(?:안)?|안)(?:으로|로|에|을|를)?\s)?"
     r"(?:"
     r"(?:선택|확정|결정|설정|지정|처리|적용|입력|기입|기재|정리|표시|표기|반영|제안|제시|정|"
@@ -152,8 +153,29 @@ _STANDALONE_TAIL = re.compile(
     r"미정(?:입니다|이에요)?|고민\s?중(?:입니다|이에요)?|"
     r"가능한지\s?(?:확인해|알려)\s?주세요"
     r")?"
-    r")\s?[.!?！？。]?\s?$"
+    r"\s?[.!?！？。]?\s?$"
 )
+_STANDALONE_TAIL = re.compile(_STANDALONE_HEAD + _STANDALONE_END)
+_STANDALONE_ADVERB = re.compile(r"(?:새로|다시|우선|최종(?:적으로)?|먼저) ")
+_STANDALONE_ADVERB_HEAD = re.compile(_STANDALONE_HEAD + rf"(?={_STANDALONE_ADVERB.pattern})")
+_STANDALONE_END_PATTERN = re.compile(_STANDALONE_END)
+
+
+def _standalone_tail_fullmatch(text: str) -> bool:
+    compact, _ = compact_whitespace(text)
+    if _STANDALONE_TAIL.fullmatch(compact) is not None:
+        return True
+    head = _STANDALONE_ADVERB_HEAD.match(compact)
+    if head is None:
+        return False
+    # The finite head identifies the adverb boundary. Consume each complete
+    # adverb once before testing the finite ending grammar.
+    end = head.end()
+    while (adverb := _STANDALONE_ADVERB.match(compact, end)) is not None:
+        end = adverb.end()
+    return _STANDALONE_END_PATTERN.fullmatch(compact, end) is not None
+
+
 # 같은 절 안에서 실제 연결어로 이어진 값의 소유권만 계승한다.
 # 취소·경쟁·정정의 유효성은 해당 검증기가 판단한다.
 _MODE_LINK = re.compile(
@@ -198,7 +220,7 @@ def _separate_word_is_value(raw: str, end: int) -> bool:
     tail = _VALUE_CLAUSE_END.split(raw[end:], maxsplit=1)[0]
     if _MODE_HEAD.match(tail):
         return True
-    if _grammar_fullmatch(_STANDALONE_TAIL, tail):
+    if _standalone_tail_fullmatch(tail):
         return True
     if _QUOTED_PROPOSAL_TAIL.fullmatch(tail):
         return True
@@ -224,8 +246,8 @@ def standalone_vat_modes(raw: str) -> set[str]:
     ):
         return set()
     tail = text[tokens[-1].end :]
-    if not _grammar_fullmatch(_STANDALONE_TAIL, tail) and not any(
-        _grammar_fullmatch(_STANDALONE_TAIL, tail[: j.end()])
+    if not _standalone_tail_fullmatch(tail) and not any(
+        _standalone_tail_fullmatch(tail[: j.end()])
         and re.match(
             r"나머지|다른\s*(?:후보|값|칸)|(?:추가(?:된)?\s*)?(?:사유|이유|제목|항목(?:명)?|금액|총액|비용|공사\s*기간|기간|일수|유효기간|만료일|부가세|세금)",
             tail[j.end() :],
@@ -272,7 +294,7 @@ def scoped_vat_tokens(raw: str) -> tuple[VatToken, ...]:
             and _STANDALONE_LEAD.fullmatch(raw[: token.start])
             and (
                 len(tokens) == 1
-                and _grammar_fullmatch(_STANDALONE_TAIL, raw[token.end :])
+                and _standalone_tail_fullmatch(raw[token.end :])
                 or any(
                     _grammar_fullmatch(_MODE_LINK, raw[token.end : other.start])
                     for other in tokens

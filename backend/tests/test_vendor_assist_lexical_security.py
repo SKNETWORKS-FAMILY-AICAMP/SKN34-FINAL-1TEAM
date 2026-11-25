@@ -114,3 +114,15 @@ def test_vat_selection_offsets():
 
 def test_vat_grammar_whitespace():
     assert standalone_vat_modes("포함 \t 말고   별도로 확정합니다.") == {"included", "excluded"}
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("별도로 다시 우선 확정합니다.", {"excluded"}),
+        ("별도로 새로 먼저 최종적으로 지정합니다.", {"excluded"}),
+        ("별도로 우선 확인해 주세요.", set()),
+    ],
+)
+def test_standalone_vat_adverbs_preserve_lexical_contract(text, expected):
+    assert standalone_vat_modes(text) == expected
