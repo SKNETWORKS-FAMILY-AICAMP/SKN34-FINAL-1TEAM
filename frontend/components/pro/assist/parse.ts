@@ -3,8 +3,8 @@
 // 애매하면 칸을 채우지 않아요(틀린 값을 넣는 것보다 비워 두고 업체가 적는 편이 안전해요).
 
 import { writtenMoney } from "./writtenMoney";
-import { dateCountTokens, explicitPeriodBoundaryTail, explicitPeriodExclusionList, extraTextTargets, isExtraHistoricalReport, isExtraScopedReference, maskExtraQuotes, RECENT_REFERENCE_MARK, requestIntent, resolvedIntentSegments, scopedFieldParts, scopedVatTokens, scopedWithdrawalAffects, standaloneVatTokens, vatSemanticTokens, type ExtraTextTarget } from "./requestIntent";
-import { COUNTER_WORD, counterValue, classifyDurationQuantity, partialQuantityPrefix, QUOTE_VALIDITY_LABEL } from "./quantity";
+import { crewFinalAssignmentBody, dateCountTokens, explicitPeriodBoundaryTail, explicitPeriodExclusionList, extraTextTargets, isExtraHistoricalReport, isExtraScopedReference, maskExtraQuotes, operationScopeRisk, RECENT_REFERENCE_MARK, reportedPeriodExclusion, requestIntent, resolvedIntentSegments, scopedFieldParts, scopedVatTokens, scopedWithdrawalAffects, standaloneVatTokens, unownedExtraDependentClause, vatSemanticTokens, type ExtraTextTarget } from "./requestIntent";
+import { COUNTER_WORD, counterValue, classifyDurationQuantity, partialQuantityPrefix, QUOTE_VALIDITY_LABEL, quantityDeltaSyntax } from "./quantity";
 import { validCombinedPeriod } from "./protocol";
 
 /** outside: 안 된다고 했지만 기간 밖이라 넣지 않은 날 */
@@ -470,6 +470,7 @@ export type QuoteDuration = { value?: number; ambiguous: boolean; previousOld?: 
 export function readQuoteDuration(text: string): QuoteDuration {
   const scope = scopedFieldParts("quote", text.normalize("NFKC"), "days").join(", ");
   if (!scope) return { ambiguous: false };
+  if(quantityDeltaSyntax(scope,"days"))return {ambiguous:true};
   const quantity = classifyDurationQuantity(scope);
   const { tokens } = quantity;
   if (quantity.risk) return { ambiguous: true };
@@ -547,7 +548,8 @@ function expandDateList(text: string, today: string): string | null {
 /** 공사 날짜: "12/8부터 12/10까지, 2명" → 그 사이 날 모두(안 된다고 한 날 · 공휴일 빼고, noWeekend면 토 · 일도 빼고).
  *  "12/8, 12/9, 12/11"처럼 늘어놓으면 그 날만(말한 날은 주말이어도 그대로 두고 서버가 다시 봐요) */
 export function parseDates(text: string, today: string, baseMonth?: string | null, holidays: string[] = [], noWeekend = false): DatesFill | null {
-  const { value: crew, withoutCrew } = readCrew(text);
+  const { value, withoutCrew } = readCrew(text);
+  const crew = scopedFieldParts("dates",text,"crew").some(part=>quantityDeltaSyntax(part,"crew"))?undefined:value;
   const said = normalizeFullDates(withoutCrew);
   const days: string[] = [];
   if (RANGE.test(said)) {
@@ -594,6 +596,7 @@ export function readDateListQuantity(form: "dates" | "period", text: string, tod
 /** 값의 독립 검증: 문장 종결어가 아닌 날짜 토큰과 개수만 읽어요.
  * 범위/상대일/중복/불완전 목록은 이 경로로 확인하지 않아요. */
 export function calendarEvidenceDates(text: string, today: string, baseMonth?: string | null): string[] | undefined {
+  const report=reportedPeriodExclusion(text.replace(/[.!。]+$/,""));
   const normalized = normalizeFullDates(text.normalize("NFKC"));
   if (RANGE.test(normalized) || /오늘|내일|모레|요일|\d{3,}\s*일|\d{3,}\s*월/.test(normalized)) return;
   const counts = dateCountTokens(normalized);
@@ -604,6 +607,7 @@ export function calendarEvidenceDates(text: string, today: string, baseMonth?: s
   const month: Month = {m: Number((baseMonth ?? today).slice(5,7))};
   const dates = daysIn(expanded, today, month);
   if (month.bad || !dates.length || new Set(dates).size !== dates.length ||
+      report?.count!==undefined&&report.count!==dates.length ||
       counts.some(token => token.value !== dates.length)) return;
   return dates.sort();
 }
@@ -622,7 +626,8 @@ export function readExplicitPeriodExclusions(text: string, today: string, baseMo
   const dates=expanded===null?[]:daysIn(expanded,today,month);
   const members=list.split(/[,，、·]|하고|이랑|랑|과|와|및|그리고/);
   const unique=[...new Set(dates)].sort();
-  return {invalid:expanded===null||!!month.bad||!unique.length||dates.length!==members.length||unique.length!==dates.length||unique.some(day=>day<=today),dates:unique};
+  const count=reportedPeriodExclusion(scopes[0])?.count;
+  return {invalid:expanded===null||!!month.bad||!unique.length||dates.length!==members.length||unique.length!==dates.length||count!==undefined&&count!==unique.length||unique.some(day=>day<=today),dates:unique};
 }
 
 /** 별도 제외일 요청 때문에 일반 기간 파서가 실패한 경우에만
@@ -688,7 +693,7 @@ export function readCrewReplacement(text: string): { old: number; next: number; 
 }
 
 /** 범위 표현을 먼저 걷어내서 '2/3인'의 일부를 날짜나 확정 인원으로 읽지 않는다. */
-export function readCrew(text: string) {
+export function readCrew(text: string): { mentioned: boolean; withoutCrew: string; value: number | undefined } {
   const raw = text.normalize("NFKC");
   const single = raw.replace(CREW_RANGE, " ").replace(/(?<![가-힣])(?:한두|두세|서너|대여섯|예닐곱)\s*(?:명|인)/g, " ");
   let ambiguous = single !== raw || new RegExp(CREW_NUMBER + "\\s*명(?:분|당|씩|단|짜리|치|함|칭)").test(single);
@@ -699,8 +704,10 @@ export function readCrew(text: string) {
     return " ";
   });
   const [n] = counts;
+  const final=!ambiguous&&counts.size>1?crewFinalAssignmentBody(raw):undefined;
+  const total=final?readCrew(final).value:undefined;
   return { mentioned: ambiguous || counts.size > 0, withoutCrew,
-    value: !ambiguous && counts.size === 1 && Number.isInteger(n) && n > 0 && n < 100 ? n : undefined };
+    value: total??(!ambiguous && counts.size === 1 && Number.isInteger(n) && n > 0 && n < 100 ? n : undefined) };
 }
 
 export type ExtraFill = QuoteFill & { title?: string; reason?: string };
@@ -712,8 +719,8 @@ const EXTRA_TITLE_PREFIX = /^(?:추가금|추가금액)?(?:사유|이유)[은는
 const EXTRA_ASSIGN_PARTICLE = /(?:이라고|라고|으로|로)/.source;
 // 값을 가리키는 조사부터 완결된 대입 술어까지 한 경계로 읽어요.
 // '새로'의 마지막 '로'만 조사처럼 잘라 값에 '으로 새'를 남기지 않아요.
-const EXTRA_ASSIGN_MODIFIER = /(?:새로이|새롭게|새로|다시|재차|먼저|우선|최종(?:적으로)?|정확히|정확하게|명확히|명확하게|정식으로|한\s*번\s*더)/.source;
-const EXTRA_MODIFIER_WORDS = ["새로이","새롭게","새로","다시","재차","먼저","우선","최종","최종적으로","정확히","정확하게","명확히","명확하게","정식으로","한 번 더"];
+const EXTRA_ASSIGN_MODIFIER = /(?:새로이|새롭게|새로|다시|재차|먼저|우선|각각|각기|최종(?:적으로)?|정확히|정확하게|명확히|명확하게|정식으로|한\s*번\s*더)/.source;
+const EXTRA_MODIFIER_WORDS = ["새로이","새롭게","새로","다시","재차","먼저","우선","각각","각기","최종","최종적으로","정확히","정확하게","명확히","명확하게","정식으로","한 번 더"];
 const EXTRA_PARTIAL_MODIFIER = new RegExp(EXTRA_ASSIGN_PARTICLE + "\\s*(?:" +
   [...new Set(EXTRA_MODIFIER_WORDS.flatMap(word => Array.from({length:word.length},(_,i)=>word.slice(0,i+1).trim())))]
     .map(word=>word.replace(/\s+/g,"\\s*")).join("|") + ")\\s*$");
@@ -728,6 +735,7 @@ const EXTRA_ASSIGN_PREFIX = EXTRA_ASSIGN_PARTICLE + "\\s*(?:" + EXTRA_ASSIGN_MOD
 const EXTRA_ANY_ASSIGN_STEM = "(?:" + EXTRA_ASSIGN_STEM + "|" + EXTRA_OTHER_ASSIGN_STEM + ")";
 const EXTRA_ASSIGN_ADNOMINAL = EXTRA_ANY_ASSIGN_STEM + "(?:할|하는|하기\\s*위한)";
 const EXTRA_PROPOSAL_NOUN = /(?:초안|후보(?:안)?|제안(?:안)?|안)/.source;
+const EXTRA_NAMED_PROPOSAL = EXTRA_ANY_ASSIGN_STEM + "안(?:\\s*[을를])?";
 const EXTRA_PROPOSAL_OBJECT = EXTRA_PROPOSAL_NOUN + "(?:\\s*[을를])?";
 const EXTRA_PROPOSAL_REQUEST_END = "(?:" + EXTRA_REQUEST_END + "|줘|주시고)";
 const EXTRA_PROPOSAL_REQUEST = "(?:(?:부탁|요청)\\s*(?:합니다|드립니다|드려요|해요|해\\s*" + EXTRA_PROPOSAL_REQUEST_END + ")|" + EXTRA_PROPOSAL_REQUEST_END + "|바랍니다|(?:해|만들어|제시해|제안해|보여)\\s*" + EXTRA_PROPOSAL_REQUEST_END + ")";
@@ -736,16 +744,19 @@ const EXTRA_OBJECT_FIRST_PROPOSAL = EXTRA_PROPOSAL_NOUN + "(?:\\s*(?:[을를]|�
 const EXTRA_PROPOSAL_HEAD = "(?:" + EXTRA_ADNOMINAL_PROPOSAL + "|" + EXTRA_OBJECT_FIRST_PROPOSAL + ")";
 const EXTRA_PROPOSAL_ASSIGN = EXTRA_PROPOSAL_HEAD + "\\s*" + EXTRA_PROPOSAL_REQUEST;
 const EXTRA_TEXT_CHANGE = new RegExp(EXTRA_ASSIGN_PREFIX + "(?:" +
-  EXTRA_PROPOSAL_ASSIGN + "|" + EXTRA_ASSIGN_STEM + "(?:\\s*" + EXTRA_ASSIGN_ENDING + ")?|" +
+  EXTRA_PROPOSAL_ASSIGN + "|" + EXTRA_PROPOSAL_OBJECT + "\\s*(?:잡아|만들어|작성해|보여|내어|내)\\s*" + EXTRA_REQUEST_END + "|" +
+  EXTRA_NAMED_PROPOSAL + "\\s*(?:(?:먼저|우선)\\s*)?(?:보여\\s*" + EXTRA_REQUEST_END + "|확인(?:합니다|하겠습니다|할게요|해\\s*" + EXTRA_REQUEST_END + "))|" +
+  EXTRA_ASSIGN_STEM + "(?:\\s*" + EXTRA_ASSIGN_ENDING + ")?|" +
   EXTRA_OTHER_ASSIGN_STEM + "\\s*" + EXTRA_ASSIGN_ENDING + "|" +
-  /(?:바꿔|고쳐|적어|넣어|써|해|정해)\s*/.source + EXTRA_REQUEST_END + "|" + /정합니다|정하겠습니다|정할게요|바꿀게요|고칠게요|하겠습니다|할게요|적고|쓰고|기입하고/.source + ")$");
-const EXTRA_INCOMPLETE_PROPOSAL = new RegExp(EXTRA_ASSIGN_PREFIX + "(?:" + EXTRA_PROPOSAL_HEAD + "(?=\\s|$|[?？은는이가도만])|" + EXTRA_ASSIGN_ADNOMINAL + "\\s*$)");
-const EXTRA_LINKED_SCALAR = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*)?(?:금액|비용|추가금(?:액)?|부가세|세금|VAT)(?=\s|[은는이가을를:=])/gi;
+  /(?:바꿔|고쳐|적어|넣어|써|해|정해|남겨)\s*/.source + EXTRA_REQUEST_END + "|" + /정합니다|정하겠습니다|정할게요|바꿀게요|고칠게요|바꾸겠습니다|고치겠습니다|바꿉니다|고칩니다|바꾸죠|고치죠|하겠습니다|할게요|적고|쓰고|기입하고/.source + ")$");
+const EXTRA_OBJECT_CHANGE = new RegExp("(?:을|를)\\s*(?:넣어|적어|써|기재해|입력해|남겨)\\s*"+EXTRA_REQUEST_END+"$");
+const EXTRA_INCOMPLETE_PROPOSAL = new RegExp(EXTRA_ASSIGN_PREFIX + "(?:" + EXTRA_PROPOSAL_HEAD + "(?=\\s|$|[?？은는이가도만])|" + EXTRA_NAMED_PROPOSAL + "(?=\\s|$|[?？은는이가도만])|" + EXTRA_ASSIGN_ADNOMINAL + "\\s*$)");
+const EXTRA_LINKED_SCALAR = /(?<![가-힣a-zA-Z\d])(?:(?:추가|공사|시공)\s*)?(?:금액|비용|공사비|추가금(?:액)?|부가세|세금|VAT)(?=\s|[은는이가을를:=])/gi;
 const EXTRA_LINK_END = /(?:하고요?|하며|적고|쓰고|기입하고|주시고)$/;
 const EXTRA_MODIFIED_ASSIGNMENT = new RegExp(EXTRA_ASSIGN_PARTICLE + "\\s*" + EXTRA_ASSIGN_MODIFIER);
 export function hasExtraAssignmentSuffix(value: string): boolean {
   const text = value.trim().replace(/[.!。?？]+$/, "");
-  return EXTRA_TEXT_CHANGE.test(text) || EXTRA_INCOMPLETE_PROPOSAL.test(text);
+  return EXTRA_TEXT_CHANGE.test(text) || EXTRA_OBJECT_CHANGE.test(text) || EXTRA_INCOMPLETE_PROPOSAL.test(text);
 }
 const EXTRA_TEXT_DIRECTIVE = /(?:기재|작성|기록|설정|반영|확정|지정|조정|제안|결정|선택)\s*(?:해|하|할)|넣어|넣으|써\s*(?:주|줘)|(?:으로|로)\s*(?:하겠|할게|해\s*(?:주|줘)|정하|정할|정해\s*(?:주|줘))/;
 // 구두점 없이 금액·세금이 이어지면 문자열 값의 일부인지 별도 필드인지 확정하지 않아요.
@@ -754,7 +765,7 @@ const EXTRA_TITLE_UNCERTAIN = /[?？]|아마|혹시|미정|모르|애매|일까|
 // 이전 내용을 가리키는 표현 자체를 새 항목 이름으로 쓰지 않아요.
 const EXTRA_TITLE_REFERENCE = /^(?:(?:방금|아까|앞서|좀\s*전에|조금\s*전에|이전에|지난번에|그때|전에|처음(?:에)?|최초(?:에)?)\s*(?:말씀드린|말한|얘기한|알려드린|정한|잡은|확정한|제안한|정리한|적은|전달한)|(?:이전|직전|앞서|기존|(?:맨\s*)?처음(?:에)?|최초(?:에)?|현재|지금)\s*(?:입력\s*값|후보|제안|내용|값|작업명|항목명|제목|사유|이유)(?:를|을|으로|로|대로|와|과|\s|$)|(?:현재|지금)\s*(?:있는|적힌|적은|입력한|입력된|등록한|등록된)\s*값)/;
 export function isExtraReferenceValue(value: string): boolean { return EXTRA_TITLE_REFERENCE.test(value.trim()); }
-const EXTRA_TITLE_DENIED = /(?:그대로|(?<![가-힣])유지|바꾸지|고치지|수정하지|변경하지|건드리지|손대지|삭제|지우|비우|없애|취소|하지\s*마|주지\s*마|말아\s*주|안\s*(?:할|해|하|바꿔|고쳐|수정|변경)|아니|아닙|말고|대신)/;
+const EXTRA_TITLE_DENIED = /(?:그대로|(?<![가-힣])유지|바꾸지|고치지|수정하지|변경하지|건드리지|손대지|삭제|지우|비우|없애|취소|하지\s*마|주지\s*마|말아\s*주|(?<![가-힣])안\s*(?:할|해|하|바꿔|고쳐|수정|변경)|아니|아닙|말고|대신)/;
 const EXTRA_OTHER_FIELD = /(?:사유|이유|금액|비용|부가세|VAT)\s*(?::|=|은|는|을|를)/i;
 const EXTRA_NOT_FREE_TITLE = /^(?:(?:이번|해당)\s*)?(?:추가금|추가\s*(?:(?:작업|공사|시공)\s*)?(?:금액|비용|요금|사유|이유)|금액|비용|가격|공사비|총액|견적|사유|이유|부가세|부가가치세|세금|VAT|면세|(?:포함|별도)\s*(?:부가세|세금)|제목|항목명|항목|작업명|이름)(?:\s|은|는|이|가|을|를|만|도|:|=|$)/i;
 function unquoteExtraValue(value: string): string {
@@ -763,7 +774,57 @@ function unquoteExtraValue(value: string): string {
 }
 const EXTRA_CLAUSE_BOUNDARY = /[,，;.!?！？。\n]/;
 function extraTextAction(clause: string) {
-  return maskExtraQuotes(clause).match(EXTRA_TEXT_CHANGE);
+  const masked=maskExtraQuotes(clause);
+  return masked.match(EXTRA_TEXT_CHANGE)??masked.match(EXTRA_OBJECT_CHANGE);
+}
+// An explicitly owned scalar assignment does not own an unlabelled text
+// value in its explanatory prefix. A separate nominal clause and an actual
+// title/reason label are different owners, not part of this exclusion.
+function explicitExtraScalarAssignment(clause: string): boolean {
+  const masked=maskExtraQuotes(clause);
+  return [...masked.matchAll(EXTRA_LINKED_SCALAR)].some(hit=>
+    !!extraTextAction(masked.slice(hit.index)));
+}
+
+function extraOperationParts(text:string):string[] {
+  const masked=maskExtraQuotes(text), result:string[]=[];
+  let start=0;
+  while(start<text.length){
+    const boundary=extraTextBoundary(text.slice(start));
+    const end=boundary<0?text.length:start+boundary;
+    const clause=text.slice(start,end).trim();
+    if(clause)result.push(clause);
+    if(end===text.length)break;
+    const next=end+(extraScalarBoundary(masked,end)?1:0);
+    if(next<=start)break;
+    start=next;
+  }
+  return result;
+}
+
+// A completed report/explanation before another field's assignment is not
+// an independent free-text nominal value. Standalone nouns are not reports.
+const EXTRA_BACKGROUND_PREDICATE = /(?:해서|하여|라서|어서|아서|으므로|므로|때문에|인데|건데|했는데|되었는데|됐는데|지만|했습니다|했어요|되었습니다|됐어요|입니다|이에요|예요|네요|군요|습니다|어요|아요)$/;
+const EXTRA_BACKGROUND_REPORT = /(?:했습니다|했어요|되었습니다|됐어요|입니다|이에요|예요|네요|군요|습니다|어요|아요)$/;
+
+export function foreignExtraTextScope(text: string, field: "title" | "reason", evidence: string, value?: unknown): boolean {
+  const compact=(s:string)=>s.normalize("NFKC").replace(/\s+/g, "").replace(/[,.!;。]+$/, "");
+  const proof=compact(evidence), literal=typeof value==="string"?compact(value):"";
+  if(!proof)return false;
+  const parts=extraOperationParts(text);
+  const matching=parts.map((clause,index)=>({clause,index})).filter(({clause})=>{
+    const actual=compact(clause);
+    return !!actual&&(actual.includes(proof)||literal&&proof.includes(literal)&&actual.includes(literal));
+  });
+  return matching.length>0&&matching.every(({clause,index})=>{
+    const marks=extraTextTargets(clause);
+    const otherAssignment=(part:string)=>explicitExtraScalarAssignment(part)||
+      extraTextTargets(part).some(mark=>mark.field!==field&&!!extraTextAction(part));
+    return !marks.some(mark=>mark.field===field)&&
+      (marks.some(mark=>mark.field!==field)||explicitExtraScalarAssignment(clause)||unownedExtraDependentClause(text,clause)||
+       EXTRA_BACKGROUND_PREDICATE.test(clause)&&parts.slice(index+1).some(otherAssignment)||
+       EXTRA_BACKGROUND_REPORT.test(clause)&&parts.slice(0,index).some(otherAssignment));
+  });
 }
 function extraPoliteAssignment(clause: string): boolean {
   return new RegExp(EXTRA_POLITE_END + "$").test(clause.trim()) && !!extraTextAction(clause.trim());
@@ -784,6 +845,8 @@ function extraTextBoundary(text: string): number {
       first.fields.length>0&&second.fields.length>0&&
       second.fields.every(field=>!first.fields.includes(field))&&
       (first.fields.every(field=>intent?.canceled.has(field)||intent?.currentKeep.has(field))||
+       first.fields.every(field=>intent?.serverOnly.has(field)&&!intent.blocked.has(field))&&
+       /(?:돌려놓고|되돌리고|복원하고)$/.test(first.part)&&second.fields.every(field=>!intent?.blocked.has(field))||
        first.fields.length===1&&intent?.blocked.has(first.fields[0])&&/(?:고요?|며)$/.test(first.part)&&
        !intent.cancelAll&&!intent.unboundWithdrawal&&second.fields.every(field=>!intent.blocked.has(field)))){
     // 복합 명칭의 일부를 다시 검색하지 않고 공통 절의 실제 시작 위치를
@@ -827,7 +890,16 @@ const EXTRA_AMOUNT_NARRATIVE = /^(?:(?:아까|앞서|방금|이전에|지난번�
 
 type ExtraTextSpan = { field: "title" | "reason"; value: string; clause: string; start: number; end: number };
 type ExtraTextClause = { target: ExtraTextTarget; clause: string; tail: string; offset: number; boundary: string; span?: ExtraTextSpan; incomplete: boolean };
-const EXTRA_FIELD_LEAD = /^(?:(?:그리고|또|다음으로|다만)\s+)?$/;
+const EXTRA_FIELD_LEAD = /^(?:(?:그리고|또|다음으로|다만)\s+)?(?:(?:이|그|해당|이번)\s+)?$/;
+function descriptiveTextLead(prefix:string,field:"title"|"reason"):boolean {
+  // A completed descriptive lead may identify the reason/name label, but
+  // it must not contain another field, risk, competing request or value.
+  if(!prefix||extraTextTargets(prefix).length||EXTRA_TITLE_UNCERTAIN.test(prefix)||
+    EXTRA_TITLE_DENIED.test(prefix)||EXTRA_TEXT_DIRECTIVE.test(prefix)||/[?？"'“”‘’\d]/.test(prefix))return false;
+  return /(?:지만|인데|건데|해서|라서|때문에)$/.test(prefix)||
+    /(?:보고서|도면|기록|내역|자료|확인\s*내용)\s*에\s*맞(?:춰|추어)$/.test(prefix)||
+    field==="reason"&&/(?:하게\s*된|발생한|발생하게\s*된|필요한|필요하게\s*된|들어간|들어가게\s*된|진행한|진행하게\s*된|추가한)$/.test(prefix);
+}
 const EXTRA_CLEAR_REQUEST = /(?:(?:지워|비워|없애)(?:\s*(?:주세요|줘요|주십시오|주시겠어요|둘게요)|서\s*[^,;.!?！？。]{0,32}(?:두세요|둬\s*주세요|주세요|줘요))|(?:삭제|제거|초기화)\s*(?:해\s*(?:주세요|줘요|주십시오)|합니다|하겠습니다|할게요))\s*[.!。]?$/;
 export function isExtraClearCommandValue(value: string): boolean {
   return EXTRA_CLEAR_REQUEST.test(value.trim());
@@ -854,6 +926,31 @@ function sharedExtraNominalTail(text: string, end: number, field: "title" | "rea
   if(expected!==particle[0]||before.split(/\s+/).at(-1)!.length<2&&!/\s/.test(tail[particle.index-1]??""))return tail;
   return before;
 }
+
+/** Shared predicate proof for a nominal text slot and a following independently
+ * owned scalar slot. The existing text-only grammar handles two text slots;
+ * this helper does not alter the offline parser or its extracted rule value. */
+export function sharedScalarTextValue(text: string, field: "title" | "reason", clause: string,
+    value: string, following: string): boolean {
+  const at = text.indexOf(clause);
+  if (at < 0 || text.indexOf(clause,at+clause.length) >= 0) return false;
+  const between = text.slice(at+clause.length);
+  if (!/^\s*[,，]\s*/.test(between) ||
+      !between.replace(/^\s*[,，]\s*/,"").startsWith(following)) return false;
+  const marks = extraTextTargets(clause);
+  if (marks.length !== 1 || marks[0].field !== field || clause.slice(0,marks[0].index).trim()) return false;
+  const tail = clause.slice(marks[0].valueStart).trim();
+  if (!value || value !== value.trim() || !tail.startsWith(value)) return false;
+  const particle = tail.slice(value.length);
+  if (!/^(?:으로|로|이라고|라고)$/.test(particle)) return false;
+  const final = value.at(-1);
+  if (!final || !/[가-힣]/.test(final)) return false;
+  const batchim = (final.charCodeAt(0)-0xac00)%28;
+  const expected = /라고$/.test(particle) ? (batchim?"이라고":"라고") : (batchim!==0&&batchim!==8?"으로":"로");
+  return particle === expected && value.split(/\s+/).at(-1)!.length >= 2 &&
+    !EXTRA_TITLE_UNCERTAIN.test(maskExtraQuotes(tail)) && !EXTRA_TITLE_DENIED.test(maskExtraQuotes(tail)) &&
+    !incompleteExtraAssignment(tail) && !isExtraScopedReference(clause) && !isExtraHistoricalReport(tail);
+}
 // 라벨과 실제 조사 뒤의 값 구간을 한 번 계산해요. 규칙, 근거 검사,
 // 다른 칸의 의도 판정이 동일한 시작/끝 인덱스를 사용해요.
 function extraTextClauses(text: string): ExtraTextClause[] {
@@ -870,13 +967,15 @@ function extraTextClauses(text: string): ExtraTextClause[] {
       const scope=maskExtraQuotes(tail), action=extraTextAction(tail);
       const field=target.field;
       const entry:ExtraTextClause={target,clause:raw.trim(),tail,offset:start,boundary:mark,incomplete:incompleteExtraAssignment(tail)};
-      const validPrefix=EXTRA_FIELD_LEAD.test(prefix) || field==="title"&&EXTRA_TITLE_PREFIX.test(prefix.replace(/\s+/g,""));
+      const validPrefix=EXTRA_FIELD_LEAD.test(prefix) || field==="title"&&EXTRA_TITLE_PREFIX.test(prefix.replace(/\s+/g,""))||
+        !!action&&descriptiveTextLead(prefix,field);
       // 독립 절을 분리한 뒤에도 공통 의미 판정이 미정/보류한
       // 술어는 대입 동사 없는 명사 값으로 다시 가리지 않아요.
       const unresolved=!action&&requestIntent("extra",maskExtraQuotes(raw)).blocked.has(field);
       // 인접한 또 다른 명시 라벨/수량이 있는 미분리 절은 명사 값으로
       // 단정하지 않아요. 단순 명사에 들어간 필드 단어는 값으로 유지해요.
       if(validPrefix && marks.length===1 && tail && !entry.incomplete && !unresolved &&
+        (target.marker.trim()!=="" || !!action) &&
         (!/[?？]/.test(mark)||extraPoliteAssignment(tail)) &&
         !EXTRA_TITLE_UNCERTAIN.test(scope) && !EXTRA_TITLE_DENIED.test(scope) && !EXTRA_CLEAR_REQUEST.test(scope) &&
         !EXTRA_TITLE_REFERENCE.test(scope) && !isExtraScopedReference(raw) && !isExtraHistoricalReport(tail) && !EXTRA_OTHER_FIELD.test(scope) && !EXTRA_TEXT_NEIGHBOR.test(scope) &&
@@ -894,7 +993,16 @@ function extraTextClauses(text: string): ExtraTextClause[] {
     }
     start=end+(end===text.length||extraScalarBoundary(masked,end)?1:0);
   }
-  return clauses;
+  // A subject-marked evaluation of the present label is an observation,
+  // not a second proposed name. Require an independently complete later
+  // assignment; do not discard bare competing names, quoted values or risks.
+  return clauses.filter((entry,index)=>!(
+    /^(?:이|가)$/.test(entry.target.marker.trim()) && /[.!。]/.test(entry.boundary) &&
+    /^(?:너무|다소|조금|좀|상당히|매우)\s+/.test(entry.tail) &&
+    /(?:적이|스럽|하|길|짧|넓|좁|어렵|쉽|많|적)(?:네요|군요|습니다|어요|아요)$/.test(entry.tail) &&
+    !extraTextAction(entry.tail) && !/["'“”‘’]|\d|취소|철회|아니라|말고|조건부|가능하면/.test(entry.tail) &&
+    clauses.slice(index+1).some(later=>later.target.field===entry.target.field&&
+      !!later.span&&!!extraTextAction(later.tail))));
 }
 
 function targetedExtraText(text: string, field: "title" | "reason"): {targeted:boolean;value?:string}{
@@ -916,6 +1024,38 @@ export function extraTextGrounding(text: string, field: "title" | "reason"): Ext
   if(clauses.some(entry=>entry.incomplete))return {values:[],incomplete:true};
   const values=clauses.flatMap(entry=>entry.span?[{value:entry.span.value,clause:entry.span.clause}]:[]);
   return values.length>0 && values.length===clauses.length?{values,incomplete:false}:undefined;
+}
+
+/** Positive proof for a fresh text candidate. Unlabelled legacy shorthand
+ * is permitted only when the actual independent local parser extracts the
+ * same value, rather than accepting arbitrary server text on missing proof. */
+export function positiveExtraTextValue(text:string,field:"title"|"reason",value:unknown,evidence:string,today:string):boolean {
+  if(typeof value!=="string"||!value.trim()||!evidence.trim()||foreignExtraTextScope(text,field,evidence,value))return false;
+  const compact=(s:string)=>s.normalize("NFKC").replace(/\s+/g,"").replace(/[,.!;。]+$/,"");
+  const proof=compact(evidence);
+  if(!proof||!compact(text).includes(proof)||!proof.includes(compact(value)))return false;
+  const grounding=extraTextGrounding(text,field);
+  if(grounding){
+    if(grounding.incomplete)return false;
+    if(grounding.values.some(item=>compact(item.value)===compact(value)&&
+      (compact(item.clause).includes(proof)||proof.includes(compact(item.clause)))))return true;
+    // An owned nominal ending with a direction particle may share the next
+    // scalar's complete predicate. The existing proof checks the exact noun
+    // and grammatical particle, rather than accepting a shorter substring.
+    const scopes=resolvedIntentSegments("extra",text);
+    const owned=scopes.filter(s=>s.fields.includes(field));
+    if(grounding.values.length!==1||owned.length!==1||owned[0].dependent||owned[0].fields.length!==1||
+        !compact(owned[0].part).includes(proof))return false;
+    const following=scopes[scopes.indexOf(owned[0])+1];
+    return !!following&&following.sentence===owned[0].sentence&&!following.dependent&&following.fields.length===1&&
+      (following.fields[0]==="amount"||following.fields[0]==="vat")&&!!extraTextAction(following.part)&&
+      !operationScopeRisk("extra",following.part,following.fields[0])&&
+      sharedScalarTextValue(text,field,owned[0].part,value,following.part);
+  }
+  if(extraTextTargets(text).some(target=>target.field===field))return false;
+  const local=parseExtra(text,today)[field];
+  return typeof local==="string"&&compact(local)===compact(value)&&
+    extraOperationParts(text).some(part=>compact(part).includes(proof)||proof.includes(compact(part))&&compact(part).includes(compact(value)));
 }
 
 export function extraTextClearRequested(text: string, field: "title" | "reason"): boolean {
@@ -981,7 +1121,7 @@ export function parseExtra(text: string, today: string): ExtraFill {
   const reason = targetedExtraText(text,"reason");
   if (explicit.value) out.title = explicit.value;
   if (reason.value) out.reason = reason.value;
-  for (const raw of intentText.split(/(?<!\d),|,(?!\d{3})|\n/)) {
+  for (const raw of extraOperationParts(intentText)) {
     const part = raw.trim();
     if (!part) continue;
     // 다른 칸에 귀속된 철회/철회 보고를 자유 형식 항목명이나
@@ -990,7 +1130,11 @@ export function parseExtra(text: string, today: string): ExtraFill {
       scope.fields.some(field=>field==="amount"||field==="vat")&&
       !scope.fields.some(field=>field==="title"||field==="reason")&&
       /취소|철회|없(?:던|었던)\s*(?:걸로|일로|것으로)/.test(scope.part)))continue;
-    if (!out.reason && !reason.targeted && WHY.test(part)) { out.reason = part.replace(/[.。]\s*$/, ""); continue; }
+    if(!extraTextTargets(part).length&&explicitExtraScalarAssignment(part))continue;
+    if (!out.reason && !reason.targeted && WHY.test(part)) {
+      if(!foreignExtraTextScope(text,"reason",part,part))out.reason = part.replace(/[.。]\s*$/, "");
+      continue;
+    }
     if (!out.title && !explicit.targeted && !extraTextTargets(part).length && !standaloneVatTokens(part).length && !EXTRA_NOT_FREE_TITLE.test(part) &&
       !EXTRA_TITLE_UNCERTAIN.test(part)) {
       // 정정한 뒤 말은 항목 이름이 아니에요("곰팡이 방지 12만 원이 아니라 15만 원")
@@ -999,7 +1143,8 @@ export function parseExtra(text: string, today: string): ExtraFill {
       const t = withoutAmount.replace(/\s*(?:추가요|추가돼요|더\s*들어요)\s*$/, "").replace(/\s+/g, " ").trim();
       if (head !== withoutAmount && EXTRA_AMOUNT_NARRATIVE.test(t)) continue;
       if (/^(?:아|앗|아니|네|예|응|음|어|잠깐|알겠습니다|확인했습니다)[.!。]?$/.test(t)) continue;
-      if (t && !/^\d/.test(t) && !EXTRA_NOT_FREE_TITLE.test(t) && !EXTRA_TITLE_DENIED.test(t) && !EXTRA_TITLE_REFERENCE.test(t)) out.title = t.slice(0, 60);
+      if (t && !/^\d/.test(t) && !EXTRA_NOT_FREE_TITLE.test(t) && !EXTRA_TITLE_DENIED.test(t) && !EXTRA_TITLE_REFERENCE.test(t)&&
+          !foreignExtraTextScope(text,"title",part,t)) out.title = t.slice(0, 60);
     }
   }
   return out;

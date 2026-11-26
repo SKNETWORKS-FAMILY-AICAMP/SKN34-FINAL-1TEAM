@@ -32,7 +32,10 @@ _BARE_DAY = re.compile(
 )
 _REPLACE_GAP = re.compile(r"^(?:은|는|이|가|을|를)?(?:대신|말고)$")
 _EDIT_GAP = re.compile(r"^(?:을|를|은|는|에서|(?:을|를|은|는)?만)$")
-_EDIT_SUFFIX = re.compile(rf"^\s*(?:로|으로)\s*(?:{DATE_CHANGE_ACTION})")
+_DAY_MEMBER_EDIT_GAP = re.compile(r"^(?:에|은|는)?(?:작업|공사|시공)(?:만|을|를)$")
+_MOVE_LATER = r"밀어|밀고|밀(?:기|겠|도록|지|어\s*주)"
+_DATE_EDIT_ACTION = rf"(?:{DATE_CHANGE_ACTION}|{_MOVE_LATER})"
+_EDIT_SUFFIX = re.compile(rf"^\s*(?:로|으로)\s*{_DATE_EDIT_ACTION}")
 _EXCLUSION_MOVE_GAP = re.compile(r"^(?:은|는|에)?쉬는(?:걸|것을)(?:만)?$")
 _EXCLUSION_MOVE_SUFFIX = re.compile(r"^\s*쉬는\s*(?:걸|것으)로\s*(?:옮기|옮겨|옮길)")
 # 이유를 설명한 바로 다음 절에서 그날의 작업만 옮기는 지시.
@@ -66,6 +69,9 @@ _CONFIRMED_ENDINGS = frozenset(
         "미뤄주세요",
         "미룰게요",
         "미루겠습니다",
+        "밀어주세요",
+        "밀겠습니다",
+        "밀게요",
         "당겨주세요",
         "당길게요",
         "당기겠습니다",
@@ -194,7 +200,7 @@ def _confirmed_suffix(text: str, field: str, *, shifted: bool) -> bool:
 
 _EDIT_WORD = (
     r"바꾸|바꿔|바꿀|고치|고쳐|고칠|변경|수정|정정|교체|대체|"
-    r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길|이동|추가|넣|삭제|지우|비우|초기화|늘리|줄이|조정"
+    rf"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길|{_MOVE_LATER}|이동|추가|넣|삭제|지우|비우|초기화|늘리|줄이|조정"
 )
 _OTHER_EDIT = re.compile(_EDIT_WORD)
 _FOLLOWING_EDIT = re.compile(
@@ -276,7 +282,7 @@ _EXCLUDED_RESULT = re.compile(
     r"(?:[은는]\s*)?쉬는\s*(?:걸로요(?=\s|[.,;。!，\n]|$)|"
     r"(?:걸|것으)로\s*(?:옮기|옮겨|옮길))"
 )
-_DAY_SCOPE = re.compile(r"작업\s*(?:일|날짜?)|공사\s*(?:일|날짜?)|시공\s*(?:일|날짜?)")
+_DAY_SCOPE = re.compile(r"(?:작업|공사|시공)\s*(?:일|날짜?)|방문\s*(?:일|날짜?|일정)?")
 _OTHER_SCOPE = re.compile(
     r"시작\s*(?:일|날짜?)|(?:종료|마감)\s*(?:일|날짜?)|끝나는\s*날|유효\s*기간"
 )
@@ -288,8 +294,38 @@ _RELATION_DATE = re.compile(
     r"\d{1,3}\s*일(?!\s*(?:간|동안|정도|째|소요|후|전|차|뒤)))"
 )
 _RELATION_CONNECTOR = re.compile(r"^(?:[은는이가을를]\s*)?(?:대신|말고|아니고|아니라|->|→)")
-_RELATION_ACTION = re.compile(rf"^\s*(?:로|으로)\s*(?:{DATE_CHANGE_ACTION})")
-_MOVE_ACTION = re.compile(r"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길")
+_RELATION_ACTION = re.compile(rf"^\s*(?:로|으로)\s*{_DATE_EDIT_ACTION}")
+_MOVE_ACTION = re.compile(rf"옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길|{_MOVE_LATER}")
+
+# Ordinals are references into the verified list, not alternative date values.
+# Bind any ordinal attached to the rejected date to the actual list member;
+# a separate retained ordinal must be a different, in-range member.
+_ORDINAL = r"(?:첫(?:\s*번째)?|두\s*번째|둘째|세\s*번째|셋째|네\s*번째|넷째|\d+\s*번째)"
+_ORDINAL_OWNER = re.compile(rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를]\s*)?$")
+_ORDINAL_KEEP = re.compile(rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를도]\s*)?(?:기존대로|원래대로|그대로|유지)(?:요|예요|입니다|해\s*주세요)?\s*[.!。]?\s*$")
+
+
+def _ordinal_number(text: str) -> int:
+    compact = "".join(text.split())
+    if compact[0].isdigit():
+        return int(compact.removesuffix("번째"))
+    return {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4}.get(compact[0], 0)
+
+
+def _ordinal_members_valid(text: str, old: "_Mention", new: "_Mention", before: list[date], existing: date) -> bool:
+    prefix = _local_prefix(text, old.start)
+    ordinal = _ORDINAL_OWNER.search(prefix)
+    position = before.index(existing) + 1
+    if ordinal and _ordinal_number(ordinal["ordinal"]) != position:
+        return False
+    # Only completed standalone retention clauses may refer to another index.
+    for part in re.split(r"[,;.!。\n]", text[new.end :]):
+        if not re.search(_ORDINAL, part):
+            continue
+        keep = _ORDINAL_KEEP.fullmatch(part.strip())
+        if keep is None or not 1 <= _ordinal_number(keep["ordinal"]) <= len(before) or _ordinal_number(keep["ordinal"]) == position:
+            return False
+    return True
 # '이동'은 명사로도 쓰이므로 날짜에 직접 연결된 미완성 이동만 보류한다.
 _NOMINAL_MOVE_ACTION = re.compile(
     r"^\s?(?:[은는이가을를]?만|[은는이가을를]|에서|으로|로)?\s?"
@@ -324,7 +360,11 @@ def date_replacement_requested(field: str, text: str) -> bool:
             compact = "".join(gap.split())
             suffix = text[new.end() :]
             if (
-                _RELATION_GAP.fullmatch(compact)
+                (
+                    _RELATION_GAP.fullmatch(compact)
+                    or field == "days"
+                    and _DAY_MEMBER_EDIT_GAP.fullmatch(compact)
+                )
                 and _RELATION_ACTION.match(suffix)
                 or _SHIFT_GAP.fullmatch(compact)
                 or _EXCLUSION_MOVE_GAP.fullmatch(compact)
@@ -554,7 +594,14 @@ def _single_replacement(text: str, mentions: list[_Mention], field: str) -> tupl
         suffix = text[new.end :]
         if (
             _REPLACE_GAP.fullmatch(gap)
-            or (_EDIT_GAP.fullmatch(gap) and _EDIT_SUFFIX.match(suffix))
+            or (
+                (
+                    _EDIT_GAP.fullmatch(gap)
+                    or field == "days"
+                    and _DAY_MEMBER_EDIT_GAP.fullmatch(gap)
+                )
+                and _EDIT_SUFFIX.match(suffix)
+            )
             or (
                 field == "excluded"
                 and _EXCLUSION_MOVE_GAP.fullmatch(gap)
@@ -792,6 +839,8 @@ def _validated_date_edit(
     if len(matches) != 1:
         return None
     existing = matches[0]
+    if not _ordinal_members_valid(text, old, new, before, existing):
+        return None
     if new.month is not None and new.month != existing.month:
         return None
     if new.year is not None and new.year != existing.year:
@@ -803,7 +852,7 @@ def _validated_date_edit(
     if shifted and replacement != existing + timedelta(days=1):
         return None
     if following and (
-        following.group("verb") in ("미루", "미뤄", "미룰")
+        (following.group("verb") in ("미루", "미뤄", "미룰") or re.fullmatch(_MOVE_LATER, following.group("verb")))
         and replacement <= existing
         or following.group("verb") in ("당기", "당겨", "당길")
         and replacement >= existing

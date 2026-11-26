@@ -30,7 +30,7 @@ const CALENDAR = /(?<!\d)(?:\d{4}\s*(?:년|[-/.])\s*)?\d{1,2}\s*(?:월|[-/.])\s*
 export type QuantityToken = { value: number; start: number; end: number; native: boolean };
 
 export const QUOTE_DURATION_LABEL = /(?:공사|작업|시공)\s*(?:소요\s*(?:일수|기간|일)|일수|기간)|소요\s*(?:일수|기간|일)|기간|일수|공기/.source;
-export const QUOTE_VALIDITY_LABEL = /(?:견적(?:서)?\s*)?(?:유효\s*(?:기간|기한|일자|날짜|일)?|만료\s*(?:일자|날짜|일)?|효력(?:\s*(?:기간|기한|일자|날짜|일))?)/.source;
+export const QUOTE_VALIDITY_LABEL = /(?:(?:견적(?:서)?\s*)?(?:유효\s*(?:기간|기한|일자|날짜|일)?|만료\s*(?:일자|날짜|일)?|효력(?:\s*(?:기간|기한|일자|날짜|일))?)|견적(?:서)?\s*마감\s*(?:기한|일자|날짜|일))/.source;
 // 불완전 수량도 완전한 토큰과 같은 시작 경계에서 검사해요.
 // '제안한 일수'의 '한'이나 단위가 아닌 명사 '일수'는 수량이 아니에요.
 const NATIVE_BOUNDARY = "(?<![가-힣\\d])";
@@ -116,4 +116,52 @@ export function quoteDurationMention(text: string): boolean {
 /** 실제 기간 절의 범위·부분 수량·다른 시간 단위는 정확한 일수로 만들지 않아요. */
 export function durationQuantityRisk(text: string): boolean {
   return classifyDurationQuantity(text).risk;
+}
+
+// A relative quantity is an operation operand, never an absolute assignment.
+// Keep lexical recognition independent of the current value so every caller
+// can fail closed when the baseline is unavailable or ambiguous.
+export type QuantityDelta = Readonly<{
+  direction: 1 | -1;
+  operand?: number;
+  base?: number;
+  explicitCurrent: boolean;
+  priorReference: boolean;
+}>;
+const DELTA_ADD = /^(?:더\s*)?(?:늘(?:려|리)|연장|증(?:가|원)|추가|붙여|더해)/;
+const DELTA_SUB = /^(?:더\s*)?(?:줄(?:여|이)|단축|감(?:소|원)|빼)/;
+const DELTA_FOLLOW = /^\s*(?:만\s*)?(?!(?:으로|로|이라고|라고))/;
+const DELTA_CURRENT = /(?:현재|지금|기존|등록된|입력된|저장된)\s*(?:작업\s*|공사\s*|투입\s*)?(?:일수|소요일|기간|공기|인원|인력|값|수량)(?:에서|에|보다|은|는|이|가|을|를)?/;
+const DELTA_PRIOR = /아까|방금|앞서|이전|직전|지난번|제안|후보/;
+const DELTA_AMBIGUOUS = /(?:약\s*|정도|쯤|가량|내외|이상|이하|최대|최소|부터|까지|또는|혹은|아니면|미정|보류|검토\s*중|조건부|만약|가능하면|하지\s*(?:마|말|않|못))/;
+function crewDeltaTokens(text:string):QuantityToken[] {
+  const pattern=new RegExp(String.raw`(?<![가-힣\d.])([1-9]\d?|${COUNTER_WORD})\s*(?:명(?!\d|분|당|씩|단|짜리|치|함|칭)|인(?=$|[\s,.;!?]|으로|로|까지))`,"g");
+  return [...text.matchAll(pattern)].map(hit=>({value:counterValue(hit[1])??Number(hit[1]),start:hit.index,end:hit.index+hit[0].length,native:/[가-힣]/.test(hit[1])}));
+}
+export function quantityDeltaSyntax(part:string,field:"days"|"crew"):QuantityDelta|undefined {
+  const text=part.normalize("NFKC");
+  const duration=field==="days"?classifyDurationQuantity(text):undefined;
+  const tokens=duration?.tokens??crewDeltaTokens(text);
+  const hits=tokens.flatMap(token=>{
+    const tail=text.slice(token.end);
+    const gap=DELTA_FOLLOW.exec(tail);
+    if(!gap)return [];
+    const predicate=tail.slice(gap[0].length);
+    const add=DELTA_ADD.test(predicate),sub=DELTA_SUB.test(predicate);
+    return add||sub?[{token,direction:(add?1:-1) as 1|-1}]:[];
+  });
+  if(!hits.length)return;
+  // Existing explicit final-total relation is validated separately against
+  // both the actual baseline and declared final total.
+  if(field==="crew"&&tokens.length===2&&/총\s*|합계\s*|모두\s*/.test(text.slice(hits[0].token.end)))return;
+  const {token,direction}=hits[0];
+  const prefix=text.slice(0,token.start);
+  const explicitCurrent=DELTA_CURRENT.test(prefix);
+  const priorReference=DELTA_PRIOR.test(prefix);
+  const baseToken=tokens.length===2&&tokens[0]!==token&&
+    /^\s*(?:에서|보다|에)\s*$/.test(text.slice(tokens[0].end,token.start))?tokens[0]:undefined;
+  const safe=hits.length===1&&(tokens.length===1||!!baseToken)&&
+    !duration?.risk&&!DELTA_AMBIGUOUS.test(text)&&!partialQuantityPrefix(text,token.start)&&
+    Number.isSafeInteger(token.value)&&token.value>0;
+  return {direction,operand:safe?token.value:undefined,base:baseToken?.value,explicitCurrent,priorReference};
 }

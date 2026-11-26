@@ -4,10 +4,12 @@
 """
 
 import re
+from dataclasses import dataclass
 from itertools import pairwise
 
 from app.vendor.assist_intent import (
     CONDITIONAL_LINK,
+    DATE_CHANGE_ACTION,
     EXTRA_LABEL_MARKER,
     EXTRA_REASON_LABEL,
     EXTRA_TITLE_LABEL,
@@ -71,7 +73,7 @@ _ASSIGNMENT = re.compile(
     rf"(?:(?:{_ADNOMINAL_PROPOSAL}|{_OBJECT_FIRST_PROPOSAL})\s*{_PROPOSAL_REQUEST}"
     rf"|(?:{_ASSIGNMENT_VERBS})(?:\s*(?:{_REQUEST_ENDING}))?"
     rf"|(?:{_REQUEST_VERBS})\s*(?:{_REQUEST_ENDING})"
-    r"|(?:바꿔|고쳐|적어|넣어|써|해|정해|잡아|맞춰|골라|올려|만들어)"
+    r"|(?:바꿔|고쳐|적어|넣어|써|해|정해|잡아|맞춰|골라|올려|만들어|남겨|기입해)"
     rf"\s*(?:{_POLITE_REQUEST_END})"
     rf"|(?:초안|후보)\s*(?:(?:{_ASSIGNMENT_VERBS}|{_REQUEST_VERBS})\s*)?"
     rf"(?:{_REQUEST_ENDING})"
@@ -206,6 +208,17 @@ def _mask_quoted_spans(raw: str) -> str:
     return "".join(masked)
 
 
+def _label_marker(raw: str, mark):
+    """필드 표지 뒤의 인용값은 마스킹하기 전 위치로 확인한다."""
+    tail = raw[mark.end :]
+    marker = _TEXT_LABEL_MARKER.match(tail)
+    if marker is not None:
+        return marker
+    if mark.fields in ({"title"}, {"reason"}):
+        return re.match(r"\s+(?=['\"“‘])", tail)
+    return None
+
+
 def _explicit_text_labels(raw: str):
     """실제 대입 표지를 식별한다. 인용값 안의 명사는 표지가 아니다."""
     masked = _mask_quoted_spans(raw)
@@ -216,7 +229,7 @@ def _explicit_text_labels(raw: str):
         # 값 자체의 명사(예: 사유 확인 누락)를 필드로 오인하지 않는다.
         # 구분자 또는 명확한 필드+수량은 독립 대입 표지이다.
         if (
-            _TEXT_LABEL_MARKER.match(tail)
+            _label_marker(raw, mark)
             or (
                 mark.fields == {"amount"}
                 and (
@@ -248,7 +261,7 @@ def _explicit_text_labels(raw: str):
             i + 1 < len(marks)
             and mark.fields == marks[i + 1].fields
             and not masked[mark.end : marks[i + 1].start].strip()
-            and _TEXT_LABEL_MARKER.match(masked[marks[i + 1].end :])
+            and _label_marker(raw, marks[i + 1])
         )
     ]
 
@@ -261,7 +274,7 @@ def mask_bound_text_literals(raw: str) -> str:
     for label in labels:
         if label.fields not in ({"title"}, {"reason"}):
             continue
-        marker = _TEXT_LABEL_MARKER.match(raw[label.end :])
+        marker = _label_marker(raw, label)
         if marker is None:
             continue
         tail = raw[label.end + marker.end() :]
@@ -318,6 +331,14 @@ _NOMINAL_CONTROL = re.compile(
     r"(?:이라고|라고|으로|로)\s*(?:먼저|후보|초안|부탁|요청|정하|등록하|바꾸|변경하)|"
     r"(?:입니다|이에요|예요|이요|했어요|했습니다|합니다|하겠습니다|할게요|"
     r"주세요|줘요|바랍니다|부탁드립니다)$"
+)
+# A dependent predicate is not a standalone field value. Inspect the whole
+# containing clause, including the tail outside a producer's proposed span.
+_DEPENDENT_NOMINAL = re.compile(
+    r"(?:때문에|탓에|덕분에|아서|어서|여서|해서|돼서|라서|"
+    r"워서|와서|겨서|려서|쳐서|켜서|져서|펴서|써서|"
+    r"으므로|므로|으니까|니까|아져|어져|여져|되어|되어서)"
+    r"(?:요)?\s*$"
 )
 _SHARED_VALUE_CASE = re.compile(r"(?:이라고|라고|으로|로)$")
 
@@ -383,7 +404,7 @@ def _explicit_assignment_spans(raw: str, field: str):
     for i, label in enumerate(labels):
         if label.fields != {field}:
             continue
-        marker = _TEXT_LABEL_MARKER.match(masked[label.end :])
+        marker = _label_marker(raw, label)
         if marker is None:
             continue
         begin = label.end + marker.end()
@@ -520,8 +541,9 @@ def mask_explicit_text_value(field: str, value: str, text: str) -> str:
 def text_value_scope_ok(field: str, value: str, text: str) -> bool:
     """실제 다른 필드의 지시/값이나 참조 구절을 새 문자열 값으로 바꾸지 않는다.
 
-    원문에 실제 값이 존재한다는 검증과 함께 사용한다. 명시적 대입
-    표지 없는 기존 제목/사유 명사구와 인용한 실제 값은 보존한다.
+    원문에 실제 값이 존재한다는 검증과 함께 사용한다. 독립적인 명사구와
+    명시 대입은 보존하되 다른 필드의 명시 지시 앞에 있는 소유권 없는
+    설명은 제목/사유 대입으로 간주하지 않는다.
     """
     if field not in ("title", "reason"):
         return True
@@ -530,10 +552,25 @@ def text_value_scope_ok(field: str, value: str, text: str) -> bool:
     if not selected:
         return False
     labels = _explicit_text_labels(raw)
-    scopes = retention_scopes("extra", _mask_quoted_spans(raw))
+    masked = _mask_quoted_spans(raw)
+    scopes = retention_scopes("extra", masked)
     spans = tuple(_explicit_assignment_spans(raw, field))
+    # 명시적으로 소유된 값 전체가 다른 필드의 값으로 재사용되는 것을
+    # 막는다. 정확한 인용 구간은 주변의 이름과 술어에서 분리한다.
+    other_spans = tuple(
+        span
+        for other in ("title", "reason")
+        if other != field
+        for span in _explicit_assignment_spans(raw, other)
+    )
     for occurrence in re.finditer(re.escape(selected), raw):
         a, b = occurrence.span()
+        exact_owner = any(start == a and end == b for _, start, end, _ in spans)
+        if not exact_owner and any(
+            start >= 0 and a < end and start < b or a <= left < b
+            for left, start, end, _ in other_spans
+        ):
+            continue
         containing = [
             (start, end) for left, start, end, right in spans if left <= a < right or a < left < b
         ]
@@ -555,6 +592,58 @@ def text_value_scope_ok(field: str, value: str, text: str) -> bool:
         owner = preceding[-1].fields if preceding else frozenset()
         if owner and field not in owner:
             continue
+        if (
+            not owner
+            and not containing
+            and not quoted
+            and labels
+            and selected.endswith(("어요", "아요", "습니다", "네요", "군요", "거든요"))
+        ):
+            continue
+        if not owner and not containing and not quoted:
+            left = max((m.end() for m in _VALUE_CLAUSE_BREAK.finditer(masked, 0, a)), default=0)
+            right = _VALUE_CLAUSE_BREAK.search(masked, b)
+            clause = masked[left : right.start() if right else len(raw)].strip()
+            # A complete, standalone reason shorthand is already supported
+            # by the form. A fragment of a spoken/background sentence is
+            # not that shorthand, nor is a dependent clause of another field.
+            standalone_reason = (
+                field == "reason"
+                and not labels
+                and selected == raw.strip()
+                and not selected.endswith("요")
+            )
+            if _DEPENDENT_NOMINAL.search(clause) and not standalone_reason:
+                continue
+        # A later named operation cannot lend its predicate to an unowned
+        # background phrase. A postposed own label is a separate witness;
+        # do not confuse it with a different field's assignment. This is a
+        # scope rule, not a list of particular causal connective endings.
+        following = next((label for label in labels if label.start >= b), None)
+        if not owner and not containing and following is not None and field not in following.fields:
+            # An entire standalone nominal sentence is existing shorthand,
+            # unlike a fragment of a description or a dependent antecedent.
+            left = max((m.end() for m in _SENTENCE.finditer(masked, 0, a)), default=0)
+            # A leading bare title is an existing form shorthand when it is
+            # a complete list item before another owned field. A bare reason
+            # is not inferred from a comma-delimited explanatory fragment.
+            separator = _VALUE_CLAUSE_BREAK if field == "title" else _SENTENCE
+            boundary = separator.search(masked, b, following.start)
+            prefix = raw[left:a].strip()
+            suffix = raw[b : boundary.start()].strip() if boundary else ""
+            bounded = (not prefix and not suffix) or (quoted and (prefix, suffix) in _QUOTE_PAIRS)
+            independent = (
+                boundary is not None
+                and bounded
+                and (
+                    quoted
+                    or not _NOMINAL_CONTROL.search(selected)
+                    and not _DEPENDENT_NOMINAL.search(selected)
+                    and not selected.endswith(("습니다", "어요", "아요", "네요", "군요", "거든요"))
+                )
+            )
+            if not independent:
+                continue
         if not quoted and any(
             a <= label.start < b
             and (
@@ -674,6 +763,36 @@ _CHECK_REQUEST = re.compile(
     r"(?:확인|검토)\s*(?:부탁(?:합니다|드립니다|드려요|해요)|"
     r"해\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요|주실\s*수\s*있을까요))"
 )
+
+# A candidate request is an operation on a proposal, not a hypothetical
+# instruction to execute a change. Only the completed, adjacent proposal
+# object may consume its own "경우의" and polite interrogative ending.
+_PREVIEW_REQUEST = re.compile(
+    rf"{_PROPOSAL_OBJECT}\s*(?:(?:먼저|우선|한번|한\s*번)\s*)?"
+    rf"(?:보여|만들어|작성해|제시해)\s*(?:{_POLITE_REQUEST_END})"
+    r"\s*[?？.!。]?\s*$"
+)
+_PREVIEW_CONTENT = re.compile(
+    rf"(?:(?:{DATE_CHANGE_ACTION}|확정|설정|선택|정하|정할)"
+    r"(?:하는|할|는|을|ㄹ)?\s*(?P<nominal_case>경우의\s*)?)$"
+)
+
+
+def proposal_risk_text(clause: str) -> str | None:
+    """Prove a complete proposal object and preserve outside risk spans."""
+    request = _PREVIEW_REQUEST.search(clause)
+    if request is None:
+        return None
+    content = _PREVIEW_CONTENT.search(clause[: request.start()].rstrip())
+    if content is None:
+        return None
+    checked = clause[: request.start()] + " " * (len(clause) - request.start())
+    if content["nominal_case"]:
+        a, b = content.span("nominal_case")
+        checked = checked[:a] + " " * (b - a) + checked[b:]
+    return checked
+
+
 # 직접적인 대입 금지는 문의와 마찬가지로 확정 후보가 될 수 없다.
 # '9일은 변경하지 말고, 16일 대신 23일로 ...'처럼 보호할 날짜를
 # 명시한 연결절은 기존 교체 관계 검증에서 따로 판단한다.
@@ -783,7 +902,7 @@ def _field_clauses(form: str, sentence: str) -> list[tuple[str, frozenset[str]]]
                 and not (
                     form == "period"
                     and mark.fields == {"excluded"}
-                    and date_list_prefix(prefix, allow_condition=True)
+                    and date_list_prefix(prefix, allow_condition=True, allow_context_lead=True)
                 )
             ):
                 clauses.append((prefix, frozenset()))
@@ -843,7 +962,60 @@ def _sentences(raw: str) -> list[str]:
 
 
 def _date_clause_targets(form: str, clause: str, targets: frozenset[str]) -> frozenset[str]:
+    # A generic 견적 noun is not an amount assignment. A calendar value
+    # immediately bound to the validity predicate has its own field owner.
+    if (
+        form == "quote"
+        and targets in (frozenset(), frozenset(("amount",)))
+        and re.search(rf"{_CALENDAR_DATE.pattern}\s*까지\s*유효(?:하|할|한|하게|하도록)", clause)
+        and not _OTHER_VALUE["quote"].search(clause)
+        and all(
+            mention.fields == {"amount"}
+            and clause[mention.start : mention.end] in ("견적", "견적서")
+            for mention in field_mentions(form, clause)
+        )
+    ):
+        return frozenset(("valid",))
     return targets or _default_date_fields(form, clause) or _other_value_fields(form, clause)
+
+
+@dataclass(frozen=True)
+class DateClauseFact:
+    text: str
+    value_fields: frozenset[str]
+    risk_fields: frozenset[str]
+
+
+def date_clause_facts(form: str, text: str) -> tuple[DateClauseFact, ...]:
+    """One clause traversal; value ownership and inherited risk stay distinct."""
+    if form not in _DATE_FIELDS:
+        return ()
+    result = []
+    last_targets: frozenset[str] = frozenset()
+    for sentence in _sentences(text):
+        dependent = False
+        for clause, targets in _field_clauses(form, sentence):
+            if not clause.strip():
+                continue
+            values = _date_clause_targets(form, clause, targets)
+            risk_targets = values or last_targets
+            # Only a complete proposal object consumes its internal nominal
+            # condition; an external condition remains visible.
+            preview = proposal_risk_text(clause.strip())
+            dependent = dependent or bool(
+                _CONDITION.search(preview if preview is not None else clause)
+            )
+            risk = (
+                risk_targets & _DATE_FIELDS[form]
+                if dependent or clause_is_inquiry(clause.strip())
+                else frozenset()
+            )
+            result.append(DateClauseFact(clause, values, risk))
+            if risk_targets:
+                last_targets = risk_targets
+            if completed_inquiry(clause):
+                dependent = False
+    return tuple(result)
 
 
 def date_value_clauses(form: str, text: str) -> tuple[tuple[str, frozenset[str]], ...]:
@@ -852,32 +1024,36 @@ def date_value_clauses(form: str, text: str) -> tuple[tuple[str, frozenset[str]]
     단순 이어지는 문장에서 이전 대상을 추정해 값의 근거로 쓰지 않는다.
     날짜 정규화, 범위 경계와 검증된 교체 관계는 호출자가 판단한다.
     """
-    if form not in _DATE_FIELDS:
-        return ()
-    return tuple(
-        (clause, _date_clause_targets(form, clause, targets))
-        for sentence in _sentences(text)
-        for clause, targets in _field_clauses(form, sentence)
-        if clause.strip()
-    )
+    return tuple((part.text, part.value_fields) for part in date_clause_facts(form, text))
 
 
 def clause_is_inquiry(clause: str) -> bool:
     # '변경해 주실 수 있을까요?'는 실행을 요청하는 표현이다.
     # 그 앞에 별도 가능 여부 문의가 있으면 그것은 그대로 검증한다.
+    preview = proposal_risk_text(clause)
+    checked = preview if preview is not None else clause
     if (
         _DENIED_ASSIGNMENT.search(clause)
         or _NEGATIVE_DATE_REQUEST.search(clause)
         or _WITHDRAW_REQUEST.search(clause)
-        or _CONDITION.search(clause)
+        or _CONDITION.search(checked)
     ):
         return True
-    polite = POLITE_EXECUTION.search(clause)
-    risk_text = clause[: polite.start()] if polite else clause
+    polite = POLITE_EXECUTION.search(checked)
+    risk_text = checked[: polite.start()] if polite else checked
     # '안 늘려 주시겠어요?'처럼 정중한 종결 앞의 부정은 확정으로 바꾸지 않는다.
     if polite and re.search(r"(?<![가-힣])(?:안|못)\s*$", risk_text):
         return True
-    if _INQUIRY.search(risk_text) or re.search(r"[?？]", risk_text):
+    # "일정도" is 일정 + 도, not the approximate quantity suffix 정도.
+    # The distinction applies only to a complete schedule noun and never
+    # removes approximation next to an actual number or duration.
+    schedule_particle = {
+        match.end() - 2 for match in re.finditer(r"(?<![가-힣\d])일정도(?=$|[\s,.!?？])", risk_text)
+    }
+    if any(
+        not (match.group() == "정도" and match.start() in schedule_particle)
+        for match in _INQUIRY.finditer(risk_text)
+    ) or re.search(r"[?？]", risk_text):
         return True
     return bool(_CHECK_REQUEST.search(clause) and not _AFFIRMATIVE.search(clause))
 
@@ -890,24 +1066,7 @@ def date_set_is_inquiry(form: str, field: str, text: str, evidence: str = "") ->
     """
     if field not in _DATE_FIELDS.get(form, ()):
         return False
-    raw = text or evidence
-    last_targets: frozenset[str] = frozenset()
-    for sentence in _sentences(raw):
-        dependent = False
-        for clause, targets in _field_clauses(form, sentence):
-            if not clause.strip():
-                continue
-            targets = _date_clause_targets(form, clause, targets) or last_targets
-            # 앞 절의 조건은 이어지는 요청에도 적용된다. 물음표나 독립
-            # 문장이 끝나면 다음 문장에 조건을 전파하지 않는다.
-            dependent = dependent or bool(_CONDITION.search(clause))
-            if field in targets and (dependent or clause_is_inquiry(clause.strip())):
-                return True
-            if targets:
-                last_targets = targets
-            if completed_inquiry(clause):
-                dependent = False
-    return False
+    return any(field in part.risk_fields for part in date_clause_facts(form, text or evidence))
 
 
 _TEXT_UNDECIDED_VALUE = re.compile(

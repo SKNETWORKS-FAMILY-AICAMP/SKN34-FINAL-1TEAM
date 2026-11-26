@@ -585,12 +585,9 @@ def _link(gap: str) -> str | None:
 
 
 def _list_count_value(match: re.Match[str]) -> int | None:
-    raw = match["days"] or match["count"]
-    return (
-        int(raw)
-        if raw.isdecimal()
-        else _native_count(raw, _DAY_WORDS if match["days"] else _NATIVE_CREW)
-    )
+    days = match.groupdict().get("days")
+    raw = days or match["count"]
+    return int(raw) if raw.isdecimal() else _native_count(raw, _DAY_WORDS if days else _NATIVE_CREW)
 
 
 def _counted_whitespace_lists(evidence: str, tokens: list[_Token], links: list[str | None]) -> None:
@@ -781,6 +778,12 @@ def date_mentions(
 
 _COUNTED_DATE_END = re.compile(r"(?<!\d)\d{1,3}\s*일(?:\s*까지)?")
 _DECLARED_DATE_COUNT = re.compile(r"(?<![가-힣\d])" + _LIST_COUNT_BODY)
+# 명시 목록을 목적어로 지칭하는 개수(세 날짜를 등)도 개수 근거다.
+# 날짜 연결 자체를 판단하는 _LIST_COUNT에는 영향을 주지 않는다.
+_DECLARED_DATE_OBJECT_COUNT = re.compile(
+    rf"(?<![가-힣\d])(?P<count>{_COUNTER_WORDS}|[1-9]\d*)\s*"
+    r"(?:개\s*의?\s*)?(?:날짜|일자|날)(?=[을를은는이가](?:\s|$))"
+)
 _DECLARED_COUNTER_COUNT = re.compile(
     rf"(?<![가-힣\d])(?:(?:총|합계)\s*(?P<days>[1-9]\d*)\s*일"
     rf"|(?P<count>{_COUNTER_WORDS}|[1-9]\d*)\s*개)"
@@ -792,7 +795,11 @@ def date_list_declared_counts(evidence: str) -> list[tuple[int, int, int]]:
     """명시 날짜 개수 토큰만 반환한다. 호출자가 실제 목록 필드의 범위를 제공한다."""
     result = []
     for match in sorted(
-        [*_DECLARED_DATE_COUNT.finditer(evidence), *_DECLARED_COUNTER_COUNT.finditer(evidence)],
+        [
+            *_DECLARED_DATE_COUNT.finditer(evidence),
+            *_DECLARED_DATE_OBJECT_COUNT.finditer(evidence),
+            *_DECLARED_COUNTER_COUNT.finditer(evidence),
+        ],
         key=lambda match: (match.start(), -match.end()),
     ):
         a, b = match.span()
@@ -800,7 +807,7 @@ def date_list_declared_counts(evidence: str) -> list[tuple[int, int, int]]:
             a < stop and b > start for start, stop, _ in result
         ):
             continue
-        raw = match["days"] or match["count"]
+        raw = match.groupdict().get("days") or match["count"]
         count = int(raw) if raw.isdecimal() else _list_count_value(match)
         if count is not None:
             result.append((a, b, count))

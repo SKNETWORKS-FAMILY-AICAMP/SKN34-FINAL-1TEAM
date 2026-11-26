@@ -7,8 +7,10 @@ from app.vendor.assist_schemas import (
     ModelInterpretation,
 )
 from app.vendor.assist_validation import (
+    OperationProof,
+    analyze_request,
+    bind_request_analysis,
     merge_candidates,
-    resolve_withdrawals,
     review_fields,
     review_previous,
     reviewed_date_edit,
@@ -44,8 +46,12 @@ async def interpret(
             final=[],
             decisions={},
         )
-    previous, previous_rejected = review_previous(data, context)
-    withdrawals = resolve_withdrawals(data, previous, context)
+    analysis = analyze_request(data, context)
+    previous, previous_rejected = review_previous(data, context, analysis=analysis)
+    analysis = bind_request_analysis(data, context, analysis, previous, previous_rejected)
+    withdrawals = analysis.withdrawals
+    rule_proofs: dict[str, OperationProof] = {}
+    model_proofs: dict[str, OperationProof] = {}
     if trace is not None and previous is not None:
         trace["previous_verified"] = previous.model_dump(mode="json")
     if trace is not None:
@@ -55,7 +61,14 @@ async def interpret(
     # 후보 조합의 업무 검증은 review_fields/merge_candidates에 맡기고
     # 원래 요청의 current 및 거부된 이전 후보 정보는 바꾸지 않는다.
     rule, warnings = review_fields(
-        data.rule_fields, "rule", data, context, previous=previous, withdrawals=withdrawals
+        data.rule_fields,
+        "rule",
+        data,
+        context,
+        previous=previous,
+        withdrawals=withdrawals,
+        analysis=analysis,
+        operation_proofs=rule_proofs,
     )
     if trace is not None:
         trace["rule_reviewed"] = [item.model_dump(mode="json") for item in rule.values()]
@@ -74,7 +87,14 @@ async def interpret(
             if trace is not None:
                 trace["model_raw"] = [item.model_dump(mode="json") for item in result.fields]
             model, model_warnings = review_fields(
-                result.fields, "llm", data, context, previous=previous, withdrawals=withdrawals
+                result.fields,
+                "llm",
+                data,
+                context,
+                previous=previous,
+                withdrawals=withdrawals,
+                analysis=analysis,
+                operation_proofs=model_proofs,
             )
             rejected_relations = {
                 item.field
@@ -86,6 +106,7 @@ async def interpret(
             warnings.extend(model_warnings)
             source = "llm"
         except Exception:  # noqa: BLE001 - 외부 오류는 같은 규칙 경로로 복구
+            model_proofs.clear()
             warnings.append(FALLBACK_WARNING)
     if trace is not None and model is not None:
         trace["model_reviewed"] = [item.model_dump(mode="json") for item in model.values()]
@@ -109,6 +130,9 @@ async def interpret(
         merged_out=merged_out if trace is not None else None,
         previous_rejected=previous_rejected,
         withdrawals=withdrawals,
+        analysis=analysis,
+        rule_proofs=rule_proofs,
+        model_proofs=model_proofs,
     )
     if any(item.reason_code == "combined_constraint" for item in fields):
         warnings.append("후보를 함께 적용하면 업무 조건이 맞지 않아 확인이 필요해요.")

@@ -68,7 +68,11 @@ EXTRA_IMPLICIT_TITLE = (
     r"(?:변경|수정|정정|제안|후보|선택|요청)(?:\s*[은는이가을를])?\s*(?:취소|철회|없(?:던|었던))))"
 )
 EXTRA_TITLE_LABEL = rf"(?:{EXTRA_EXPLICIT_TITLE}|{EXTRA_IMPLICIT_TITLE})"
-EXTRA_REASON_LABEL = r"(?:(?:추가금|추가\s*(?:비용|작업|공사|시공)?)\s*)?(?:사유|이유)"
+EXTRA_REASON_LABEL = (
+    r"(?:(?:추가금|추가\s*(?:비용|작업|공사|시공)?)(?:[을를이가])?\s*)?"
+    r"(?:(?:(?:하게|발생하게|필요하게)\s*된\s*)?(?:사유|이유|경위|원인)|"
+    r"왜\s+[^,;.!?！？。\n]{1,48}는지\s*(?:쓰는|적는|기록하는|입력하는))"
+)
 # 공백 뒤에 시작하는 일반 명사(항목 이름표 등)의 첫 음절을
 # 조사로 읽지 않는다. 붙여 쓰는 조사와 독립 조사/구분자를 구분한다.
 EXTRA_LABEL_MARKER = (
@@ -151,8 +155,8 @@ def _subjects(form: FormName) -> dict[str, str]:
         ),
         "amount": r"(?:견적(?:서)?|추가\s*(?:공사|작업|시공)?|공사|작업|시공)\s*(?:금액|총액|비용|금)|견적액|추가금|금액|가격|비용|총액|공사비|견적",
         "vat": rf"(?:별도\s*)?(?i:{VAT_LABEL})|면세\s*(?:조건|방식|구분)",
-        "crew": r"(?:투입(?:할)?|작업)\s*인원(?:\s*수)?|작업자(?:\s*수)?|인원(?:\s*수)?|인력",
-        "days": r"(?:공사|작업|시공)\s*(?:날짜|일자|일정|일수|기간|일|할\s*날)|날짜|일정|일수|기간|공기",
+        "crew": r"(?:투입(?:할)?|작업|현장)\s*인원(?:\s*수)?|작업자(?:\s*수)?|인원(?:\s*수)?|인력",
+        "days": r"(?:공사|작업|시공|방문)\s*(?:날짜|일자|일정|일수|기간|일|할\s*날)|날짜|일정|일수|기간|공기",
         "start": (
             rf"{visit}(?:접수\s*)?{period_qualifier}"
             r"(?:시작(?:\s*(?:날짜|일자|일)|하는\s*날)?|"
@@ -165,7 +169,7 @@ def _subjects(form: FormName) -> dict[str, str]:
             # 그룹 전체를 가리키는 일반 참조로 분리하지 않는다.
             r"(?:(?:(?:실측|방문)\s*)?(?:제외\s*(?:날짜|일자|일|할\s*날)|불가\s*(?:날짜|일자|일))|"
             r"휴무(?:\s*(?:날짜|일자|일))?|쉬는\s*날|빼는\s*날|"
-            r"안\s*되는\s*날|못\s*가는\s*날|작업\s*안\s*하는\s*날)"
+            r"안\s*되는\s*날|못\s*가는\s*날|작업\s*(?:안\s*하는|하지\s*않는)\s*날)"
             r"(?:\s*목록)?|"
             rf"{EXCLUDED_EDIT_REFERENCE}"
         ),
@@ -174,8 +178,21 @@ def _subjects(form: FormName) -> dict[str, str]:
     }
     if form == "quote":
         words["days"] = (
-            r"(?:공사|작업|시공)\s*(?:일수|기간|소요일(?:수)?)|기간|일수|공기|소요일(?:수)?|공사|시공"
+            r"(?:견적(?:서)?\s*)?(?:공사|작업|시공)\s*(?:일수|기간|소요일(?:수)?)|기간|일수|공기|소요일(?:수)?|공사|시공"
         )
+        words["valid"] += r"|견적(?:서)?\s*마감\s*(?:날짜|일자|일|기한)"
+        words["amount"] = words["amount"].removesuffix("|견적") + (
+            r"|견적(?!\s*(?:공사|작업|시공)\s*(?:일수|기간|소요일)|\s*마감)"
+        )
+    if form == "extra":
+        # 긴 설명형 사유 표지가 생략형 공사명보다 먼저 소유권을 얻는다.
+        # 입력란 수식어는 값이 아니라 필드명에 속한다.
+        suffix = (
+            r"(?:\s*(?:입력\s*란|란|칸|항목)(?=\s*(?:[:=]|에는|[은는을를이가만도에](?:\s|$))))?"
+        )
+        words["reason"] = rf"(?:{EXTRA_REASON_LABEL}){suffix}"
+        words["title"] = rf"(?:{EXTRA_TITLE_LABEL}){suffix}"
+        words = {"reason": words.pop("reason"), **words}
     active = {name: pattern for name, pattern in words.items() if name in FORM_FIELDS[form]}
     if form == "period":
         active["period"] = (
@@ -328,7 +345,7 @@ _LIST_DATE_ITEM = (
     r"\d{1,3}\s*일|오늘|내일|모레)"
 )
 _LIST_DATE_SEPARATOR = r"(?:[,，、·]|하고|이랑|랑|과|와|및|그리고)"
-_LIST_DATE_MEMBER = rf"(?:{_LIST_DATE_ITEM})\s*[은는이가을를도]?"
+_LIST_DATE_MEMBER = rf"(?:{_LIST_DATE_ITEM})\s*[은는이가을를도만]?"
 _LIST_SHORT_MEMBER = r"\d{1,2}\s*[은는이가을를도]?"
 _LIST_ANY_MEMBER = rf"(?:{_LIST_DATE_MEMBER}|{_LIST_SHORT_MEMBER})"
 _LIST_DATE_PREFIX = re.compile(
@@ -371,7 +388,11 @@ def _exclusion_predicate_starts(raw: str) -> Iterator[int]:
 
 
 def date_list_prefix(
-    text: str, *, allow_condition: bool = False, allow_short_fragment: bool = False
+    text: str,
+    *,
+    allow_condition: bool = False,
+    allow_short_fragment: bool = False,
+    allow_context_lead: bool = False,
 ) -> bool:
     if (
         allow_condition
@@ -380,6 +401,20 @@ def date_list_prefix(
     ):
         # Ownership is not approval. Keep the original conditional span.
         text = text[lead.end() :]
+    if allow_context_lead and not _LIST_DATE_PREFIX.fullmatch(text):
+        # 앞의 설명은 날짜 목록의 값이 아니다. 다른 명시 필드나
+        # 앞선 날짜·완결 술어가 없는 배경 뒤의 연속 목록만 귀속한다.
+        first = re.search(_LIST_DATE_ITEM, text)
+        if first:
+            lead = text[: first.start()]
+            if (
+                lead.strip()
+                and not field_mentions("period", lead)
+                and not re.search(
+                    r"[,;.!?！？。\n]|\d|변경|수정|정정|등록|확정|설정|취소|철회", lead
+                )
+            ):
+                text = text[first.start() :]
     if not _LIST_DATE_PREFIX.fullmatch(text):
         return False
     # Bare integers are only meaningful with a month anchor in the
@@ -410,10 +445,44 @@ def postposed_exclusion_list(text: str) -> bool:
     marks = field_mentions("period", text)
     if marks and any(mark.fields != {"excluded"} for mark in marks):
         return False
-    if marks and date_list_prefix(text[: marks[0].start], allow_condition=True):
+    if marks and date_list_prefix(
+        text[: marks[0].start], allow_condition=True, allow_context_lead=True
+    ):
         return True
+    if marks:
+        # 날짜 열거 뒤 설명을 붙이고 개수로 다시 지칭한 경우도
+        # 동일한 제외 목록에 귀속한다. 개수의 진위와 실행 조건은
+        # 정규화 및 검증 단계가 확인한다.
+        from app.vendor.assist_normalize import date_list_declared_counts
+
+        before = text[: marks[0].start]
+        lead = _LIST_DATE_PREFIX.match(before)
+        counts = date_list_declared_counts(before)
+        if (
+            lead
+            and date_list_prefix(lead.group())
+            and re.search(_LIST_DATE_SEPARATOR, lead.group())
+        ):
+            if (
+                len(counts) == 1
+                and lead.end() <= counts[0][0]
+                and re.fullmatch(r"\s*[을를은는이가]?\s*", before[counts[0][1] :])
+                and not re.search(r"\d|[,;.!?！？。\n]", before[lead.end() : counts[0][0]])
+            ):
+                return True
+            # 개수 없이 이유를 연결해도, 실제 열거 뒤 단일 인과절은
+            # 앞의 쉼표 멤버를 다른 필드의 날짜로 바꾸지 않는다.
+            tail = before[lead.end() :]
+            if (
+                not counts
+                and not re.search(r"\d|[,;.!?！？。\n]", tail)
+                and re.search(
+                    r"(?:으니|니까|라서|여서|어서|아서|해서|이므로|기\s*때문에)\s*$", tail
+                )
+            ):
+                return True
     return any(
-        date_list_prefix(text[:start], allow_condition=True)
+        date_list_prefix(text[:start], allow_condition=True, allow_context_lead=True)
         for start in _exclusion_predicate_starts(text)
     )
 
@@ -445,7 +514,7 @@ def first_history_reference(text: str | None) -> bool:
 
 _CURRENT = (
     r"(?:현재|지금)\s*(?:(?:폼|화면|입력란)(?:에|에서)?\s*)?"
-    r"(?:(?:있는|있던|입력한|입력된|적은|적힌)\s*)?"
+    r"(?:(?:있는|있던|입력한|입력된|등록한|등록된|적은|적힌)\s*)?"
 )
 _CURRENT_ELLIPSIS = (
     r"(?:현재|지금)\s*(?:폼\s*|화면\s*)?(?:입력\s*값|입력한\s*값|입력된\s*값|값)(?:으로|로)"
@@ -498,7 +567,7 @@ PLACEMENT_KEEP_DIRECTIVE = (
     r"(?:두(?:고요?|세요|겠습니다|죠)|둘게요|둡니다|(?:두어|둬)\s*(?:주세요|줘요|주십시오|요))"
 )
 _DIRECTIVE = (
-    r"(?:유지|사용|반영|적용|진행)(?:\s*(?:해\s*(?:주세요|줘요|주십시오|요)|"
+    r"(?:유지|고정|사용|반영|적용|진행)(?:\s*(?:해\s*(?:주세요|줘요|주십시오|요)|"
     r"하고요?|할게요|하겠습니다|합니다|해요|바랍니다|부탁(?:합니다|드립니다|해요|드려요)?))?"
     r"|(?:해|잡아|맞춰|써)\s*(?:주세요|줘요|주십시오)"
     r"|(?:되)?돌려\s*(?:주세요|줘요|주십시오)|(?:되)?돌리(?:고요?|겠습니다|겠어요|ㅂ니다)|(?:되)?돌릴게요"
@@ -510,7 +579,10 @@ _DIRECTIVE = (
 # 단독 명사/과거형은 확정으로 바꾸지 않고, 같은 대상/출처/조건 검증을
 # 거치는 scope에만 결합한다.
 REFERENCE_IDENTITY = r"(?:그대로|대로|이대로)\s*(?:입니다|이에요|예요|이죠|죠)"
-_CURRENT_PROTECTION = r"(?:손대|건드리)지\s*않(?:을게요|겠습니다)"
+_CURRENT_PROTECTION = (
+    r"(?:손대|건드리)지\s*(?:않(?:을게요|겠습니다)|마시고|마세요|"
+    r"말아\s*(?:주세요|줘요|주십시오))"
+)
 # 철회 관용구는 대입·이력 검증에서도 같은 의미로 검사한다.
 WITHDRAW_IDIOM = r"없(?:던|었던)\s*(?:걸로|일로|것으로)"
 WITHDRAW_IDIOM_REQUEST = (
@@ -957,6 +1029,7 @@ def intent_clauses(form: FormName, raw: str) -> tuple[IntentClause, ...]:
                         raw[owned[first - 1].start : owned[first - 1].end].rstrip().rstrip(",，"),
                         allow_condition=True,
                         allow_short_fragment=True,
+                        allow_context_lead=True,
                     )
                 ):
                     first -= 1

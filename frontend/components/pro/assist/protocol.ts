@@ -120,6 +120,16 @@ function validDerivedDates(value: unknown, max: number): value is string[] {
 function derivedListMetadata(
   form: AssistForm, field: string, raw: Record<string, unknown>, opts?: RuleOptions,
 ): Pick<FieldIntent, "intent_kind" | "value_source" | "correction"> {
+  // A computed scalar has its own baseline/operation proof. Preserve only
+  // intact metadata; do not preserve a scalar correction as a list relation.
+  if ((form === "quote" && field === "days" || form === "dates" && field === "crew") &&
+    raw.action === "set" && raw.status === "valid" && raw.value_source === "derived" && raw.correction == null &&
+    (raw.intent_kind === "explicit_change" || raw.intent_kind === "retain_previous") &&
+    typeof raw.value === "number" && Number.isSafeInteger(raw.value) && raw.value > 0 &&
+    typeof raw.evidence === "string" && !!raw.evidence.trim() && raw.evidence.length <= 1000 &&
+    (!opts || validSetValue(form,field,raw.value,opts))) {
+    return {intent_kind:raw.intent_kind,value_source:"derived"};
+  }
   const max = form === "dates" ? 120 : 31;
   if (!((form === "dates" && field === "days") || (form === "period" && field === "excluded")) ||
     raw.action !== "set" || raw.status !== "valid" || raw.value_source !== "derived" ||
@@ -294,4 +304,97 @@ export function validCombinedPeriod(current: AssistCurrent, selected: AssistCurr
   if (excluded.length && !validSetValue("period", "excluded", excluded, opts)) return false;
   if (excluded.some((date) => date <= start! || date >= end!)) return false;
   return true;
+}
+
+/** Raw wire identity is necessary but never a semantic authorization. */
+export type WireOperation =
+  | { kind: "explicit_change"; valueSource: "utterance" | "derived" }
+  | { kind: "retain_current"; valueSource: "current" }
+  | { kind: "retain_previous"; valueSource: "previous" | "derived" }
+  | { kind: "no_mention"; valueSource: null };
+
+export function normalizedWireEvidence(text: string): string {
+  return text.normalize("NFKC").replace(/\s+/g, "");
+}
+
+export function uniqueWireField(raw: unknown, field: string): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  const fields = (raw as Record<string, unknown>).fields;
+  if (!Array.isArray(fields)) return;
+  let found: Record<string, unknown> | undefined;
+  for (const item of fields) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || item.field !== field) continue;
+    if (found) return;
+    found = item;
+  }
+  return found;
+}
+
+function matchesWireRelation(raw: unknown, expected: FieldIntent["correction"], text: string): boolean {
+  if (raw == null || expected == null) return raw == null && expected == null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return false;
+  const relation = raw as Record<string, unknown>;
+  if (relation.kind !== "replace" || expected.kind !== "replace" ||
+      !isValue(relation.rejected_value) || !sameValue(relation.rejected_value, expected.rejected_value)) return false;
+  const original = normalizedWireEvidence(text);
+  return (["rejected_evidence", "accepted_evidence"] as const).every(key => {
+    const value = relation[key];
+    return typeof value === "string" && value.length <= 1000 &&
+      !!normalizedWireEvidence(value) && original.includes(normalizedWireEvidence(value)) &&
+      normalizedWireEvidence(value) === normalizedWireEvidence(expected[key]);
+  });
+}
+
+/**
+ * Classify only intact server metadata for one field. The original response
+ * and parsed candidate must agree; normalization cannot repair a bad wire.
+ * Value semantics, field ownership, independent risk and application guards
+ * are handled by the caller. Legacy or unverified metadata stays on the
+ * conservative path. No wire field alone can resolve a real obligation.
+ */
+export function wireOperation(raw: unknown, request: AssistRequest, field: CandidateField): WireOperation | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const envelope = raw as Record<string, unknown>;
+  if (envelope.request_id !== request.request_id || envelope.form !== request.form ||
+      (envelope.source !== "llm" && envelope.source !== "rule") ||
+      !formKeys(request.form).includes(field.field)) return null;
+  const item = uniqueWireField(raw, field.field);
+  if (!item || field.status !== "valid" || item.status !== "valid" ||
+      item.action !== field.action || (item.source !== "llm" && item.source !== "rule") ||
+      item.source !== field.source || !isValue(item.value) || !sameValue(item.value, field.value) ||
+      typeof item.evidence !== "string" || item.evidence.length > 1000 || item.evidence !== field.evidence ||
+      typeof item.origin_request_id !== "string" || !item.origin_request_id ||
+      item.origin_request_id.length > 80 || item.origin_request_id !== field.origin_request_id ||
+      !Array.isArray(item.alternatives) || item.alternatives.length || field.alternatives.length) return null;
+  const evidence = normalizedWireEvidence(item.evidence);
+  const fresh = item.origin_request_id === request.request_id;
+  const actionable = field.action === "set" && field.value !== null ||
+    field.action === "clear" && field.value === null;
+  if (item.intent_kind === "no_mention" && fresh && field.action === "keep" &&
+      field.value === null && !evidence && item.value_source == null && item.correction == null)
+    return { kind: "no_mention", valueSource: null };
+  if (item.intent_kind === "retain_current" && fresh && field.action === "keep" &&
+      field.value === null && evidence && item.value_source === "current" && item.correction == null &&
+      normalizedWireEvidence(request.text).includes(evidence))
+    return { kind: "retain_current", valueSource: "current" };
+  if (item.intent_kind === "explicit_change" && fresh && actionable && evidence &&
+      (item.value_source === "utterance" || item.value_source === "derived" && field.action === "set") &&
+      normalizedWireEvidence(request.text).includes(evidence) &&
+      // Corrections require their separate complete relationship proof.
+      matchesWireRelation(item.correction, field.correction, request.text))
+    return { kind: "explicit_change", valueSource: item.value_source };
+  if (item.intent_kind !== "retain_previous" || fresh || !actionable || !evidence ||
+      (item.value_source !== "previous" && item.value_source !== "derived")) return null;
+  const prior = request.previous_candidate;
+  const old = prior?.fields.find(value => value.field === field.field);
+  if (!prior || !old || old.action !== field.action || !sameValue(old.value, field.value) ||
+      normalizedWireEvidence(old.evidence) !== evidence || !normalizedWireEvidence(prior.text).includes(evidence) ||
+      (prior.origins?.[field.field] ?? prior.request_id) !== item.origin_request_id ||
+      prior.sources?.[field.field] !== item.source ||
+      !Object.prototype.hasOwnProperty.call(prior.baselines ?? {}, field.field) ||
+      !sameValue(prior.baselines?.[field.field] ?? null, request.current[field.field] ?? null) ||
+      (old.value_source === "derived") !== (item.value_source === "derived") ||
+      !matchesWireRelation(item.correction, old.correction, prior.text) ||
+      !matchesWireRelation(item.correction, field.correction, prior.text)) return null;
+  return { kind: "retain_previous", valueSource: item.value_source };
 }

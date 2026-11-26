@@ -1,5 +1,5 @@
 import type { AssistForm } from "./protocol";
-import { COUNTER_WORD, DURATION_WORD, durationTokens, classifyDurationQuantity, QUOTE_DURATION_LABEL, QUOTE_VALIDITY_LABEL, quoteDurationMention } from "./quantity";
+import { COUNTER_WORD, counterValue, DURATION_WORD, durationTokens, classifyDurationQuantity, QUOTE_DURATION_LABEL, QUOTE_VALIDITY_LABEL, quoteDurationMention } from "./quantity";
 
 // 값 추출과 변경 의도를 분리해 규칙·서버 후보에 같은 안전 기준을 적용해요.
 const MONEY = /\d\s*[억천백만원]|\d{6,}|\d{1,3}(?:,\d{3})+|[일이삼사오육칠팔구영공십백천만억조경]+\s*원|[십백천][일이삼사오육칠팔구십백천\s]*만|[삼사육칠팔구]\s*만/;
@@ -11,12 +11,16 @@ const WITHDRAW_IDIOM = /없(?:던|었던)\s*(?:걸로|일로|것으로)/.source;
 const CANCEL = new RegExp("취소|철회|" + WITHDRAW_IDIOM + "|원래대로");
 const PLACEMENT_KEEP = /(?:(?:놔|놓아|남겨|내버려)\s*)?(?:두(?:고요?|세요|겠습니다|죠)|둘게요|둡니다|(?:두어|둬)\s*(?:주세요|줘요|주십시오|요))/.source;
 const KEEP = new RegExp(/그대로|유지|건드리지|손대지|놔두|남겨\s*두|내버려\s*두|두고|두겠|둘게|두세요|둡니다|(?:되)?돌리|(?:되)?돌려|(?:이전|직전|앞서)\s*(?:후보|제안)(?:를|을)?\s*(?:쓰고|써\s*주세요|사용)/.source + "|" + PLACEMENT_KEEP);
+// 인용된 유지 지시를 현재 발화의 유지 술어로 취급하지 않아요.
+export function reportedRetention(part:string):boolean {
+  return KEEP.test(part)&&/(?:다|라|자|냐)고\s*(?:(?:이미|앞서|아까)\s*)?(?:(?:말씀|말|설명|전달|보고|안내|언급|답변|기재|기록)\s*(?:했|하|해|한|드렸|드리|드려|받)|들었|들으|들어|했(?:습니다|어요|죠|는데|지만))/.test(part);
+}
 const CURRENT = /(?:현재|지금)\s*(?:폼|화면|달력|값|입력|(?:있는|적힌|적은|등록된|등록한)\s*값|금액|인원|일정|기간|부가세|제목|항목|사유|이유|날짜|작업일|제외일)|직접\s*(?:입력|수정|변경|고쳤|고친)/;
 const CURRENT_HANDS_OFF = /(?:손대지|건드리지)\s*않(?:을게요|겠습니다|아요|습니다)[.!。]?$/;
 const PRIOR = /이전|앞(?:서|에(?:서)?)|아까|방금|직전|지난번|전에|제안|변경안/;
 const BOUNDS = /[~∼〜～–—－−]|(?:\d|만|원|명|인)\s*[-/]\s*(?:\d|[한두세네])|최대|최소|미만|초과|이상|이하|이내|한도|정도|쯤|내외|안팎|가량|대략|약\s|부터[^,.!?]{0,30}까지/;
 const MOVE = /옮겨|옮기|옮길|미뤄|미루|당겨|당기|대신|말고|→|->|(?:일|날)\s*(?:만|을|를)?\s*에서/;
-const EXCLUDED = /제외\s*(?:날짜|일자|일)?|(?:방문|실측)?\s*불가\s*(?:날짜|일자|일)|휴무(?:일자|일)?|쉬는\s*(?:날|걸|것)|빼는\s*날|작업\s*(?:불가|안\s*하는\s*날)|안\s*되는\s*날|(?:제외하|빼|쉬)기로\s*(?:한|정한|했던)(?=\s*(?:\d{1,2}\s*월\s*)?\d{1,2}\s*일)/;
+const EXCLUDED = /제외\s*(?:날짜|일자|일)?|(?:방문|실측)?\s*불가\s*(?:날짜|일자|일)|휴무(?:일자|일)?|쉬는\s*(?:날|걸|것)|빼는\s*날|작업\s*(?:불가|안\s*하는\s*날|하지\s*않는\s*날)|안\s*되는\s*날|(?:제외하|빼|쉬)기로\s*(?:한|정한|했던)(?=\s*(?:\d{1,2}\s*월\s*)?\d{1,2}\s*일)/;
 const UNAVAILABLE = /못\s*(?:가|갑|갈|하|합|받)|받지\s*못|안\s*(?:돼|되|됩|될|받)|불가|어려|힘들|곤란|쉽니다|쉬어요|빼\s*(?:줘|주|주세요)|빼고/;
 const PERIOD_BOUNDARY_PREFIX = /(?:(?:실측|방문)(?:\s*접수)?\s*)?(?:가능\s*기간(?:\s*의)?\s*|가능한\s*)?/.source;
 const START = new RegExp(PERIOD_BOUNDARY_PREFIX + /(?:시작\s*(?:날짜|일자|일)?|첫\s*(?:작업일|공사일|날|(?:방문|실측)\s*(?:가능\s*)?(?:일자|날짜|일|날)))|착공일?/.source);
@@ -29,6 +33,18 @@ const POLITE_EXECUTION = new RegExp("(?:(?:"+EXECUTION_NOUN+"|기재|작성|기�
 // 문자열 후보의 완결된 관형형 목적어 요청도 기존 문법 그대로
 // 유지해요. 날짜 이동에는 동작을 직접 말한 종결만 사용해요.
 const POLITE_TEXT_PROPOSAL = /(?:제안|작성|등록|입력|기재|기록|설정|지정|반영|확정|수정|변경|정정|선택|결정)(?:할|하는|하기\s*위한)\s+(?:후보(?:안)?|초안|제안(?:안)?|안)(?:\s*[을를])?\s*(?:주시겠어요|주실래요|주실\s*수\s*있을까요|주시겠습니까|주시겠나요)\s*[?？]?$/;
+// A complete request to *show a candidate* is not a conditional execution.
+// Strip only the grammatical preview object/closing request for risk analysis;
+// do not remove conditions, competing values or denials from the assignment body.
+const PREVIEW_OBJECT = /(?:\s*(?:할|하는|하기\s*위한)|\s*(?:바꿀|고칠|넣을|정할))(?:\s*경우의)?\s+(?:후보(?:안)?|변경안|초안|제안(?:안)?|안)(?:을|를)\s*(?:먼저\s*|우선\s*)?보여\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요|주시겠습니까)\s*[?？.!。]?$/;
+export function previewAssignmentBody(part: string): string | undefined {
+  const m=PREVIEW_OBJECT.exec(part);
+  if(!m)return;
+  const before=part.slice(0,m.index);
+  const body=/(?:바꿀|고칠|넣을|정할)/.test(m[0].slice(0,8))?before+" 변경":before;
+  if(!new RegExp("(?:"+EXECUTION_NOUN+")\\s*$").test(body))return;
+  return body;
+}
 const CLEAR = /(?:삭제|지우|비우|빼)\s*(?:해|하|어|워|주|주세요|줘)|없애|초기화/;
 // 상태를 나타내는 동사와 연결 어미를 함께 검사해요. 명사 '화면'처럼
 // 단순히 '면'으로 끝나는 단어를 조건으로 해석하지 않아요.
@@ -156,21 +172,21 @@ const AMOUNT_LABEL = /(?:견적(?:서)?|추가\s*(?:공사|작업|시공)?|공�
 const VAT_LABEL = TAX_LABEL+"|(?<![가-힣])면세"+TAX_RIGHT;
 const CREW_COUNT_SUFFIX = /(?:\s*수(?=$|[\s,:=;.!?！？。은는이가을를만도과와]))?/.source;
 const CREW_LABEL = "(?:투입(?:할)?|작업)\\s*인원"+CREW_COUNT_SUFFIX+"|작업자"+CREW_COUNT_SUFFIX+"|인원"+CREW_COUNT_SUFFIX+"|인력|인부";
-const WORK_DATE_LABEL = /(?:공사|작업|시공)\s*(?:날짜|일자|일정|할\s*날|일)|날짜|일정|일자/.source;
+const WORK_DATE_LABEL = /(?:공사|작업|시공|방문|실측)\s*(?:날짜|일자|일정|할\s*날|일)|날짜|일정|일자/.source;
 // 업체 추가금의 명시 대상. 긴 명칭부터 읽고, 명칭이 생략된
 // '추가 작업/공사/시공'은 실제 조사와 독립된 필드 위치가 있어야 해요.
 export const EXTRA_EXPLICIT_TITLE = /(?:(?:추가\s*(?:작업|공사|시공)?|공사|시공|작업)\s*)?(?:항목\s*(?:제목|이름)|항목명|작업명|공사명|제목|항목|이름)/.source;
-const EXTRA_IMPLICIT_TITLE = /추가\s*(?:작업|공사|시공)(?=\s*(?:[:=]|[은는이가을를](?:\s|$)))/.source;
-export const EXTRA_REASON_LABEL = /(?:(?:추가금|추가\s*(?:비용|작업|공사|시공)?)\s*)?(?:사유|이유)/.source;
+const EXTRA_IMPLICIT_TITLE = /추가\s*(?:작업|공사|시공)(?=\s*(?:[:=]|[은는이가을를](?:\s|$)))(?!\s*[은는이가을를]\s*(?:하(?:게|는|려|기|던|였|고)|할|했|해야|진행하|시작하|하게|하게\s*된))/.source;
+export const EXTRA_REASON_LABEL = /(?:(?:추가금|추가\s*(?:비용|작업|공사|시공)?)\s*)?(?:사유|이유|경위|원인)(?:\s*항목)?|왜\s+[^,，;.!?！？。\n]{1,60}?(?:는지|았는지|었는지)\s*(?:쓰는|적는|기재하는|기록하는)\s*(?:칸|란)/.source;
 // 분리된 조사는 그 뒤에 실제 경계가 필요해요. '항목 이름표'의
 // '이'를 앞 명사의 조사로 잘라 읽지 않아요.
 export const EXTRA_LABEL_MARKER = /(?:(?:\s*(?:칸|입력란|란))?\s*[:=]|(?:\s*(?:칸|입력란|란))?(?:에는|[은는을를이가만도에])|(?:\s*(?:칸|입력란|란))?\s+(?:에는|[은는을를이가만도에])(?=$|[\s:'"“‘,.;!?！？。]))\s*/.source;
 const EXTRA_IMPLICIT_POSITION = /(?<=(?:^|[,，;.!?！？。\n])\s*(?:(?:그리고|또|다음으로|다만|가능하면|만약|혹시|아마|조건부로)\s+|[^,，;.!?！？。\n]{0,48}(?:라면|다면|으면|이면|하면|되면|경우)\s+)?|(?:하고요?|하며|적고|쓰고|기입하고|주시고)\s*)/.source;
 const EXTRA_IMPLICIT_WITHDRAWAL = /추가\s*(?:작업|공사|시공)\s*(?:변경|수정|정정|제안|후보|선택|요청)(?=\s*[은는이가을를만도]?\s*(?:전부\s*|모두\s*|다\s*)?(?:취소|철회|없(?:던|었던)\s*))/.source;
 const EXTRA_WORD_START = /(?<![가-힣a-zA-Z\d])/.source;
-const EXTRA_WORD_END = /(?=$|[\s,:=;.!?！？。은는이가을를만도과와]|하고|이랑|랑|으로|로|에는|에|의(?=\s))/.source;
+const EXTRA_WORD_END = /(?=$|[\s,:=;.!?！？。은는이가을를만도과와]|(?:입력)?란|칸|하고|이랑|랑|으로|로|에는|에|의(?=\s))/.source;
 const TITLE_LABEL = EXTRA_WORD_START + "(?:" + EXTRA_EXPLICIT_TITLE + "|" + EXTRA_IMPLICIT_POSITION + "(?:" + EXTRA_IMPLICIT_TITLE + "|" + EXTRA_IMPLICIT_WITHDRAWAL + "))" + EXTRA_WORD_END;
-const REASON_LABEL = EXTRA_WORD_START + EXTRA_REASON_LABEL + EXTRA_WORD_END;
+const REASON_LABEL = EXTRA_WORD_START + "(?:" + EXTRA_REASON_LABEL + ")" + EXTRA_WORD_END;
 
 export function maskExtraQuotes(text: string): string {
   return text.replace(/"[^"\r\n]*"|'[^'\r\n]*'|“[^”\r\n]*”|‘[^’\r\n]*’/g, value => "\uE000".repeat(value.length));
@@ -180,7 +196,10 @@ export type ExtraTextTarget = { field: "title" | "reason"; index: number; labelE
  * 인용문 내부는 필드 표지가 아니며, 필드의 명칭은 값에 포함되지 않아요. */
 export function extraTextTargets(text: string): ExtraTextTarget[] {
   const masked = maskExtraQuotes(text);
-  const pattern = new RegExp("(?:(?<title>" + TITLE_LABEL + ")|(?<reason>" + REASON_LABEL + "))(?<marker>" + EXTRA_LABEL_MARKER + ")", "g");
+  // A quoted literal can follow an explicit label without a particle.
+  // Only the quote position supplies that boundary; the text parser still
+  // requires a complete assignment predicate for this shorthand.
+  const pattern = new RegExp("(?:(?<title>" + TITLE_LABEL + ")|(?<reason>" + REASON_LABEL + "))(?<marker>(?:" + EXTRA_LABEL_MARKER + ")|\\s+(?=\\uE000))", "g");
   return [...masked.matchAll(pattern)].map(hit => ({
     field: hit.groups!.title !== undefined ? "title" : "reason",
     index: hit.index, labelEnd: hit.index + hit[0].length - hit.groups!.marker.length,
@@ -213,6 +232,62 @@ function labelFields(form: AssistForm, text: string): Set<string> {
     }
   }
   return fields;
+}
+
+// Explicit identity of the actual form value, distinct from an earlier
+// proposal. Linked predicates require a separately owned following clause.
+const ACTUAL_IDENTITY = /(?:현재|지금)\s*(?:값|(?:등록|입력|저장)(?:된|한)\s*(?:값|대로)|(?:폼|화면|달력)\s*(?:값|대로))|이미\s*(?:예약|등록|입력|저장)(?:한|된|해\s*둔)/;
+const IDENTITY_LINK = /(?:값\s*(?:으로|로)\s*고정하고|대로\s*(?:하고|하며)|건드리지\s*마시고|손대지\s*마시고|고정하며|유지하고요?)$/;
+const IDENTITY_END = /(?:(?:고정|유지)(?:해\s*(?:주세요|줘요|주십시오)|합니다|하겠습니다|할게요)|대로\s*(?:두세요|두겠습니다|둘게요|해주세요)|(?:건드리지|손대지)\s*(?:마세요|말아\s*주세요))$/;
+// "원래대로 두세요" explicitly leaves an owned form value unchanged.
+// The bare restoration/cancellation idiom is still ambiguous, and a
+// proposal/history reference or any competing operation is not identity.
+function originalValueIdentity(form:AssistForm,field:string,part:string):boolean {
+  const clean=part.trim().replace(/[.!。]+$/,"");
+  const label=labelPattern(form).exec(clean);
+  if(!label||label.index!==0||labelFields(form,label[0]).size!==1||
+      !labelFields(form,label[0]).has(field))return false;
+  return /^\s*(?:은|는|을|를|이|가|만|도)?\s*(?:원래\s*(?:그대로|대로)|수정\s*전\s*(?:값|상태)\s*(?:그대로|대로))\s*(?:두세요|둡니다|두겠습니다|둘게요|놔두세요|유지(?:해\s*(?:주세요|줘요|주십시오)|합니다|하겠습니다|할게요))$/.test(clean.slice(label[0].length));
+}
+function currentIdentityClause(form:AssistForm,field:string,part:string):"linked"|"complete"|undefined {
+  const labels=labelFields(form,part), clean=part.replace(/[.!。]+$/,"");
+  if(originalValueIdentity(form,field,clean))return "complete";
+  if(labels.size!==1||!labels.has(field)||!ACTUAL_IDENTITY.test(clean)||PRIOR.test(clean)||
+      /후보|변경안/.test(clean)||RISK.test(clean)||CONDITION_SCOPE.test(clean)||CANCEL.test(clean)||
+      MONEY.test(clean)||CREW.test(clean)||DATE.test(clean)||VALUE_DENIAL.test(clean))return;
+  if(IDENTITY_LINK.test(clean)&&!NEGATIVE.test(clean))return "linked";
+  if(IDENTITY_END.test(clean)&&!NEGATIVE.test(clean))return "complete";
+}
+
+// A stated final total and its explanatory increment/decrement are not two
+// competing totals. Similarly, an expressly rejected upper bound can precede
+// a new independently labelled total. Keep the actual final span; never
+// compute a total from the delta or infer a value from an omitted baseline.
+export function crewFinalAssignment(part:string):{body:string;first:number;next:number;kind:"delta"|"bound";direction:1|-1;reference:"current"|"previous"|null}|undefined {
+  const quantity="(?<![가-힣\\d.])([1-9]\\d?|"+COUNTER_WORD+")\\s*(?:명(?!\\d|분|당|씩|단|짜리|치|함|칭)|인(?=$|[\\s,.;!?]|으로|로|까지))";
+  const hits=[...part.matchAll(new RegExp(quantity,"g"))];
+  if(hits.length!==2)return;
+  const [first,next]=hits;
+  const prefix=part.slice(0,first.index);
+  if(RISK.test(prefix)||NEGATIVE.test(prefix)||CANCEL.test(prefix)||CONDITION_SCOPE.test(prefix)||DATE.test(prefix)||MONEY.test(prefix))return;
+  const gap=part.slice(first.index+first[0].length,next.index);
+  const total=gap.match(/^\s*(?:더\s*)?(?:붙여서|추가해서|추가해|늘려서|증원해서|줄여서|빼서|감원해서)\s*(?:[,，]\s*)?((?:총|합계|모두)\s*)$/);
+  const bound=gap.match(new RegExp("^\\s*까지(?:는|도)?\\s*필요\\s*없(?:고|으니)\\s*(?:[,，]\\s*)?((?:"+CREW_LABEL+")\\s*(?:은|는|을|를|만|이|가|:)??\\s*)$"));
+  const lead=total?.[1]??bound?.[1];
+  if(!lead)return;
+  const body=part.slice(next.index-lead.length);
+  const polite=POLITE_EXECUTION.exec(body), riskText=polite?body.slice(0,polite.index):body;
+  if(!(CHANGE_ASSIGNMENT.test(body.replace(/[.!。]+$/,""))||polite)||
+    RISK.test(riskText)||NEGATIVE.test(body)||CANCEL.test(body)||CONDITION_SCOPE.test(body)||BOUNDS.test(body)||CREW_LIMIT.test(body))return;
+  const a=counterValue(first[1])??Number(first[1]), b=counterValue(next[1])??Number(next[1]);
+  if(!Number.isSafeInteger(a)||!Number.isSafeInteger(b)||a<1||b<1)return;
+  const previous=PRIOR.test(prefix),current=CURRENT.test(prefix);
+  if(previous&&current)return;
+  return {body,first:a,next:b,kind:total?"delta":"bound",direction:/줄여서|빼서|감원해서/.test(gap)?-1:1,
+    reference:previous?"previous":current?"current":null};
+}
+export function crewFinalAssignmentBody(part:string):string|undefined {
+  return crewFinalAssignment(part)?.body;
 }
 
 // 변경행위와 그 요청 객체를 정확한 소유 대상에 결합해요. 단지
@@ -435,6 +510,7 @@ type SharedHistory = {fields:string[];kind:"first"|"previous";complete:boolean;e
 // 한 구간에서 읽어요. 쉼표/접속어를 다른 필드의 값이나 술어로 재구성하지 않아요.
 function sharedHistoryReference(form:AssistForm, sentence:string):SharedHistory|undefined{
   const raw=sentence.trim();
+  if(reportedRetention(raw))return;
   const head=new RegExp("^(?:(?:가능하면|혹시|아마|조건부로|만약)\\s+)*(" +
     FIRST_REFERENCE_MARK+"|"+RECENT_REFERENCE_MARK+")\\s*("+REFERENCE_PAST.source+")\\s+").exec(raw);
   if(!head)return;
@@ -565,6 +641,7 @@ function typedReferences(form: AssistForm, text: string): ReferencePart[] {
     };
     for (const [index, part] of chunks.entries()) {
       const final = sentenceIndex === sentences.length-1 && index === chunks.length-1;
+      if(reportedRetention(part)){flush(false);continue;}
       const ref = referencePart(form, part);
       if (ref?.bare) { pending.push(ref); continue; }
       if (ref) {
@@ -598,26 +675,100 @@ function typedReferences(form: AssistForm, text: string): ReferencePart[] {
   return result;
 }
 const PERIOD_DATE_ITEM = /(?:(?:\d{4}\s*(?:년|[-/.])\s*)?\d{1,2}\s*(?:월|[-/.])\s*\d{1,3}\s*일?|\d{1,3}\s*일|오늘|내일|모레)/.source;
-const PERIOD_DATE_MEMBER = PERIOD_DATE_ITEM + "\\s*(?:은|는|이|가|을|를|도)?";
+const PERIOD_DATE_MEMBER = PERIOD_DATE_ITEM + "\\s*(?:은|는|이|가|을|를|도|만)?";
 const PERIOD_DATE_CONNECTOR = /(?:[,，、·]|하고|이랑|랑|과|와|및|그리고)/.source;
 const PERIOD_DATE_PREFIX = new RegExp("^" + PERIOD_DATE_MEMBER + "\\s*(?:방문|실측|접수)?\\s*$");
 const PERIOD_DATE_LIST_PREFIX = new RegExp("^" + PERIOD_DATE_MEMBER + "(?:\\s*" + PERIOD_DATE_CONNECTOR + "\\s*" + PERIOD_DATE_MEMBER + ")*\\s*(?:방문|실측|접수)?\\s*$");
 const PERIOD_DATE_LIST_HEAD = new RegExp("^" + PERIOD_DATE_ITEM);
 const PERIOD_EXPLICIT_RANGE = new RegExp(PERIOD_DATE_ITEM + "\\s*(?:부터|에서|[~∼〜～])\\s*" + PERIOD_DATE_ITEM);
+/** A dated recommendation plus a complete request to see that proposal
+ * is a candidate operation, not permission to execute a conditional change.
+ * The deliberative preface is recognized only within this closed pair. */
+export function periodBoundaryPreview(text:string):{field:"start"|"end";part:string;body:string}|undefined {
+  const sentences=text.normalize("NFKC").split(/(?<!\d)\.|\.(?!\d)|[;!\n。]|(?<=[?？])/).map(s=>s.trim()).filter(Boolean);
+  if(sentences.length!==2||!/^(?:그\s*)?(?:변경안|수정안|정정안|제안|후보(?:안)?|초안)(?:을|를)?\s*(?:먼저\s*|우선\s*)?보여\s*(?:주세요|줘요|주십시오)$/.test(sentences[1]))return;
+  const part=sentences[0];
+  const dates=[...part.matchAll(new RegExp(PERIOD_DATE_ITEM,"g"))];
+  if(dates.length!==1||PERIOD_EXPLICIT_RANGE.test(part))return;
+  const head=part.slice(0,dates[0].index).trim(), tail=part.slice(dates[0].index).trim();
+  if(head){
+    const consideration=/^(.{1,60}?[을를])\s*(?:생각하면|고려하면|감안하면)$/.exec(head);
+    if(!consideration||labelFields("period",consideration[1]).size||
+       DATE.test(consideration[1])||/\d|승인|허가|조건|여부|가능|만약|계약|납부/.test(consideration[1])||
+       RISK.test(consideration[1])||NEGATIVE.test(consideration[1])||CANCEL.test(consideration[1])||
+       CONDITION_SCOPE.test(consideration[1])||PRIOR.test(consideration[1]))return;
+  }
+  const ending=/(?:하는\s*(?:게|것이)|하는\s*편이)\s*(?:좋겠어요|좋겠습니다|좋을\s*것\s*같아요)$/.exec(tail);
+  if(!ending)return;
+  const body=tail.slice(0,ending.index).trim();
+  const owners=labelFields("period",body);
+  if(owners.size!==1||!(owners.has("start")||owners.has("end"))||
+      !/(?:변경|수정|정정|설정|지정|조정|이동|연장|단축)$/.test(body)||
+      RISK.test(body)||INDIRECT_INQUIRY.test(body)||NEGATIVE.test(body)||CANCEL.test(body)||
+      CONDITION_SCOPE.test(body)||PRIOR.test(body)||KEEP.test(body)||VALUE_DENIAL.test(body))return;
+  return {field:owners.has("start")?"start":"end",part,body};
+}
 const PERIOD_COMPACT_LIST = /^(?:(?:\d{4}\s*(?:년|[-/.])\s*)?\d{1,2}\s*(?:월|[/.])\s*\d{1,3}\s*일?)(?:\s*,\s*\d{1,3})+(?:\s*,\s*\d{1,3}\s*일)(?:[은는이가을를도])?$/;
-const PERIOD_EXCLUSION_LABEL = /(?:(?:방문|실측|접수)\s*)?(?:제외\s*(?:날짜|일자|일|할\s*날)?|불가\s*(?:날짜|일자|일)|휴무(?:일자|일)?|쉬는\s*날|빼는\s*날|안\s*되는\s*날|못\s*가는\s*날)/.source;
-const PERIOD_EXCLUSION_END = /(?:(?:으로|로)\s*(?:(?:새로|다시)\s*)?(?:(?:제안|확정|설정|지정|결정|입력|등록|기재|반영|선택|정)(?:합니다|하겠습니다|할게요|해요|해\s*(?:주세요|줘요|주십시오)|\s*부탁(?:합니다|드립니다|드려요|해요))|(?:정해|넣어|잡아|적어|써)\s*(?:주세요|줘요|주십시오))|(?:입니다|이에요|예요|이요|요))\s*[.!。]?$/;
+const PERIOD_EXCLUSION_LABEL = /(?:(?:방문|실측|접수|공사|작업|시공)\s*)?(?:제외\s*(?:날짜|일자|일|할\s*날)?|불가\s*(?:날짜|일자|일)|휴무(?:일자|일)?|쉬는\s*날|빼는\s*날|안\s*되는\s*날|못\s*가는\s*날|작업\s*(?:하지\s*않는|안\s*하는)\s*날)/.source;
+const PERIOD_EXCLUSION_END = /(?:(?:\s*(?:전체|목록))?\s*(?:으로|로)\s*(?:(?:새로|다시)\s*)?(?:(?:제안|확정|설정|지정|결정|입력|등록|기재|반영|선택|정)(?:합니다|하겠습니다|할게요|해요|해\s*(?:주세요|줘요|주십시오)|\s*부탁(?:합니다|드립니다|드려요|해요))|(?:정해|넣어|잡아|적어|써)\s*(?:주세요|줘요|주십시오))|(?:입니다|이에요|예요|이요|요))\s*[.!。]?$/;
 function periodDateListPrefix(text: string): boolean {
   return PERIOD_DATE_LIST_PREFIX.test(text.trim()) || PERIOD_COMPACT_LIST.test(text.trim());
 }
+// A demonstrative list reference binds only an immediately preceding,
+// complete calendar enumeration. It is not a general historical/date
+// inference: explicit boundaries, competing references and risk stay out.
+const PERIOD_LIST_REFERENCE = /^(?:이|위|해당)\s*(?:날짜|일자|날)(?:들)?\s*(?:을|를|은|는|만)?\s*(?:(?:방문|작업|실측)\s*)?제외\s*(?:날짜|일자|일)?\s*(?:으로|로)\s*(?:(?:넣어|잡아|정해|적어)\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요)|(?:지정|설정|등록|변경|입력|반영)\s*(?:해\s*(?:주세요|줘요|주십시오|주시겠어요)|합니다|하겠습니다))$/;
+const PERIOD_ADD_REFERENCE = /^(?:(?:방문|작업|실측)\s*)?제외\s*(?:날짜|일자|일)?\s*(?:으로|로)\s*(?:그|해당|이)\s*(?:날짜|일자|날)(?:들)?\s*(?:을|를|만)?\s*(?:추가|등록|반영)\s*(?:해\s*(?:주세요|줘요|주십시오|주시겠어요|주실래요)|합니다|하겠습니다)$/;
+export function referencedPeriodExclusion(text:string):{list:string;antecedent:number;command:number;kind:"replace"|"add"}|undefined {
+  const sentences=text.normalize("NFKC").split(/(?<!\d)\.|\.(?!\d)|[;!\n。]|(?<=[?？])/).map(s=>s.trim()).filter(Boolean);
+  const found:{list:string;antecedent:number;command:number;kind:"replace"|"add"}[]=[];
+  for(let i=1;i<sentences.length;i++){
+    const command=sentences[i].replace(/[?？]$/,"");
+    const add=PERIOD_ADD_REFERENCE.test(command);
+    if(!add&&!PERIOD_LIST_REFERENCE.test(command))continue;
+    const prev=sentences[i-1];
+    if(add){
+      // A report supplies a concrete unavailable date only to an immediately
+      // following explicit add instruction. Never turn the report itself into
+      // an assignment or infer a calendar day from a quantity.
+      const dates=[...prev.matchAll(new RegExp(PERIOD_DATE_ITEM,"g"))];
+      if(dates.length!==1||START.test(prev)||END.test(prev)||PERIOD_EXPLICIT_RANGE.test(prev)||
+          CONDITION_SCOPE.test(prev)||CANCEL.test(prev)||/[?？]|아마|혹시|미정|검토|모르|가능하면/.test(prev))continue;
+      const hit=dates[0], tail=prev.slice(hit.index+hit[0].length);
+      if(!/^(?:\s*하루)?\s*(?:은|는|이|가|만)?\s*(?:안\s*된|불가|못\s*한|어렵|힘들)[^,.!?]{0,24}(?:하네요|합니다|했어요|했습니다|하셨어요|들었어요|들었습니다)$/.test(tail))continue;
+      found.push({list:hit[0],antecedent:i-1,command:i,kind:"add"});
+      continue;
+    }
+    if(RISK.test(prev)||NEGATIVE.test(prev)||CANCEL.test(prev)||PRIOR.test(prev)||CONDITION_SCOPE.test(prev)||
+        START.test(prev)||END.test(prev)||PERIOD_EXPLICIT_RANGE.test(prev)||dateCountTokens(prev).length)continue;
+    const first=new RegExp(PERIOD_DATE_ITEM).exec(prev);
+    if(!first)continue;
+    const prefix=prev.slice(0,first.index).trim();
+    if(prefix&&!/(?:은|는|이|가|:)$/.test(prefix))continue;
+    const closed=prev.slice(first.index).match(/^(.*?)(?:입니다|이에요|예요|이요|입니다요)$/);
+    if(!closed||!periodDateListPrefix(closed[1])||[...closed[1].matchAll(new RegExp(PERIOD_DATE_ITEM,"g"))].length<2)continue;
+    found.push({list:closed[1],antecedent:i-1,command:i,kind:"replace"});
+  }
+  return found.length===1?found[0]:undefined;
+}
+function periodListBody(text:string):string|undefined{
+  const raw=text.trim();
+  if(periodDateListPrefix(raw))return raw;
+  // A closed causal preface supplies background, not another date owner.
+  // Retain it in the actual scope for risk checks; extract only the list.
+  const causal=raw.match(/^([^,，;.!?！？。\n]{1,60}(?:때문에|탓에|덕분에|라서|해서|어서|아서|으므로|므로))\s+(.+)$/);
+  if(causal&&!DATE.test(causal[1])&&!labelFields("period",causal[1]).size&&
+      !RISK.test(causal[1])&&!NEGATIVE.test(causal[1])&&!CANCEL.test(causal[1])&&periodDateListPrefix(causal[2]))return causal[2];
+}
 function periodOwnedListPrefix(text:string):boolean{
-  if(periodDateListPrefix(text))return true;
+  if(periodListBody(text))return true;
   // 별도 경계/날짜가 없는 조건 선행부는 목록의 소유권만 연결해요.
   // 조건 자체는 없애지 않아 이후 의도 검사에서 전체 목록을 보류해요.
   const conditional=text.trim().match(/^([^,，;.!?！？。\n]{0,48}(?:라면|다면|으면|이면|하면|되면|경우))\s+(.+)$/);
   return !!conditional&&!DATE.test(conditional[1])&&!labelFields("period",conditional[1]).size&&periodDateListPrefix(conditional[2]);
 }
 function postposedExclusionList(text: string): boolean {
+  if (reportedPeriodExclusion(text)) return true;
   // 뒤 표지까지 날짜 목록만 이어져야 해요. 이후의 조건/다른 칸은
   // 기존 의도 검사에 남기고 앞쪽 날짜의 소유권만 결합해요.
   for (const hit of text.matchAll(new RegExp(PERIOD_EXCLUSION_LABEL + "|(?:(?:방문|실측|접수)\\s*)?(?:못\\s*(?:가|하|받)|안\\s*(?:돼|되|가)|쉽니다|쉬어요|빼\\s*(?:줘|주))","g"))) {
@@ -644,10 +795,30 @@ function countedPeriodListContinuation(text: string): boolean {
 }
 const DATE_LIST_CONTINUATION = new RegExp("^" + PERIOD_DATE_MEMBER + "(?:\\s*(?:이에요|예요|입니다|이요|요))?[?？]?$");
 
+// A completed unavailability report followed by an explicit exclusion request
+// refers to the entire preceding enumeration, not the final calendar token.
+// A declared cardinality is a constraint, not a separate calendar value.
+export function reportedPeriodExclusion(text: string): {list:string;count?:number}|undefined {
+  const raw=text.trim();
+  const match=/^(.+?)(?:은|는|이|가)\s+(.{1,60}?)(?:수\s*없으니|불가능하니|어려우니|곤란하니|안\s*되니|못\s*하니)\s+(.+)$/.exec(raw);
+  if(!match)return;
+  const [,list,reason,tail]=match;
+  if(!periodDateListPrefix(list)||DATE.test(reason)||PERIOD.test(reason)||
+      labelFields("period",reason).size||RISK.test(reason)||NEGATIVE.test(reason)||
+      CANCEL.test(reason)||PRIOR.test(reason)||CONDITION_SCOPE.test(reason))return;
+  const command=new RegExp("^(?:(?:(\\d{1,3}|"+COUNTER_WORD+")\\s*(?:개의?\\s*)?(?:날짜|일자|날)(?:을|를|은|는|만)\\s+))?"+PERIOD_EXCLUSION_LABEL+"(.*)$").exec(tail);
+  if(!command||!PERIOD_EXCLUSION_END.test(command[2])||
+      command[2].replace(PERIOD_EXCLUSION_END,"").trim())return;
+  const count=command[1]===undefined?undefined:counterValue(command[1])??Number(command[1]);
+  return {list,count};
+}
+
 /** 명시적 제외일 대입의 실제 목록 구간. 숫자의 달력 유효성은
  * 호출자의 기존 날짜 파서에서 확인하며, 미지원 문법은 추측하지 않아요. */
 export function explicitPeriodExclusionList(clause: string): string | undefined {
   const raw = clause.trim();
+  const report=reportedPeriodExclusion(raw);
+  if(report)return report.list;
   const pre = PREPOSED_EXCLUSION.exec(raw);
   if (pre) {
     const body = raw.slice(pre[0].length);
@@ -655,8 +826,8 @@ export function explicitPeriodExclusionList(clause: string): string | undefined 
     return list !== body && periodDateListPrefix(list) ? list : undefined;
   }
   for (const hit of raw.matchAll(new RegExp(PERIOD_EXCLUSION_LABEL,"g"))) {
-    const list = raw.slice(0,hit.index).trim();
-    if (periodDateListPrefix(list) && PERIOD_EXCLUSION_END.test(raw.slice(hit.index+hit[0].length)) &&
+    const list = periodListBody(raw.slice(0,hit.index));
+    if (list && PERIOD_EXCLUSION_END.test(raw.slice(hit.index+hit[0].length)) &&
         raw.slice(hit.index+hit[0].length).replace(PERIOD_EXCLUSION_END,"").trim()==="") return list;
   }
   return undefined;
@@ -666,7 +837,7 @@ export function explicitPeriodExclusionList(clause: string): string | undefined 
  * 교체 후보를 만들 수 없으며 실제 이전/현재 목록과 대조해요. */
 export function directDateMove(text: string): { old: string; next: string; prefix: string } | undefined {
   const relation = new RegExp("(" + PERIOD_DATE_ITEM + ")\\s*(?:을|를|은|는|만|에서)\\s*(" +
-    PERIOD_DATE_ITEM + ")\\s*(?:으로|로)\\s*(?:(?:안|못)\\s*)?(?:옮기|옮겨|옮길|미루|미뤄|미룰|당기|당겨|당길|변경|수정|정정|교체|대체|이동|바꾸|바꿔|바꿀|고치|고쳐|고칠)","g");
+    PERIOD_DATE_ITEM + ")\\s*(?:으로|로)\\s*(?:(?:안|못)\\s*)?(?:옮기|옮겨|옮길|미루|미뤄|미룰|밀어|밀다|밀기|당기|당겨|당길|변경|수정|정정|교체|대체|이동|바꾸|바꿔|바꿀|고치|고쳐|고칠)","g");
   const matches = [...text.matchAll(relation)];
   if (matches.length!==1) return;
   const hit = matches[0];
@@ -800,6 +971,7 @@ function mentioned(form: AssistForm, text: string): string[] {
 
 // 구두점 없이 독립된 필드가 이어져도 앞의 숫자와 뒤의 보류를 섞지 않아요.
 function parts(form: AssistForm, clause: string): string[] {
+  if(form==="period"&&reportedPeriodExclusion(clause))return [clause];
   // 명시된 행위 객체들이 하나의 철회 술어를 공유하면 그 전체를
   // 공동 절로 유지해요. 일반 명사·독립 대입·조건은 이 경로로 합치지 않아요.
   const grouped=Array.from(labelFields(form,maskExtraQuotes(clause)));
@@ -824,7 +996,7 @@ function parts(form: AssistForm, clause: string): string[] {
     if (/^(?:(?:은|는|을|를|이|가|과|와|및|하고|랑|도|만)\s*)*$/.test(prefix.replace(targets, "").trim())) continue;
     // "12월 11일은 방문 제외일"의 날짜는 뒤에 붙은 대상의 값이에요.
     if (form === "period" && (PERIOD_DATE_PREFIX.test(prefix) ||
-        next.includes("excluded") && periodOwnedListPrefix(prefix))) continue;
+        next.includes("excluded") && periodOwnedListPrefix(prefix.replace(/\s*(?:방문|실측|접수|공사|작업|시공)\s*$/,"")))) continue;
     if (next.includes("vat") && VAT_CONTEXT.test(prefix)) continue;
     if(next.includes("amount")&&scopedVatTokens(clause).some(token=>at>=token.start&&at+hit[0].length<=token.end))continue;
     // 세금 방식에 붙은 '포함된 금액이 아닙니다'의 금액은 독립
@@ -915,23 +1087,106 @@ export function scopedWithdrawalAffects(form: AssistForm, text: string, field: s
 export function resolvedIntentSegments(form: AssistForm, text: string): (IntentSegment & {fields:string[];dependent:boolean})[] {
   let last: string[] = [];
   let previousSentence=-1, dependent=false;
-  return intentSegments(form, text).map(segment => {
+  const reference=form==="period"?referencedPeriodExclusion(text):undefined;
+  const boundaryPreview=form==="period"?periodBoundaryPreview(text):undefined;
+  const segments=intentSegments(form,text);
+  return segments.map((segment,index) => {
     const {part,sentence}=segment;
     if(sentence!==previousSentence)dependent=false;
     previousSentence=sentence;
-    const fields = ownedFields(form,part,last);
+    let fields = reference&&(sentence===reference.antecedent||sentence===reference.command)
+      ? ["excluded"] : ownedFields(form,part,last);
+    // 뒤의 명시적인 대입을 설명하는 연결형 원인은 사유 칸의
+    // 독립 요청이 아니에요. 단독/후행 사유와 실제 사유 라벨은 유지해요.
+    if(form==="extra"&&fields.length===1&&fields[0]==="reason"&&extraDependentBackground(segments,index))fields=[];
     if (fields.length && vatModeWithdrawal(form,part)?.bound !== false) last = fields;
     // 조건의 효력은 동일 문장의 모든 연결된 대입에 남아요.
-    dependent ||= CONDITION_SCOPE.test(part);
+    const preview=boundaryPreview?.part===part&&fields.length===1&&fields[0]===boundaryPreview.field?boundaryPreview.body:
+      form==="dates"&&fields.length===1&&labelFields(form,part).size===1?previewAssignmentBody(part):undefined;
+    dependent ||= CONDITION_SCOPE.test(preview??part);
     const result={...segment,fields,dependent};
     if(COMPLETED_INQUIRY.test(part)&&!POLITE_EXECUTION.test(part))dependent=false;
     return result;
   });
 }
 
+const EXTRA_DEPENDENT_NOMINAL=/(?:때문에?|탓에|덕분에|아서|어서|여서|해서|돼서|라서|으므로|므로|으니까|니까|아져|어져|여져|되어|되어서|퍼져서|발견해서)(?:요)?\s*$/;
+function extraDependentBackground(segments:IntentSegment[],index:number):boolean {
+  const {part,sentence}=segments[index];
+  if(labelFields("extra",part).size||!EXTRA_DEPENDENT_NOMINAL.test(part))return false;
+  const assignment=(s:IntentSegment)=> {
+    const owners=labelFields("extra",s.part);
+    return owners.size===1&&!owners.has("reason")&&
+      (CHANGE_ASSIGNMENT.test(s.part)||POLITE_EXECUTION.test(s.part))&&!reportedRetention(s.part);
+  };
+  // 독립 대입 앞의 원인 절과, 독립 대입 뒤의 별개 미완결 문장을
+  // 배경으로만 읽어요. 쉼표 목록의 후행 사유와 단독 사유는 보존해요.
+  const next=segments[index+1];
+  return !!next&&assignment(next)||segments.slice(0,index).some(s=>s.sentence<sentence&&assignment(s));
+}
+export function unownedExtraDependentClause(text:string,clause:string):boolean {
+  const segments=intentSegments("extra",maskExtraQuotes(text));
+  const needle=compactProof(maskExtraQuotes(clause));
+  return segments.some((s,index)=>compactProof(s.part)===needle&&extraDependentBackground(segments,index));
+}
+
 /** 값 정규화에서 다른 필드에 속한 날짜/수량을 섞지 않아요. */
 export function scopedFieldParts(form: AssistForm, text: string, field: string): string[] {
   return resolvedIntentSegments(form,text).filter(scope=>scope.fields.includes(field)).map(scope=>scope.part);
+}
+
+/** Independent scope facts for validated wire operations. Unlike requestIntent
+ * this does not infer a positive operation or parse/normalize a value. */
+export function operationScopeFacts(form: AssistForm, text: string) {
+  return resolvedIntentSegments(form,text).map(scope => {
+    const labels = labelFields(form,maskExtraQuotes(scope.part));
+    // A typed calendar endpoint outranks the inherited last-field heuristic.
+    if (form === "period") {
+      if (/착수|개시/.test(scope.part)) labels.add("start");
+      if (/완료|완공|마치/.test(scope.part)) labels.add("end");
+    }
+    const endpoint = form === "period" && labels.size === 1 &&
+      (labels.has("start") || labels.has("end")) && !PERIOD_EXPLICIT_RANGE.test(scope.part);
+    const fields = endpoint ? [...labels] : scope.fields;
+    return { ...scope, fields, labels: [...labels] };
+  });
+}
+
+/** Full original clause risk, including conditions, references and denial.
+ * Only a completed execution-request ending may remove interrogative politeness. */
+export function operationScopeRisk(form: AssistForm, part: string, field: string): boolean {
+  const preview=form==="dates"?previewAssignmentBody(part):undefined;
+  const labels=preview?labelFields(form,part):undefined;
+  if(preview&&labels?.size===1&&labels.has(field))part=preview;
+  if(form==="dates"&&field==="crew")part=crewFinalAssignmentBody(part)??part;
+  const polite = POLITE_EXECUTION.exec(part) ?? (form === "extra" ? POLITE_TEXT_PROPOSAL.exec(part) : null);
+  const riskText = polite ? part.slice(0,polite.index) : part;
+  const date = form === "period" || form === "dates" || field === "valid";
+  return reportedRetention(part) || RISK.test(riskText) || INDIRECT_INQUIRY.test(riskText) || CONDITION_SCOPE.test(part) ||
+    CONDITION_LINK.test(part) || NEGATIVE.test(part) || CANCEL.test(part) || VALUE_DENIAL.test(part) ||
+    /지\s*(?:마|말|않|못)|확인만|검토|문의|보고만|(?:계약|납부|주문|예약)\s*(?:요청|신청|취소|철회)/.test(part) ||
+    !!polite && /(?:안|못)\s*$/.test(riskText) ||
+    date && /(?:인지|일지|맞는지)[^,.!?]{0,35}(?:확인|검토|생각)\s*중|아직\s*확인\s*중|(?:할|정할|지정할|설정할|옮길|바꿀|변경할|확정할|넣을)\s*생각/.test(part) ||
+    (field === "amount" || field === "crew" || form === "quote" && field === "days") &&
+      (BOUNDS.test(part) || field === "crew" && CREW_LIMIT.test(part));
+}
+
+/** A typed VAT token must be adjacent to its tax label, independent of the
+ * positive assignment ending. The caller checks the entire owned clause. */
+export function operationVatModes(part: string): VatMode[] {
+  const labels = [...part.matchAll(TAX_LABEL_TOKEN)];
+  const tokens = [...part.matchAll(TAX_TOKEN)];
+  // Unlabelled competing tax tokens in the same clause are not a unique
+  // value. A value word used for checking rather than billing is not owned.
+  if (tokens.length !== 1 || /확인|검토|비용을\s*보여/.test(part)) return [];
+  return tokens.flatMap(hit => {
+    const start=hit.index, end=start+hit[0].length;
+    if (!labels.some(label=>label.index+label[0].length<=start&&TAX_GAP.test(part.slice(label.index+label[0].length,start)) ||
+      end<=label.index&&TAX_REVERSE_GAP.test(part.slice(end,label.index))) &&
+      !new RegExp("^"+TAX_LABEL,"i").test(hit[0])) return [];
+    return [hit.groups?.negative!==undefined||hit.groups?.billing!==undefined||hit.groups?.excluded!==undefined
+      ? "excluded" as const : hit.groups?.included!==undefined ? "included" as const : "exempt" as const];
+  });
 }
 
 const compactProof = (value: string) => value.normalize("NFKC").replace(/\s+/g, "").replace(/[,.!;。]+$/, "");
@@ -990,7 +1245,10 @@ export function ownsPeriodExclusionEvidence(text: string, evidence: string): boo
       PERIOD_EXPLICIT_RANGE.test(evidence)) return false;
   const scopes = resolvedIntentSegments("period", text);
   const relevant = scopes.filter(s => s.fields.includes("start") || s.fields.includes("end") || s.fields.includes("excluded"));
-  if (!relevant.length || new Set(relevant.map(s => s.sentence)).size !== 1 ||
+  const reference=referencedPeriodExclusion(text);
+  const linked=!!reference&&relevant.every(s=>s.fields.length===1&&s.fields[0]==="excluded"&&
+    (s.sentence===reference.antecedent||s.sentence===reference.command));
+  if (!relevant.length || !linked&&new Set(relevant.map(s => s.sentence)).size !== 1 ||
       relevant.some(s => s.dependent || START.test(s.part) || END.test(s.part) || PERIOD_EXPLICIT_RANGE.test(s.part) ||
         (RISK.test(s.part) && !POLITE_EXECUTION.test(s.part)) || NEGATIVE.test(s.part) ||
         INDIRECT_INQUIRY.test(s.part) || VALUE_DENIAL.test(s.part) || CANCEL.test(s.part))) return false;
@@ -1007,11 +1265,34 @@ export function ownsPeriodExclusionEvidence(text: string, evidence: string): boo
 export function ownsCurrentRetentionEvidence(form: AssistForm, text: string, field: string, evidence: string): boolean {
   const needle = compactProof(evidence);
   const current = /현재|지금|기존(?:에)?|저장된|원래|처음\s*(?:상태|값|금액|설정)|수정\s*전/;
+  if(needle&&compactProof(text).includes(needle)){
+    const scopes=resolvedIntentSegments(form,text);
+    const own=scopes.filter(s=>s.fields.includes(field));
+    const actual=own.find(s=>compactProof(s.part)===needle);
+    // Only a complete, uniquely owned restoration is self-proving. A
+    // preceding unbound cancellation needs separate verified prior-value
+    // evidence; this predicate does not decide that session relationship.
+    if(actual&&!actual.dependent&&own.length===1&&actual.fields.length===1&&
+        originalValueIdentity(form,field,actual.part)&&
+        scopes.every(s=>s===actual||s.fields.length>0||
+          !RISK.test(s.part)&&!NEGATIVE.test(s.part)&&!CANCEL.test(s.part)))return true;
+  }
+  if(needle&&compactProof(text).includes(needle)&&ACTUAL_IDENTITY.test(evidence)&&
+      /고정|유지|대로|건드리지|손대지/.test(evidence)){
+    const scopes=resolvedIntentSegments(form,text), owned=scopes.filter(s=>s.fields.includes(field));
+    const actual=owned.find(s=>compactProof(s.part).includes(needle)&&!reportedRetention(s.part));
+    const identity=actual&&currentIdentityClause(form,field,actual.part);
+    const next=actual&&scopes[scopes.indexOf(actual)+1];
+    const owners=labelFields(form,evidence);
+    if(owned.length===1&&actual&&!actual.dependent&&actual.fields.length===1&&owners.size===1&&owners.has(field)&&
+        (identity==="complete"||identity==="linked"&&next&&next.sentence===actual.sentence&&!next.dependent&&
+          next.fields.length>0&&!next.fields.includes(field)))return true;
+  }
   if (!needle || !compactProof(text).includes(needle) || !current.test(evidence) ||
       !KEEP.test(evidence) || PRIOR.test(evidence) || /후보|변경안/.test(evidence)) return false;
   const scopes = resolvedIntentSegments(form,text);
   const relevant = scopes.filter(s => s.fields.includes(field));
-  const actual = relevant.find(s => compactProof(s.part).includes(needle));
+  const actual = relevant.find(s => compactProof(s.part).includes(needle)&&!reportedRetention(s.part));
   if (!actual || actual.fields.length !== 1 || actual.dependent) return false;
   const risk = (s: string) => RISK.test(s) || INDIRECT_INQUIRY.test(s) || CONDITION_SCOPE.test(s) ||
     NEGATIVE.test(s) || VALUE_DENIAL.test(s) || /(?:계약|납부|주문|예약)\s*(?:요청|신청|취소|철회)/.test(s);
@@ -1036,8 +1317,21 @@ export function ownsCurrentRetentionEvidence(form: AssistForm, text: string, fie
   }
   // 다른 같은 필드 절은 독립적인 변경 요청의 철회인 경우에만
   // 함께 허용해요. 새 값·이전값·문의와 경쟁하면 해제하지 않아요.
-  return relevant.every(s => s === actual || !s.dependent && !risk(s.part) &&
+  return relevant.every(s => s === actual || s.sentence<actual.sentence&&reportedRetention(s.part) || !s.dependent && !risk(s.part) &&
     !!withdrawalObject(form,s.part,[field],undefined) && !PRIOR.test(s.part));
+}
+
+/** Linked identity belongs to the full utterance, not the evidence fragment.
+ * A truncated server evidence span must still point at its unique actual
+ * owned scope; a dangling connector in isolation never establishes retention. */
+export function ownsLinkedCurrentRetentionEvidence(form:AssistForm,text:string,field:string,evidence:string):boolean {
+  const intent=requestIntent(form,text);
+  const linked=intent.linkedCurrentKeep.get(field),needle=compactProof(evidence);
+  if(!linked||!needle||!compactProof(text).includes(needle)||!needle.includes(compactProof(linked)))return false;
+  if(compactProof(linked)===needle)return ownsCurrentRetentionEvidence(form,text,field,evidence);
+  // Longer evidence may include the following owned instruction in the same
+  // sentence, but never an unrelated sentence or a changed linked object.
+  return requestIntent(form,evidence).linkedCurrentKeep.get(field)===linked;
 }
 
 export type RequestIntent = {
@@ -1076,8 +1370,14 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
   const priorKeep = new Set<string>(), newAssignment = new Set<string>();
   const typed = typedReferences(form, text);
   const resolved = resolvedIntentSegments(form, text);
+  const boundaryPreview=form==="period"?periodBoundaryPreview(text):undefined;
   const segments = resolved.map(scope=>scope.part);
+  const reportedFields=new Set<string>();
   for (const [index, {part,fields,dependent}] of resolved.entries()) {
+    if(reportedRetention(part)){
+      for(const field of fields)reportedFields.add(field);
+      continue;
+    }
     const group=sharedHistoryReference(form,part);
     const pendingReference = pendingCandidateReference(form, part);
     const modeWithdrawal = vatModeWithdrawal(form, part);
@@ -1088,15 +1388,24 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
       continue;
     }
     if (modeWithdrawal) out.vatWithdrawalModes.add(modeWithdrawal.mode);
-    const polite = POLITE_EXECUTION.exec(part) ??
+    const preview=boundaryPreview?.part===part&&fields.length===1&&fields[0]===boundaryPreview.field?boundaryPreview.body:
+      form==="dates"&&fields.length===1&&labelFields(form,part).size===1?previewAssignmentBody(part):undefined;
+    const crewRelation=form==="dates"&&fields.length===1&&fields[0]==="crew"?crewFinalAssignment(part):undefined;
+    const semanticPart=preview??crewRelation?.body??part;
+    const polite = POLITE_EXECUTION.exec(semanticPart) ??
       (form==="extra"&&/\uE000/.test(part)?POLITE_TEXT_PROPOSAL.exec(part):null);
-    const riskText = polite ? part.slice(0,polite.index) : part;
+    const riskText = polite ? semanticPart.slice(0,polite.index) : semanticPart;
     const dateField = form==="period"||form==="dates"||form==="quote"&&fields.includes("valid");
-    const risk = dependent || RISK.test(riskText) || INDIRECT_INQUIRY.test(riskText) || CONDITION_LINK.test(part) ||
-      dateField&&/(?:인지|일지|맞는지)[^,.!?]{0,35}(?:확인|검토|생각)\s*중|아직\s*확인\s*중/.test(part) ||
-      dateField&&/(?:할|정할|지정할|설정할|옮길|바꿀|변경할|확정할|넣을)\s*생각/.test(part) ||
-      (form==="extra"||dateField)&&/^만약\s/.test(part),
-      negative = NEGATIVE.test(part) || !!polite&&/(?<![가-힣])(?:안|못)\s*$/.test(riskText), cancel = CANCEL.test(part);
+    const risk = dependent || RISK.test(riskText) || INDIRECT_INQUIRY.test(riskText) || CONDITION_LINK.test(semanticPart) ||
+      dateField&&/(?:인지|일지|맞는지)[^,.!?]{0,35}(?:확인|검토|생각)\s*중|아직\s*확인\s*중/.test(semanticPart) ||
+      dateField&&/(?:할|정할|지정할|설정할|옮길|바꿀|변경할|확정할|넣을)\s*생각/.test(semanticPart) ||
+      (form==="extra"||dateField)&&/^만약\s/.test(semanticPart),
+      // A field label describing non-working days is not a prohibition on
+      // changing that field. Retain any real negative predicate after it.
+      negative = NEGATIVE.test(form==="period"&&fields.length===1&&fields[0]==="excluded"
+        ? part.replace(/^작업\s*하지\s*않는\s*날(?=\s|[은는이구가을를만도:])/u,"제외일") : part) ||
+        !!polite&&/(?<![가-힣])(?:안|못)\s*$/.test(riskText), cancel = CANCEL.test(part)&&
+        !(fields.length===1&&originalValueIdentity(form,fields[0],part));
     const following = segments[index + 1] ? mentioned(form, segments[index + 1]) : [];
     const proof=cancel&&!prefixRisk&&!risk&&!negative?withdrawalObject(form,part,fields,modeWithdrawal):undefined;
     const withdrawal=!!proof&&(!/(?:하고요?|하며)$/.test(proof.predicate)||!!proof.currentRetention||fields.length>0&&
@@ -1125,6 +1434,7 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
     // 날짜의 정상적인 범위 및 부정 가용일은 금액/인원 범위와 다르게 처리해요.
     for (const field of fields) {
       out.requested.add(field);
+      if(preview||crewRelation)out.serverOnly.add(field);
       // 같은 칸에 다시 지시가 나오면 앞의 단독 철회/유지 근거로 풀지 않아요.
       if (!withdrawal) {
         out.canceled.delete(field);
@@ -1168,7 +1478,7 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
         if (!pendingReference.complete || prefixRisk || risk || negative || cancel) out.blocked.add(field);
       }
       const bounds = (field === "amount" || field === "crew" || duration) &&
-        (BOUNDS.test(part) || field === "crew" && CREW_LIMIT.test(part) || duration?.risk);
+        (BOUNDS.test(semanticPart) || field === "crew" && CREW_LIMIT.test(semanticPart) || duration?.risk);
       const reassign = REASSIGN.test(part) && !risk && !negative &&
         hasValue;
       if (reassign) {
@@ -1191,7 +1501,11 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
       }
       const currentReference = CURRENT.test(part) || fields.length === 1 && CURRENT_HANDS_OFF.test(part);
       const currentEllipse = currentReference && /(?:으로|로)$/.test(part);
-      if ((KEEP.test(part) || currentEllipse) && currentReference && !prefixRisk && !risk && !negative && !cancel &&
+      const identity=fields.length===1?currentIdentityClause(form,field,part):undefined;
+      const next=resolved[index+1];
+      const actualIdentity=identity==="complete"||identity==="linked"&&next&&next.sentence===resolved[index].sentence&&
+        !next.dependent&&next.fields.length>0&&!next.fields.includes(field);
+      if (((KEEP.test(part) || currentEllipse) && currentReference||actualIdentity) && !prefixRisk && !risk && !negative && !cancel &&
         !PRIOR.test(part) && !hasValue) {
         out.currentKeep.add(field);
         out.currentKeepEvidence.set(field, [...(out.currentKeepEvidence.get(field) ?? []), part]);
@@ -1230,7 +1544,7 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
       out.blocked.add(ref.field);
       continue;
     }
-    const sameFieldParts = segments.filter(part => mentioned(form, part).includes(ref.field) &&
+    const sameFieldParts = segments.filter(part => !reportedRetention(part)&&mentioned(form, part).includes(ref.field) &&
       !ref.evidence.includes(part) && !part.includes(ref.evidence));
     if (sameFieldParts.some(part => !typed.some(other => other.field === ref.field &&
         (other.evidence.includes(part) || part.includes(other.evidence))) &&
@@ -1247,6 +1561,12 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
     } else {
       out.priorReferences.set(ref.field, ref.kind);
     }
+  }
+  // 보고만 있는 칸의 이전 후보를 되살리거나 보류를 해제하지 않아요.
+  // 보고 후 독립적으로 다시 내린 지시는 기존 증명 경로를 사용해요.
+  for(const field of reportedFields)if(!out.requested.has(field)){
+    out.requested.add(field);
+    out.blocked.add(field);
   }
   // 경쟁 관계 자체는 계속 보류해요. 완결된 독립 이전 유지절과
   // 별도 명시 일수 대입절이 있을 때만 세션이 같은 값인지 검증할
@@ -1291,7 +1611,7 @@ export function requestIntent(form: AssistForm, text: string): RequestIntent {
         out.carryConflicts.has(field)||out.canceled.has(field)||out.priorReferences.has(field))continue;
     const scope=owned[0],next=resolved[resolved.indexOf(scope)+1];
     if(!next||next.sentence!==scope.sentence||next.dependent||!next.fields.length||
-        next.fields.includes(field)||!CURRENT_KEEP_LINK.test(scope.part)||!/(?:고요?|며)$/.test(scope.part)||
+        next.fields.includes(field)||!(CURRENT_KEEP_LINK.test(scope.part)||currentIdentityClause(form,field,scope.part)==="linked")||!/(?:고요?|며)$/.test(scope.part)||
         !out.currentKeepEvidence.get(field)?.includes(scope.part))continue;
     out.linkedCurrentKeep.set(field,scope.part);
   }

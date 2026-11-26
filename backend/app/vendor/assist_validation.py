@@ -1,9 +1,11 @@
 """업체 도우미 후보의 원문·타입·업무 한도를 결정적으로 검증한다."""
 
+from __future__ import annotations
+
 import re
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
@@ -24,6 +26,7 @@ from app.vendor.assist_date_edit import (
 from app.vendor.assist_intent import (
     _REFERENT,
     CONDITIONAL_LINK,
+    DATE_CHANGE_ACTION,
     EXCLUDED_EDIT_REFERENCE,
     EXTRA_LABEL_MARKER,
     EXTRA_REASON_LABEL,
@@ -45,14 +48,17 @@ from app.vendor.assist_intent import (
     retention_scopes,
 )
 from app.vendor.assist_intent_safety import (
+    DateClauseFact,
     affirmative_assignment_suffix,
     assignment_directive_in_value,
+    date_clause_facts,
     date_set_is_inquiry,
     date_value_clauses,
     explicit_text_assignment,
     mask_bound_text_literals,
     mask_explicit_text_value,
     mask_owned_text_values,
+    proposal_risk_text,
     text_set_is_inquiry,
     text_value_boundary_ok,
     text_value_is_clear_instruction,
@@ -347,6 +353,9 @@ def _date_assignment_scope_ok(
         return True
     if not isinstance(value, str):
         return False
+    preview = _boundary_preview(form, text, context)
+    if preview is not None:
+        return (field, value) == preview
     day = date.fromisoformat(value)
     matched_target = False
     matched_other = False
@@ -431,6 +440,7 @@ def _grounded(
     context: AssistContext,
     *,
     text: str | None = None,
+    turn_facts: TurnAnalysis | None = None,
 ) -> bool:
     if field in ("amount", "crew"):
         return _scalar_grounded(field, value, evidence, text, extra=form == "extra")
@@ -474,6 +484,17 @@ def _grounded(
             # '추출되지 않음'을 이전 제외 날짜 삭제로 해석하지 않는다.
             return False
         if text is not None:
+            complete_list = (
+                turn_facts.field(field).complete_list
+                if turn_facts is not None
+                else _complete_date_list_assignment(form, field, text, context)
+            )
+            if complete_list is not None and (
+                set(value) != set(complete_list.values)
+                or len(value) != len(complete_list.values)
+                or not evidence_matches(evidence, complete_list.evidence)
+            ):
+                return False
             for turn in text.splitlines():
                 if evidence_matches(turn, evidence):
                     raw = normalized(turn)
@@ -627,6 +648,14 @@ _RETAIN_NEGATED = re.compile(
     r"|(?:같지\s*않|같은\s*건\s*아니|같은\s*게\s*아니|동일하지\s*않)"
     r"|(?:살려|이어서\s*사용|(?:안으로|걸로|내용으로)\s*(?:두|둘))"
     r"[^,;.!?？\n]{0,14}(?:지\s*마|지\s*말|지\s*않|안\s*해|취소)"
+)
+# Reported/quoted speech is not a present keep operation. Match the
+# quotative complement and its speech predicate together, not a bare
+# historical word; a subsequent independent directive stays eligible.
+_RETAIN_REPORTED = re.compile(
+    r"(?:다|라|자|냐)고\s*(?:이미\s*|앞서\s*|아까\s*)?"
+    r"(?:말|말씀|설명|전달|보고|안내|언급|답변|기재|기록)"
+    r"(?:\s*(?:했|하|해|한|드렸|드리|드려))"
 )
 _UNCERTAIN_CHANGE = re.compile(r"(?:미정|모르|애매|정도|였나|일까|혹시|또는|아니면|사이|[?？])")
 _DIRECT_REPLACE = re.compile(r"(?:말고|아니고|아니라|대신|→|->)")
@@ -960,7 +989,11 @@ def _targeted_retention(
         ):
             # 명시적인 이전 제안 유지 지시를 현재값 유지로 바꾸지 않는다.
             continue
-        if _RETAIN_NEGATED.search(scope) or _RULE_QUESTION_OR_UNDECIDED.search(scope):
+        if (
+            _RETAIN_NEGATED.search(scope)
+            or _RULE_QUESTION_OR_UNDECIDED.search(scope)
+            or _RETAIN_REPORTED.search(scope)
+        ):
             continue
         # 유지 지시 뒤에 같은 절의 취소가 나오면 현재값 유지도 확정할 수 없다.
         if _PENDING_CANCEL.search(raw[at + retained.end() : right]):
@@ -1481,9 +1514,28 @@ def _resolved_intent_clauses(
             and _SCALAR_CONDITION.search(text)
             and not _RULE_QUESTION_OR_UNDECIDED.search(text)
         )
-        unbound = bool(condition or (not fields and risk and not part.retentions))
+        # A completed utterance about deferring the *conversation* does not
+        # defer an existing form operation. This is a distinct speech act:
+        # no owned fields or values, no assignment/withdrawal predicate,
+        # and a closed speech-object/request clause.
+        discourse = (
+            not fields
+            and not part.retentions
+            and part.boundary in ("sentence", "end")
+            and _DEFERRED_DISCUSSION.fullmatch(text)
+        )
+        unbound = bool(condition or (not fields and risk and not part.retentions and not discourse))
         result.append(_ResolvedIntentClause(part, frozenset(fields), unbound, boundary_competition))
     return tuple(result)
+
+
+_DEFERRED_DISCUSSION = re.compile(
+    r"(?:(?:다른|추가|별도|그\s*외의?)\s+)?"
+    r"(?:문의|질문|상담)(?:은|는|을|를|도)\s*"
+    r"(?:나중에|추후에?|다음에|다음번에)\s*"
+    r"(?:(?:드리|하|여쭈|물어보)(?:겠(?:습니다|어요)|ㄹ게요|을게요|할게요)"
+    r"|드릴게요|할게요|여쭐게요|물어볼게요)\s*[.!。]?$"
+)
 
 
 def _scalar_risk_scopes(
@@ -1496,16 +1548,108 @@ def _scalar_risk_scopes(
     )
 
 
+_PREVIEW_BASIS = re.compile(
+    r"^\s*(?P<basis>[^,;.!?？\n]{1,48}?)(?:을|를)\s*(?:생각하|고려하|감안하)면\s*"
+)
+_PREVIEW_BOUNDARY = re.compile(
+    r"\s*(?:에|부터|까지)\s*(?P<verb>시작|착공|착수|종료|마감|준공|완공|완료)"
+    r"(?:하는|할)\s*(?:걸로|것으로|안으로)\s*"
+)
+_PREVIEW_RECOMMENDATION = re.compile(
+    r"\s*(?:(?:으로|로)\s*)?(?:변경|수정|정정|설정|조정|지정)하는\s*"
+    r"(?:게|것이|편이)\s*좋(?:겠어요|겠습니다|아요|습니다)\s*[.!。]?\s*$"
+)
+
+
+def _boundary_preview_body(form: FormName, text: str) -> str | None:
+    """두 문장의 추천 + 변경안 요청을 일반 대입과 분리한다."""
+    if form != "period":
+        return None
+    raw = normalized(text)
+    parts = intent_clauses(form, raw)
+    if len(parts) != 2 or parts[0].boundary != "sentence":
+        return None
+    body = raw[parts[0].start : parts[0].end].strip()
+    preview = proposal_risk_text(raw[parts[1].start : parts[1].end].strip())
+    if preview is None or not re.fullmatch(r"\s*(?:변경|수정|정정|설정|선택|확정)\s*", preview):
+        return None
+    return body if _PREVIEW_RECOMMENDATION.search(body) else None
+
+
+def _boundary_preview(form: FormName, text: str, context: AssistContext) -> tuple[str, str] | None:
+    """명시된 단일 경계의 변경안 요청. 실행 조건이나 단순 희망은 포함하지 않는다."""
+    body = _boundary_preview_body(form, text)
+    if body is None:
+        return None
+    # 평가 기준을 고려하는 배경 구절과 실제 실행 조건을 구분한다.
+    # 조건/수량/타 필드/제안 취소가 들어간 배경은 마스킹하지 않는다.
+    lead = _PREVIEW_BASIS.match(body)
+    if lead is not None:
+        basis = lead["basis"]
+        if (
+            field_mentions(form, basis)
+            or date_tokens(basis, context)
+            or re.search(r"[\d\"'“”‘’]", basis)
+            or _RETENTION_CONDITION.search(basis)
+            or _RULE_NEGATED_ACTION.search(basis)
+            or _OPERATION_VERB.search(basis)
+            or re.search(r"만약|가정|예시|인용|전제|조건|승인|허락", basis)
+        ):
+            return None
+        body = body[lead.end() :]
+    tokens = date_tokens(body, context)
+    if len(tokens) != 1 or _RULE_DATE_RANGE.search(body):
+        return None
+    a, b, day = tokens[0]
+    marks = field_mentions(form, body[:a])
+    owners = {field for mark in marks for field in mark.fields}
+    if marks:
+        if (
+            len(marks) != 1
+            or marks[0].start != 0
+            or not re.fullmatch(r"\s*[은는을를이가]?\s*", body[marks[0].end : a])
+        ):
+            return None
+    elif body[:a].strip():
+        return None
+    if re.search(r"[\"'“”‘’]", body):
+        return None
+    tail = body[b:]
+    predicate = _PREVIEW_BOUNDARY.match(tail)
+    if predicate is not None:
+        field = "start" if predicate["verb"] in ("시작", "착공", "착수") else "end"
+        if owners and owners != {field}:
+            return None
+        tail = tail[predicate.end() :]
+    elif len(owners) == 1 and owners <= {"start", "end"}:
+        field = next(iter(owners))
+    else:
+        return None
+    if (
+        not _PREVIEW_RECOMMENDATION.fullmatch(tail)
+        or _RETENTION_CONDITION.search(body)
+        or _RULE_NEGATED_ACTION.search(body)
+        or _SCALAR_UNCERTAIN.search(body)
+        or date_set_is_inquiry(form, field, body)
+    ):
+        return None
+    return field, day.isoformat()
+
+
 def _conditional_assignment_fields(
-    form: FormName, text: str, context: AssistContext
+    form: FormName, text: str, context: AssistContext, *, turn: TurnAnalysis | None = None
 ) -> frozenset[str]:
     """공통 절에서 확인된 조건부 요청 대상만 상태 보류로 전달한다."""
-    raw = normalized_scope(text)
-    if form == "extra":
+    if turn.boundary_preview if turn is not None else _boundary_preview(form, text, context):
+        return frozenset()
+    raw = turn.bound_scope if turn is not None else normalized_scope(text)
+    if turn is None and form == "extra":
         raw = mask_bound_text_literals(raw)
     dependent = False
     fields: set[str] = set()
-    for part in _resolved_intent_clauses(form, raw, context):
+    for part in (
+        turn.bound_clauses if turn is not None else _resolved_intent_clauses(form, raw, context)
+    ):
         clause = part.clause
         dependent = dependent or bool(CONDITIONAL_LINK.search(raw[clause.start : clause.end]))
         if dependent:
@@ -1515,15 +1659,75 @@ def _conditional_assignment_fields(
     return frozenset(fields)
 
 
+def _conditional_current_retention(
+    item: FieldIntent,
+    data: AssistRequest,
+    text: str,
+    context: AssistContext,
+    *,
+    turn: TurnAnalysis | None = None,
+) -> bool:
+    """Reject a keep whose own operation is conditional, not an earlier closed inquiry."""
+    raw = turn.flat if turn is not None else normalized(text)
+    needle = normalized(item.evidence)
+    if not needle or raw.count(needle) != 1:
+        return item.field in _conditional_assignment_fields(data.form, text, context, turn=turn)
+    at = raw.index(needle)
+    clauses = (
+        turn.flat_clauses if turn is not None else _resolved_intent_clauses(data.form, raw, context)
+    )
+    dependent = False
+    for part in clauses:
+        clause = part.clause
+        body = raw[clause.start : clause.end]
+        matches = list(CONDITIONAL_LINK.finditer(body))
+        # A factual prohibited-work day already in the exclusion list is
+        # explanatory evidence, not a condition authorizing a new operation.
+        if matches and data.form == "period" and item.field == "excluded":
+            reference = re.search(
+                rf"(?:현재|지금)\s*(?:{_prior_field_word(data.form, item.field)})(?=$|[\s은는이가을를만도])",
+                body,
+            )
+            if reference is not None:
+                prefix = body[: reference.start()].strip()
+                tokens = date_tokens(prefix, context)
+                if (
+                    len(tokens) == 1
+                    and tokens[0][0] == 0
+                    and tokens[0][2].isoformat() in (data.current.get("excluded") or [])
+                    and re.fullmatch(
+                        r"\s*[은는이가]?\s*(?:작업|공사|시공|방문)(?:을|를)?\s*하면\s*"
+                        r"안\s*되는\s*(?:날|날짜|일)(?:이)?라서\s*",
+                        prefix[tokens[0][1] :],
+                    )
+                ):
+                    matches = [m for m in matches if m.start() >= reference.start()]
+        if clause.start <= at and at + len(needle) <= clause.end:
+            return dependent or bool(matches)
+        if clause.boundary in ("sentence", "question"):
+            dependent = False
+        else:
+            dependent = dependent or bool(matches)
+    return item.field in _conditional_assignment_fields(data.form, text, context, turn=turn)
+
+
 def _unresolved_owned_fields(
-    data: AssistRequest, context: AssistContext, previous: PreviousCandidate | None
+    data: AssistRequest,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+    *,
+    turn: TurnAnalysis | None = None,
 ) -> frozenset[str]:
     """Preserve unresolved field intent even when both producers abstain."""
-    raw = normalized_scope(data.text)
-    if data.form == "extra":
+    raw = turn.bound_scope if turn is not None else normalized_scope(data.text)
+    if turn is None and data.form == "extra":
         raw = mask_bound_text_literals(raw)
     fields: set[str] = set()
-    for resolved in _resolved_intent_clauses(data.form, raw, context):
+    for resolved in (
+        turn.bound_clauses
+        if turn is not None
+        else _resolved_intent_clauses(data.form, raw, context)
+    ):
         part = resolved.clause
         owners = {field for mention in part.mentions for field in mention.fields}
         if len(owners) != 1 or resolved.fields != owners:
@@ -1541,7 +1745,7 @@ def _unresolved_owned_fields(
         ):
             fields.add(field)
     verified = {item.field for item in previous.fields} if previous else set()
-    for scope in retention_scopes(data.form, raw):
+    for scope in turn.bound_retentions if turn is not None else retention_scopes(data.form, raw):
         if scope.compatible and scope.reference == "previous" and not scope.remaining:
             fields.update(scope.fields - verified)
     return frozenset(fields)
@@ -1552,6 +1756,12 @@ def _field_scope(
 ) -> Literal["target", "other", "unbound", "none"]:
     """target: 해당 칸, other: 독립 다른 칸, unbound: 미확정/전역, none: 요청 미식별."""
     clauses = _resolved_intent_clauses(form, normalized_scope(text), context)
+    return _scope_from_clauses(field, clauses)
+
+
+def _scope_from_clauses(
+    field: str, clauses: tuple[_ResolvedIntentClause, ...]
+) -> Literal["target", "other", "unbound", "none"]:
     if any(clause.unbound for clause in clauses):
         return "unbound"
     if any(field in clause.fields for clause in clauses):
@@ -1561,17 +1771,30 @@ def _field_scope(
     return "none"
 
 
-def _has_new_field_risk(data: AssistRequest, context: AssistContext, field: str) -> bool:
+def _has_new_field_risk(
+    data: AssistRequest, context: AssistContext, field: str, *, turn: TurnAnalysis | None = None
+) -> bool:
     """A new hold requires evidence for this field, not a parser side effect.
 
     Explicit field-owned questions/undecided operations and value spans remain
     holds. General capability questions with no boundary values, and
     independently owned sibling assignments, are not edits to every field.
     """
-    raw = normalized_scope(data.text)
-    if data.form == "extra":
+    preview = (
+        turn.boundary_preview
+        if turn is not None
+        else _boundary_preview(data.form, data.text, context)
+    )
+    if preview is not None:
+        return field == preview[0]
+    raw = turn.owned_scope if turn is not None else normalized_scope(data.text)
+    if turn is None and data.form == "extra":
         raw = mask_owned_text_values(raw)
-    for part in _resolved_intent_clauses(data.form, raw, context):
+    for part in (
+        turn.owned_clauses
+        if turn is not None
+        else _resolved_intent_clauses(data.form, raw, context)
+    ):
         clause = part.clause
         body = raw[clause.start : clause.end]
         if field not in part.fields:
@@ -1591,6 +1814,524 @@ def _has_new_field_risk(data: AssistRequest, context: AssistContext, field: str)
     # previous candidate exists, the transition below keeps the original
     # uncertainty; absent history, only independently owned risk creates it.
     return False
+
+
+@dataclass(frozen=True)
+class DateListAssignment:
+    """An explicit whole-list assignment, not a member-to-member relation."""
+
+    values: tuple[str, ...]
+    evidence: str
+
+
+@dataclass(frozen=True)
+class OwnedCalendarOperation:
+    """명시적 목록 필드의 전체 대입·비우기 및 소유 날짜."""
+
+    field: str
+    action: Literal["set", "clear", "uncertain"]
+    values: tuple[str, ...]
+    evidence: str
+    mentioned_values: tuple[str, ...] = ()
+
+
+_CALENDAR_LIST_REQUEST = re.compile(
+    r"(?:입력|등록|설정|확정|변경|수정|정정|교체|대체|지정|반영|추가|"
+    r"잡아|넣어|정해|적어|기록|삭제|지우|지워|비우|비워|제거|해제)"
+)
+_CALENDAR_LIST_END = re.compile(
+    r"(?:주세요|줘요|주십시오|주시겠어요|주실래요|주시겠습니까|"
+    r"부탁(?:합니다|드립니다)?|바랍니다|합니다|하겠습니다|할게요|입니다)"
+    r"\s*[.!?？]?$"
+)
+_CALENDAR_LIST_SEP = re.compile(r"\s*(?:[,，、·]|하고|이랑|랑|과|와|및|그리고)\s*")
+_CALENDAR_ANAPHOR = re.compile(r"(?:그\s*날(?:짜)?|해당\s*(?:날짜|일자|일))")
+_CALENDAR_FULL = re.compile(r"(?:전부|모두|전체|몽땅|모든)")
+_CALENDAR_MEMBER = re.compile(r"(?:중|첫|두\s*번째|세\s*번째|나머지|기존\s*목록)")
+
+
+def _owned_calendar_operation(
+    data: AssistRequest, context: AssistContext, field: str, text: str
+) -> OwnedCalendarOperation | None:
+    """값과 필드 표지, 확정 술어가 같은 독립 연산을 이루어야 한다."""
+    if (data.form, field) not in (("period", "excluded"), ("dates", "days")):
+        return None
+    raw = normalized_scope(text)
+    parts = intent_clauses(data.form, raw)
+    candidates = []
+    for index, part in enumerate(parts):
+        clause = raw[part.start : part.end].strip()
+        if not clause:
+            continue
+        labels = field_mentions(data.form, clause)
+        if not labels or any(label.fields != {field} for label in labels):
+            continue
+        if not _CALENDAR_LIST_REQUEST.search(clause) or not _CALENDAR_LIST_END.search(clause):
+            continue
+        risk = polite_execution_risk_text(clause)
+        if (
+            CONDITIONAL_LINK.search(risk)
+            or _RULE_QUESTION_OR_UNDECIDED.search(risk)
+            or _RULE_NEGATED_ACTION.search(risk)
+            or _RETAIN.search(risk)
+            or _OPERATION_DENIAL.search(risk)
+            or _RETAIN_REPORTED.search(risk)
+        ):
+            continue
+        # 연결된 조건의 결과는 별개 명시 값으로 확정하지 않는다.
+        if any(
+            earlier.end <= part.start
+            and earlier.boundary in ("comma", "connective")
+            and CONDITIONAL_LINK.search(raw[earlier.start : earlier.end])
+            for earlier in parts
+        ):
+            continue
+        if data.form == "period" and _CALENDAR_FULL.search(clause) and _deletion_requested(clause):
+            if not date_tokens(clause, context):
+                candidates.append(OwnedCalendarOperation(field, "clear", (), clause))
+            continue
+        tokens = date_tokens(clause, context)
+        if not tokens and data.form == "period" and _CALENDAR_ANAPHOR.search(clause):
+            # 명시된 날짜가 하나뿐인 직전 설명에서 '그날'을 지칭한
+            # 경우에만 기존 날짜 토큰을 연결한다.
+            prior = [p for p in parts if p.end <= part.start]
+            if not prior or prior[-1].boundary != "sentence":
+                continue
+            before = raw[prior[-1].start : prior[-1].end].strip()
+            reported_dates = date_tokens(before, context)
+            if len(reported_dates) != 1 or field_mentions("period", before):
+                continue
+            if not re.search(
+                r"안\s*(?:되|돼|된)|못\s*(?:가|하|받)|불가능", before
+            ) or _CALENDAR_LIST_REQUEST.search(before):
+                continue
+            evidence = raw[prior[-1].start : part.end].strip()
+            mentioned = (reported_dates[0][2].isoformat(),)
+            base = data.current.get(field)
+            if "추가" not in clause or not isinstance(base, list):
+                continue
+            values = tuple(sorted(set(base) | set(mentioned)))
+            candidates.append(OwnedCalendarOperation(field, "set", values, evidence, mentioned))
+            continue
+        if not tokens or _RULE_DATE_RANGE.search(clause) or _CALENDAR_MEMBER.search(clause):
+            continue
+        first, last = tokens[0][0], tokens[-1][1]
+        literal = clause[first:last]
+        if not date_list_prefix(literal) or (len(_CALENDAR_LIST_SEP.split(literal)) != len(tokens)):
+            continue
+        if index and not clause[:first].strip():
+            earlier = parts[index - 1]
+            prefix = raw[earlier.start : earlier.end].rstrip().rstrip(",，")
+            if (
+                earlier.boundary == "comma"
+                and not earlier.fields
+                and not earlier.retentions
+                and date_list_prefix(prefix, allow_short_fragment=True, allow_context_lead=True)
+            ):
+                # 앞 멤버가 아직 귀속되지 않았다면 마지막 조각만으로
+                # 이미 검증된 전체 목록을 대체하지 않는다.
+                continue
+        counts = {count for _, _, count in date_list_declared_counts(clause)}
+        if date_list_count_mismatch(clause, context) or (counts and counts != {len(tokens)}):
+            # 목록 자체를 입증했지만 개수가 맞지 않으면 독립 복구나
+            # 생산자 부분 후보가 이를 덮어쓸 수 없다.
+            candidates.append(
+                OwnedCalendarOperation(
+                    field,
+                    "uncertain",
+                    (),
+                    clause,
+                    tuple(day.isoformat() for _, _, day in tokens),
+                )
+            )
+            continue
+        # 모든 날짜는 하나의 완전한 목록으로 연결되어야 한다.
+        # 목록 앞·뒤에 별개 날짜 또는 상대 연산이 있으면 보류한다.
+        if re.search(r"\d\s*(?:월|일)", clause[:first] + clause[last:]):
+            continue
+        values = tuple(day.isoformat() for _, _, day in tokens)
+        if len(set(values)) != len(values):
+            continue
+        if not any(label.end <= first or label.start >= last for label in labels):
+            continue
+        mentioned = values
+        if field == "excluded" and "추가" in clause and not _CALENDAR_FULL.search(clause):
+            base = data.current.get(field)
+            if not isinstance(base, list):
+                continue
+            values = tuple(sorted(set(base) | set(mentioned)))
+        candidates.append(OwnedCalendarOperation(field, "set", values, clause, mentioned))
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    # 전체 목록 복구도 같은 필드의 별개 날짜 대입을 덮어쓰지 않는다.
+    # 이동/교체 술어는 일반 목록 파서보다 넓게 검사하되, 실제 목록
+    # 추출은 위의 엄격한 근거 검사를 그대로 사용한다.
+    if any(
+        part.value_fields == {field}
+        and (values := {day.isoformat() for _, _, day in date_tokens(part.text, context)})
+        and not values.issubset(candidate.mentioned_values)
+        and _OPERATION_VERB.search(part.text)
+        and _CALENDAR_LIST_END.search(part.text.strip())
+        for part in date_clause_facts(data.form, raw)
+    ):
+        return None
+    return candidate
+
+
+def _calendar_boundary_conflict(
+    data: AssistRequest,
+    context: AssistContext,
+    field: str,
+    value: Value,
+    calendar: OwnedCalendarOperation | None,
+) -> bool:
+    """제외 날짜가 독립 경계 대입인 경우에만 경계 후보가 될 수 있다."""
+    if not (
+        data.form == "period"
+        and field in ("start", "end")
+        and calendar is not None
+        and value in calendar.mentioned_values
+    ):
+        return False
+    raw = normalized_scope(data.text)
+    return not any(
+        part.fields == {field}
+        and value
+        in {day.isoformat() for _, _, day in date_tokens(raw[part.start : part.end], context)}
+        for part in intent_clauses(data.form, raw)
+    )
+
+
+def _calendar_candidate(
+    operation: OwnedCalendarOperation, data: AssistRequest, context: AssistContext
+) -> CandidateField:
+    if operation.action == "uncertain":
+        return _hold(operation.field, "ambiguous_intent")
+    value = list(operation.values) if operation.action == "set" else None
+    if (
+        operation.action == "set"
+        and data.form != "period"
+        and not _business_ok(
+            data.form, operation.field, value, data, context, {operation.field: value}
+        )
+    ):
+        return _hold(operation.field, "business_constraint")
+    return CandidateField(
+        field=operation.field,
+        action=operation.action,
+        value=value,
+        evidence=operation.evidence,
+        intent_kind="explicit_change",
+        value_source="derived" if operation.values != operation.mentioned_values else "utterance",
+        source="rule",
+        status="valid",
+        alternatives=[],
+        origin_request_id=data.request_id,
+    )
+
+
+_LIST_CHANGE_SUFFIX = re.compile(
+    rf"\s*(?:으로|로)\s*(?:{DATE_CHANGE_ACTION})"
+    r"\s*(?:해\s*)?(?:주세요|줘요|주십시오|주시겠어요|주실래요|"
+    r"주시겠습니까|주실\s*수\s*있을까요|합니다|하겠습니다|할게요)"
+    r"\s*[?？.!。]?\s*$"
+)
+
+
+def _complete_date_list_assignment(
+    form: FormName,
+    field: str,
+    text: str,
+    context: AssistContext,
+    *,
+    clauses: tuple[DateClauseFact, ...] | None = None,
+) -> DateListAssignment | None:
+    """Classify a complete owned enumeration before interpreting a move.
+
+    This proof is deliberately restricted to an explicit list object and
+    a completed assignment of that object. An old/new member, subset,
+    unknown reference, protection, or competing clause remains on the
+    original relation path.
+    """
+    if (form, field) not in (("dates", "days"), ("period", "excluded")):
+        return None
+    if not date_replacement_requested(field, text):
+        return None
+    parts = clauses if clauses is not None else date_clause_facts(form, text)
+    if any(field in part.risk_fields for part in parts):
+        return None
+    all_tokens = date_tokens(text, context)
+    if len(all_tokens) < 2:
+        return None
+    matches = []
+    for part in parts:
+        clause = normalized(part.text)
+        if part.value_fields != {field}:
+            # The whole-list proof may not consume another date or an
+            # unbound condition/cancellation elsewhere in this request.
+            if (
+                date_tokens(clause, context)
+                or _RETENTION_CONDITION.search(clause)
+                or _PENDING_CANCEL.search(clause)
+            ):
+                return None
+            continue
+        tokens = date_tokens(clause, context)
+        if len(tokens) != len(all_tokens) or len({day for _, _, day in tokens}) != len(tokens):
+            return None
+        first, last = tokens[0][0], tokens[-1][1]
+        labels = field_mentions(form, clause[:first])
+        if len(labels) != 1 or labels[0].fields != {field} or labels[0].start != 0:
+            return None
+        if not re.fullmatch(r"\s*[은는을를이가]?\s*", clause[labels[0].end : first]):
+            return None
+        if (
+            not date_list_prefix(clause[first:last])
+            or not _LIST_CHANGE_SUFFIX.fullmatch(clause[last:])
+            or _PENDING_CANCEL.search(clause)
+            or _RETENTION_CONDITION.search(polite_execution_risk_text(clause))
+            or _RETAIN.search(clause)
+            or date_list_count_mismatch(clause, context)
+        ):
+            return None
+        matches.append(
+            DateListAssignment(tuple(day.isoformat() for _, _, day in tokens), clause[first:last])
+        )
+    return matches[0] if len(matches) == 1 else None
+
+
+@dataclass(frozen=True)
+class CrewTotalFact:
+    """Separately typed increment and final total, not competing assignments."""
+
+    increment: int
+    total: int
+    total_evidence: str
+
+
+@dataclass(frozen=True)
+class ScalarDeltaFact:
+    """상대 수량과 실제 기준값을 절대 대입과 구분한다."""
+
+    field: str
+    operand: int
+    direction: Literal[-1, 1]
+    base: int | None
+    result: int | None
+    evidence: str
+    operand_span: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class FieldTurnFacts:
+    """Ownership and veto facts, independently extracted from the full turn."""
+
+    field: str
+    scope: Literal["target", "other", "unbound", "none"]
+    mentioned: bool
+    date_inquiry: bool
+    replacement_requested: bool
+    new_risk: bool
+    scalar_tokens: tuple[tuple[int, int, int], ...]
+    complete_list: DateListAssignment | None = None
+    crew_total: CrewTotalFact | None = None
+    delta: ScalarDeltaFact | None = None
+    calendar: OwnedCalendarOperation | None = None
+
+
+@dataclass(frozen=True)
+class TurnAnalysis:
+    """Separate coordinate spaces: legacy flattened text and line-aware text.
+
+    Literal masks preserve offsets. No normalized span is treated as proof
+    of a different raw turn or field. Clause ownership is not value grounding.
+    """
+
+    text: str
+    flat: str
+    scoped: str
+    scalar_raw: str
+    bound_scope: str
+    owned_scope: str
+    flat_clauses: tuple[_ResolvedIntentClause, ...]
+    scope_clauses: tuple[_ResolvedIntentClause, ...]
+    scalar_clauses: tuple[_ResolvedIntentClause, ...]
+    bound_clauses: tuple[_ResolvedIntentClause, ...]
+    owned_clauses: tuple[_ResolvedIntentClause, ...]
+    bound_retentions: tuple[RetentionScope, ...]
+    linked_retentions: tuple[RetentionScope, ...]
+    date_clauses: tuple[DateClauseFact, ...]
+    fields: tuple[FieldTurnFacts, ...]
+    boundary_preview: tuple[str, str] | None = None
+
+    def field(self, field: str) -> FieldTurnFacts:
+        return next(part for part in self.fields if part.field == field)
+
+    def evidence_matches(self, evidence: str) -> bool:
+        return bool(evidence.strip()) and normalized(evidence) in self.flat
+
+
+@dataclass(frozen=True)
+class RetentionConflictFact:
+    """An independently resolved conflicting reference, before any new value."""
+
+    known: bool
+    value: str | int | tuple[str, ...] | None
+
+
+def _freeze_value(value: Value) -> str | int | tuple[str, ...] | None:
+    return tuple(value) if isinstance(value, list) else value
+
+
+@dataclass(frozen=True)
+class PendingFieldFacts:
+    """A verified field-state transition, independent of producer selection."""
+
+    field: str
+    current_keep_evidence: str | None
+    unscoped_control: bool
+    implicit_previous: bool
+    group_previous: bool
+    independent_clauses: frozenset[str]
+    competing_references: tuple[RetentionConflictFact, ...]
+
+    def conflicts_with(self, value: Value) -> bool:
+        return any(
+            not ref.known or ref.value != _freeze_value(value) for ref in self.competing_references
+        )
+
+
+@dataclass(frozen=True)
+class RequestAnalysis:
+    """Server-created, immutable facts for exactly one request/context.
+
+    The history turn facts are lexical only until review_previous validates
+    the client's prior candidate. Binding never trusts client provenance.
+    """
+
+    request_key: tuple[str, str]
+    current: TurnAnalysis
+    history: tuple[TurnAnalysis, ...]
+    bound: bool = False
+    prior_key: str | None = None
+    prior_rejections: tuple[tuple[str, ReasonCode], ...] = ()
+    withdrawals: Mapping[str, WithdrawalDecision] | None = None
+    pending: tuple[PendingFieldFacts, ...] = ()
+    conditional_fields: frozenset[str] = frozenset()
+    unresolved_fields: frozenset[str] = frozenset()
+
+    def turn(self, text: str) -> TurnAnalysis | None:
+        if text == self.current.text:
+            return self.current
+        return next((part for part in self.history if part.text == text), None)
+
+    def pending_field(self, field: str) -> PendingFieldFacts:
+        return next(part for part in self.pending if part.field == field)
+
+
+def _request_key(data: AssistRequest, context: AssistContext) -> tuple[str, str]:
+    return data.model_dump_json(), context.model_dump_json()
+
+
+def _check_analysis(data: AssistRequest, context: AssistContext, analysis: RequestAnalysis) -> None:
+    if analysis.request_key != _request_key(data, context):
+        raise ValueError("RequestAnalysis belongs to a different request/context")
+
+
+def _build_turn_analysis(data: AssistRequest, context: AssistContext, text: str) -> TurnAnalysis:
+    flat, scoped = normalized(text), normalized_scope(text)
+    scalar_raw = mask_owned_text_values(flat) if data.form == "extra" else flat
+    bound_scope = mask_bound_text_literals(scoped) if data.form == "extra" else scoped
+    owned_scope = mask_owned_text_values(scoped) if data.form == "extra" else scoped
+    # Construct each distinct coordinate space once; the resulting tuples,
+    # not a mutable cache of validator results, are the request's evidence.
+    views = {
+        raw: _resolved_intent_clauses(data.form, raw, context)
+        for raw in dict.fromkeys((flat, scoped, scalar_raw, bound_scope, owned_scope))
+    }
+    turn = TurnAnalysis(
+        text,
+        flat,
+        scoped,
+        scalar_raw,
+        bound_scope,
+        owned_scope,
+        views[flat],
+        views[scoped],
+        views[scalar_raw],
+        views[bound_scope],
+        views[owned_scope],
+        retention_scopes(data.form, bound_scope),
+        retention_scopes(data.form, flat, include_linked_prefixes=True),
+        date_clause_facts(data.form, text),
+        (),
+        _boundary_preview(data.form, text, context),
+    )
+    fields = []
+    for field in FORM_FIELDS[data.form]:
+        scope = _scope_from_clauses(field, turn.scope_clauses)
+        if turn.boundary_preview is not None:
+            scope = "target" if field == turn.boundary_preview[0] else "other"
+        scalar = field in ("amount", "crew") or (data.form, field) == ("quote", "days")
+        complete_list = _complete_date_list_assignment(
+            data.form,
+            field,
+            text,
+            context,
+            clauses=turn.date_clauses,
+        )
+        calendar = _owned_calendar_operation(data, context, field, text)
+        scalars = tuple(_scalar_tokens(field, scalar_raw)) if scalar else ()
+        fields.append(
+            FieldTurnFacts(
+                field=field,
+                scope=scope,
+                mentioned=(
+                    scope in ("target", "unbound")
+                    if scope != "none"
+                    else _legacy_mentions_field(data.form, field, text, context)
+                ),
+                date_inquiry=turn.boundary_preview is None
+                and any(field in part.risk_fields for part in turn.date_clauses),
+                replacement_requested=(
+                    (data.form, field) in (("dates", "days"), ("period", "excluded"))
+                    and date_replacement_requested(field, text)
+                    and complete_list is None
+                    and calendar is None
+                ),
+                new_risk=_has_new_field_risk(data, context, field, turn=turn),
+                scalar_tokens=scalars,
+                complete_list=complete_list,
+                crew_total=(
+                    _crew_total_fact(scalar_raw, turn.scalar_clauses, scalars)
+                    if (data.form, field) == ("dates", "crew")
+                    else None
+                ),
+                delta=_scalar_delta_fact(data, context, field, text) if scalar else None,
+                calendar=calendar,
+            )
+        )
+    return replace(turn, fields=tuple(fields))
+
+
+def analyze_request(data: AssistRequest, context: AssistContext) -> RequestAnalysis:
+    """Analyze current and historical text, without accepting prior values."""
+    history_texts = ()
+    if data.previous_candidate is not None:
+        history = data.previous_candidate.text
+        # The aggregate prior source is used by review_previous. Individual
+        # origin-turn replay remains a separate verifier; do not eagerly
+        # reanalyze every line before knowing which historical value is used.
+        history_texts = (history,)
+    current = _build_turn_analysis(data, context, data.text)
+    return RequestAnalysis(
+        _request_key(data, context),
+        current,
+        tuple(
+            _build_turn_analysis(data, context, text) for text in history_texts if text != data.text
+        ),
+    )
 
 
 def _quote_duration_mentioned(text: str, context: AssistContext) -> bool:
@@ -1714,7 +2455,11 @@ def _retention_scope_conflict(
 ) -> bool:
     """유지 절의 조건과 같은 필드의 별도 정정·취소를 검사한다."""
     scope = raw[start:end]
-    if _RETENTION_CONDITION.search(scope):
+    # A scope parser can stop before an indirect quotation tail. Inspect
+    # that tail up to the next independent clause, rather than certifying
+    # the truncated prefix as a current instruction.
+    following = _PENDING_CLAUSE.split(raw[end:], maxsplit=1)[0]
+    if _RETENTION_CONDITION.search(scope) or _RETAIN_REPORTED.search(scope + following):
         return True
     if retaining_previous and (
         _PENDING_CANCEL.search(scope)
@@ -3139,6 +3884,8 @@ def _verified_correction(
     after = normalized_text.find(new_text, before + len(old_text))
     if before < 0 or after < before + len(old_text):
         return None
+    if _verified_pending_scalar_relation(item, form, text, context, previous, before, after):
+        return relation
     if (
         form == "quote"
         and item.field == "amount"
@@ -3306,6 +4053,144 @@ _SCALAR_REJECTED_PREFIX = re.compile(
 )
 
 
+# 이전 후보를 실제 목적어로 지칭한 교체와 필요량의 명시적 거절은
+# 단순 두 수량 나열과 다르다. 새 대입의 소유권/완결 술어는 공통 검사한다.
+_PENDING_OBJECT = re.compile(r"\s*(?:원\s*)?(?:제안|후보|변경안|정정안)(?:을|를)\s*")
+_REJECTED_LIMIT = re.compile(r"\s*(?:까지|까지는)\s*필요\s*없고\s*")
+_SCALAR_CORRECTION_TAIL = re.compile(
+    r"\s*(?:원\s*)?(?:으로|로)\s*(?:정정|수정|변경|교체|대체|조정)"
+    r"\s*(?:하고|하며|합니다|하겠습니다|할게요|해\s*(?:주세요|줘요|주십시오))"
+    r"\s*[,;.!。]?\s*$"
+)
+
+
+def _owned_scalar_correction_clause(form, field, raw, context, token):
+    """정확한 값과 명시 대상, 완결 정정 술어를 한 절에서 확인한다."""
+    start, end, _ = token
+    parts = _resolved_intent_clauses(form, raw, context)
+    for index, part in enumerate(parts):
+        c = part.clause
+        if not (
+            c.start <= start < end <= c.end
+            and part.fields == {field}
+            and not part.unbound
+            and any(m.fields == {field} and m.end <= start for m in c.mentions)
+            and _SCALAR_CORRECTION_TAIL.fullmatch(raw[end : c.end])
+        ):
+            continue
+        if re.search(r"(?:하고|하며)\s*[,;]?\s*$", raw[end : c.end]):
+            if index + 1 >= len(parts):
+                continue
+            sibling = parts[index + 1]
+            sibling_text = raw[sibling.clause.start : sibling.clause.end]
+            if sibling.unbound or not sibling.fields - {field}:
+                continue
+            if field in sibling.fields and not (
+                field == "amount"
+                and sibling.fields == {"amount", "vat"}
+                and _vat_modes(sibling_text)
+                and not _amount_tokens(sibling_text)
+                and all(
+                    m.fields != {"amount"} or raw[m.start : m.end] == "견적"
+                    for m in sibling.clause.mentions
+                )
+            ):
+                continue
+        return part
+    return None
+
+
+def _verified_pending_scalar_relation(item, form, text, context, previous, before, after) -> bool:
+    """검증된 이전 후보의 정확한 값과 새 독립 정정 대입을 연결한다."""
+    relation = item.correction
+    if (
+        previous is None
+        or relation is None
+        or not (item.field in ("amount", "crew") or (form, item.field) == ("quote", "days"))
+    ):
+        return False
+    if not any(
+        old.field == item.field
+        and old.action == "set"
+        and type(old.value) is int
+        and old.value == relation.rejected_value
+        for old in previous.fields
+    ):
+        return False
+    raw = normalized(text)
+    tokens = _scalar_tokens(item.field, raw)
+    if len(tokens) != 2 or [x[2] for x in tokens] != [relation.rejected_value, item.value]:
+        return False
+    old_start, old_end, old_value = tokens[0]
+    new_start, new_end, new_value = tokens[1]
+    if not (
+        before <= old_start < old_end <= before + len(normalized(relation.rejected_evidence))
+        and after <= new_start < new_end <= after + len(normalized(relation.accepted_evidence))
+        and _grounded(form, item.field, old_value, relation.rejected_evidence, context, text=text)
+        and _grounded(form, item.field, new_value, relation.accepted_evidence, context, text=text)
+        and _grounded(form, item.field, new_value, item.evidence, context, text=text)
+    ):
+        return False
+    target = _owned_scalar_correction_clause(form, item.field, raw, context, tokens[1])
+    if target is None:
+        return False
+    clause = target.clause
+    if clause.start <= old_start:
+        # 명시된 이전 제안을 목적어로 삼은 같은 절 정정이다.
+        if not _PENDING_OBJECT.fullmatch(raw[old_end:new_start]):
+            return False
+        if not any(m.fields == {item.field} and m.end <= old_start for m in clause.mentions):
+            return False
+    else:
+        # 이전 필요량을 거절한 뒤 새 값을 명시한다. 상한 자체를
+        # 설정값으로 사용하거나 거절값보다 큰 값을 채택하지 않는다.
+        if not (
+            new_value < old_value
+            and _REJECTED_LIMIT.fullmatch(raw[old_end : clause.start])
+            and all(
+                p.clause.end <= old_start or p.fields == {item.field}
+                for p in _resolved_intent_clauses(form, raw, context)
+                if p.clause.start < clause.start
+            )
+        ):
+            return False
+    # 앞선 독립 정정 표제 외의 미확정·조건·경쟁 지시는 가리지 않는다.
+    prefix = raw[:old_start]
+    if _RETENTION_CONDITION.search(prefix) or _RULE_NEGATED_ACTION.search(prefix):
+        return False
+    return _scalar_set_intent_ok(item, text, relation, form, context)
+
+
+_SCALAR_ERROR_REPORT = re.compile(
+    rf"(?:{HISTORY_TIME}\s*)?(?:제가\s*)?"
+    r"(?P<subject>[^,;.!?？\n]+?)\s*[은는을를이가]\s*(?:제가\s*)?"
+    r"(?:(?:잘못|틀리게)\s*(?:계산했|불렀|말했|말씀드렸|전달했|적었|입력했|썼)|틀렸)"
+    r"(?:네요|어요|습니다|군요)[.!。]"
+)
+
+
+def _verified_scalar_error_report(item, form, raw, context, previous, token):
+    """수치 없는 완료형 오류 인정과 바로 뒤의 독립 정정 절을 확인한다."""
+    if item.field != "amount":
+        return None
+    target = _owned_scalar_correction_clause(form, item.field, raw, context, token)
+    if target is None:
+        return None
+    prefix = raw[: target.clause.start].strip()
+    report = _SCALAR_ERROR_REPORT.fullmatch(prefix)
+    if report is None or {
+        name for mention in field_mentions(form, report["subject"]) for name in mention.fields
+    } != {item.field}:
+        return None
+    if _HISTORICAL_REFERENCE.search(prefix) and not (
+        previous and any(old.field == item.field and old.action == "set" for old in previous.fields)
+    ):
+        return None
+    if _RETENTION_CONDITION.search(prefix) or _PENDING_CANCEL.search(prefix):
+        return None
+    return (0, target.clause.start)
+
+
 def _scalar_tokens(field: str, raw: str) -> list[tuple[int, int, int]]:
     if field == "days":
         return _quote_duration_tokens(raw)
@@ -3319,6 +4204,122 @@ def _scalar_span_evidence(field: str, raw: str, start: int, end: int) -> str:
         if won:
             end += won.end()
     return raw[start:end]
+
+
+_DELTA_OPERATOR = re.compile(
+    r"^\s*(?:원\s*)?(?:만|[을를은는])?\s*"
+    r"(?:(?P<add>더\s*(?:추가|늘|올|충원|증원|연장|해|보태|붙이|붙여)|"
+    r"추가|늘리|늘려|충원|증원|연장|올려|인상|더해|보태)"
+    r"|(?P<sub>빼|줄이|줄여|단축|감축|내려|인하|제감))"
+)
+_DELTA_REQUEST = re.compile(
+    r"(?:주세요|줘요|주십시오|주시겠어요|주실래요|주시겠습니까|"
+    r"부탁(?:합니다|드립니다)?|바랍니다|합니다|하겠습니다|할게요|겠습니다)\s*[.!?？]?$"
+)
+_DELTA_BASE = re.compile(r"(?:현재|지금|기존|등록(?:된|한)|저장(?:된|한)|입력(?:된|한)|원래)")
+_DELTA_PENDING = re.compile(
+    r"(?:앞서|아까|방금|직전|이전)\s*(?:제안|후보|변경안|말씀|말한)|"
+    r"(?:제안|후보|변경안)(?:에서|에|보다)"
+)
+_DELTA_TOTAL = re.compile(r"(?:총|합계|최종)\s*$")
+
+
+def _scalar_delta_fact(
+    data: AssistRequest, context: AssistContext, field: str, text: str
+) -> ScalarDeltaFact | None:
+    """원문 수량 뒤의 증감 술어를 기준값과 결합한 서버 자체 증명.
+
+    정정·절대값의 '으로/로'와 구분하고, 조건/문의/과거 후보의
+    지시에는 현재값을 임의로 대입하지 않는다.
+    """
+    if not (field in ("amount", "crew") or (data.form, field) == ("quote", "days")):
+        return None
+    raw = normalized(text)
+    visible = mask_owned_text_values(raw) if data.form == "extra" else raw
+    tokens = _scalar_tokens(field, visible)
+    operations = [
+        (a, b, amount, match)
+        for a, b, amount in tokens
+        if (match := _DELTA_OPERATOR.match(visible[b:])) is not None
+    ]
+    if not operations:
+        return None
+    a, b, operand, match = operations[0]
+    direction: Literal[-1, 1] = 1 if match["add"] else -1
+    current = data.current.get(field)
+    base = current if type(current) is int else None
+    stop = re.search(r"[,;.!?？。\n]", visible[b + match.end() :])
+    right = b + match.end() + stop.start() if stop else len(visible)
+    left = max((m.end() for m in re.finditer(r"[,;.!?？。\n]", visible[:a])), default=0)
+    clause = visible[left:right].strip()
+    # 사용자가 다른 필드와 함께 말한 경우에도 실제 연산 목적어만 찾는다.
+    labels = field_mentions(data.form, clause)
+    owned = any(mark.fields == {field} for mark in labels)
+    other = any(field not in mark.fields for mark in labels)
+    risk = polite_execution_risk_text(clause)
+    # 실제 현재값이라는 기준 표지는 과거 발화/가정과 다르다.
+    risk = _DELTA_BASE.sub(" ", risk)
+    explicit_total = [
+        value
+        for start, end, value in tokens
+        if start != a and _DELTA_TOTAL.search(visible[max(left, start - 12) : start])
+    ]
+    # 인원 증원량과 명시 최종 인원은 서로 다른 증거다. 기존 총원
+    # 검증 경로가 기준값과 최종값 및 생산자 근거를 함께 확인한다.
+    if field == "crew" and explicit_total:
+        return None
+    target = base + direction * operand if base is not None else None
+    other_tokens = [(start, end, value) for start, end, value in tokens if start != a]
+    compatible_tokens = (
+        not other_tokens
+        or (len(other_tokens) == 1 and explicit_total == [target])
+        or (
+            _DELTA_BASE.search(clause)
+            and all(value == operand and end < a for start, end, value in other_tokens)
+        )
+    )
+    valid = (
+        len(operations) == 1
+        and operand > 0
+        and base is not None
+        and owned
+        and not other
+        and compatible_tokens
+        and bool(_DELTA_REQUEST.search(clause))
+        and not _DELTA_PENDING.search(visible)
+        and (
+            _DELTA_BASE.search(clause)
+            or data.previous_candidate is None
+            or not any(old.field == field for old in data.previous_candidate.fields)
+        )
+        and not CONDITIONAL_LINK.search(visible)
+        and not _SCALAR_UNCERTAIN.search(risk)
+        and not _SCALAR_PAST.search(risk)
+        and not _OPERATION_DENIAL.search(risk)
+        and not _RETAIN.search(clause)
+        and not (field == "days" and duration_quantity_risk(clause))
+        and _business_ok(data.form, field, target, data, context, {field: target})
+    )
+    return ScalarDeltaFact(
+        field, operand, direction, base, target if valid else None, raw[left:right].strip(), (a, b)
+    )
+
+
+def _delta_candidate(fact: ScalarDeltaFact, data: AssistRequest, source: Source) -> CandidateField:
+    if fact.result is None:
+        return _hold(fact.field, "ambiguous_intent", source)
+    return CandidateField(
+        field=fact.field,
+        action="set",
+        value=fact.result,
+        evidence=fact.evidence,
+        intent_kind="explicit_change",
+        value_source="derived",
+        source=source,
+        status="valid",
+        alternatives=[],
+        origin_request_id=data.request_id,
+    )
 
 
 def _scalar_inferred_relation(
@@ -3352,12 +4353,19 @@ def _scalar_set_intent_ok(
     correction: CorrectionRelation | None,
     form: FormName,
     context: AssistContext,
+    *,
+    turn: TurnAnalysis | None = None,
+    previous: PreviousCandidate | None = None,
 ) -> bool:
     """원문 숫자와 별개로 확정 지시인지 검사한다. 규칙·모델이 같은 관문을 사용한다."""
-    raw = normalized(text)
-    if form == "extra" and item.field == "amount":
+    raw = turn.scalar_raw if turn is not None else normalized(text)
+    if turn is None and form == "extra" and item.field == "amount":
         raw = mask_owned_text_values(raw)
-    groups = _scalar_tokens(item.field, raw)
+    groups = (
+        turn.field(item.field).scalar_tokens
+        if turn is not None
+        else _scalar_tokens(item.field, raw)
+    )
     if (form, item.field) == ("quote", "days"):
         return _duration_set_intent_ok(item, raw, groups, correction, context)
     # 숫자 자체, 경쟁 값 및 전역 조건은 그대로 검사한다. 별개 필드의
@@ -3370,7 +4378,9 @@ def _scalar_set_intent_ok(
         # 상한 표현의 숫자를 확정 금액으로 승격하지 않는다.
         return False
     risk_text = raw
-    clauses = _resolved_intent_clauses(form, raw, context)
+    clauses = (
+        turn.scalar_clauses if turn is not None else _resolved_intent_clauses(form, raw, context)
+    )
     scopes = _scalar_risk_scopes(clauses)
     if not any(part.unbound for part in clauses):
         for part in clauses:
@@ -3429,6 +4439,10 @@ def _scalar_set_intent_ok(
         return False
     start, end, _ = groups[0]
     prefix = raw[:start]
+    report = _verified_scalar_error_report(item, form, raw, context, previous, groups[0])
+    if report:
+        a, b = report
+        risk_text = risk_text[:a] + " " * (b - a) + risk_text[b:]
     if scalar_clause_risk(
         raw, item.field, [(start, end)], _SCALAR_PAST, masked=risk_text, scopes=scopes
     ) or (item.field == "amount" and _historical_amount_report(raw)):
@@ -3486,20 +4500,91 @@ _PREVIEW_CONTENT = re.compile(
 
 def _preview_risk_text(clause: str) -> str:
     """명시 후보 생성의 목적어 내부만 조건/문의 종결 검사에서 분리한다."""
-    match = _EXPLICIT_PREVIEW.search(clause)
-    if match is None:
-        return polite_execution_risk_text(clause)
-    head = clause[: match.start()]
-    # '승인되면 ... 후보를 보여'의 외부 조건을 지우지 않는다.
-    # 값에 바로 결합한 관형형의 '경우의'만 후보 내용이다.
-    content = _PREVIEW_CONTENT.search(head.rstrip())
-    if content is not None:
-        head = head[: content.start()] + re.sub(r"경우의", "", head[content.start() :])
-    return head + " " * (len(clause) - len(head))
+    preview = proposal_risk_text(clause)
+    return preview if preview is not None else polite_execution_risk_text(clause)
+
+
+_CREW_INCREMENT_TOTAL = re.compile(
+    r"\s*(?:더\s*)?(?:추가(?:하|해)|붙(?:이|여)|늘(?:리|려)|보충(?:하|해))"
+    r"(?:여|서|고)?\s*(?P<total>총|합계|전체)\s*$"
+)
+
+
+def _crew_total_fact(
+    raw: str,
+    clauses: tuple[_ResolvedIntentClause, ...],
+    tokens: tuple[tuple[int, int, int], ...],
+) -> CrewTotalFact | None:
+    """Recognize one owned, completed additive assignment with an exact total."""
+    if len(tokens) != 2 or len(clauses) != 1:
+        return None
+    part = clauses[0]
+    if part.fields != {"crew"} or part.unbound or part.clause.retentions:
+        return None
+    first, second = tokens
+    if not any(m.fields == {"crew"} and m.end <= first[0] for m in part.clause.mentions):
+        return None
+    gap = _CREW_INCREMENT_TOTAL.fullmatch(raw[first[1] : second[0]])
+    if gap is None or not affirmative_assignment_suffix(raw[second[1] :]):
+        return None
+    risk = polite_execution_risk_text(raw)
+    if (
+        _SCALAR_UNCERTAIN.search(risk)
+        or _SCALAR_PAST.search(risk)
+        or _OPERATION_DENIAL.search(risk)
+        or _RETENTION_CONDITION.search(risk)
+        or _RETAIN.search(risk)
+        or _PENDING_CANCEL.search(risk)
+    ):
+        return None
+    return CrewTotalFact(first[2], second[2], raw[first[1] + gap.start("total") : second[1]])
+
+
+def _verified_crew_total(
+    item: FieldIntent,
+    data: AssistRequest,
+    text: str,
+    context: AssistContext,
+    *,
+    turn: TurnAnalysis | None = None,
+) -> bool:
+    if (
+        (data.form, item.field) != ("dates", "crew")
+        or item.action != "set"
+        or item.correction is not None
+        or type(item.value) is not int
+        or text != data.text
+        or type(data.current.get("crew")) is not int
+        or (
+            data.previous_candidate is not None
+            and any(old.field == "crew" for old in data.previous_candidate.fields)
+        )
+    ):
+        return False
+    if turn is not None:
+        fact = turn.field("crew").crew_total
+    else:
+        raw = normalized(text)
+        fact = _crew_total_fact(
+            raw,
+            _resolved_intent_clauses(data.form, raw, context),
+            tuple(_scalar_tokens("crew", raw)),
+        )
+    return bool(
+        fact is not None
+        and fact.increment > 0
+        and data.current["crew"] + fact.increment == fact.total == item.value
+        and evidence_matches(item.evidence, fact.total_evidence)
+    )
 
 
 def _local_scalar_operation_ok(
-    item: FieldIntent, form: FormName, text: str, context: AssistContext
+    item: FieldIntent,
+    form: FormName,
+    text: str,
+    context: AssistContext,
+    *,
+    turn: TurnAnalysis | None = None,
 ) -> bool:
     """같은 값의 설명 반복과 독립 대입의 관계만 입증한다.
 
@@ -3508,13 +4593,17 @@ def _local_scalar_operation_ok(
     """
     if item.correction is not None or item.action != "set" or type(item.value) is not int:
         return False
-    raw = normalized(text)
-    if form == "extra":
+    raw = turn.scalar_raw if turn is not None else normalized(text)
+    if turn is None and form == "extra":
         raw = mask_owned_text_values(raw)
     needle = normalized(item.evidence)
     if not needle or not evidence_matches(text, item.evidence):
         return False
-    tokens = _scalar_tokens(item.field, raw)
+    tokens = (
+        turn.field(item.field).scalar_tokens
+        if turn is not None
+        else _scalar_tokens(item.field, raw)
+    )
     if not tokens or {v for _, _, v in tokens} != {item.value}:
         return False
     if item.field == "amount" and any(
@@ -3522,7 +4611,9 @@ def _local_scalar_operation_ok(
         for _, end, _ in tokens
     ):
         return False
-    parts = _resolved_intent_clauses(form, raw, context)
+    parts = (
+        turn.scalar_clauses if turn is not None else _resolved_intent_clauses(form, raw, context)
+    )
     assignments = []
     for resolved in parts:
         part = resolved.clause
@@ -3540,8 +4631,8 @@ def _local_scalar_operation_ok(
             if item.field == "days" and duration_quantity_risk(operation):
                 continue
             if not (
-                _OPERATION_VERB.search(tail)
-                and (_OPERATION_REQUEST.search(tail) or _EXPLICIT_PREVIEW.search(tail))
+                (_OPERATION_VERB.search(tail) and _OPERATION_REQUEST.search(tail))
+                or proposal_risk_text(tail) is not None
             ):
                 continue
             if not any(
@@ -3880,23 +4971,29 @@ def _business_ok(
     return False
 
 
-def _competing_retention_assignment(
+def _retention_conflict_facts(
     data: AssistRequest,
     field: str,
-    value: Value,
     context: AssistContext,
     previous: PreviousCandidate | None,
-) -> bool:
+    *,
+    turn: TurnAnalysis | None = None,
+) -> tuple[RetentionConflictFact, ...]:
     """새 대입도 같은 필드의 유지 지시와 경쟁하는지 확인한다.
 
     완결된 유지절뿐 아니라 대상이 생략된 연결절도 경쟁 검사에만
     사용한다. 유지절을 신규 값의 근거 또는 계승 승인으로 쓰지 않는다.
     """
-    raw = normalized(data.text)
+    raw = turn.flat if turn is not None else normalized(data.text)
     retained = (
         next((item for item in previous.fields if item.field == field), None) if previous else None
     )
-    for scope in retention_scopes(data.form, raw, include_linked_prefixes=True):
+    facts = []
+    for scope in (
+        turn.linked_retentions
+        if turn is not None
+        else retention_scopes(data.form, raw, include_linked_prefixes=True)
+    ):
         if not scope.compatible or field not in scope.fields:
             continue
         conflict = _retention_scope_conflict(
@@ -3926,9 +5023,21 @@ def _competing_retention_assignment(
             known, original = False, None
         # 동일 값의 명시적 재확인은 기존 근거 검증에 맡긴다. 검증되지
         # 않은 과거값이나 서로 다른 새 값은 이력 유지로 우회하지 않는다.
-        if not known or original != value:
-            return True
-    return False
+        facts.append(RetentionConflictFact(known, _freeze_value(original)))
+    return tuple(facts)
+
+
+def _competing_retention_assignment(
+    data: AssistRequest,
+    field: str,
+    value: Value,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+) -> bool:
+    return any(
+        not fact.known or fact.value != _freeze_value(value)
+        for fact in _retention_conflict_facts(data, field, context, previous)
+    )
 
 
 def _local_retention_proof(
@@ -3937,6 +5046,8 @@ def _local_retention_proof(
     text: str,
     context: AssistContext,
     previous: PreviousCandidate | None,
+    *,
+    turn: TurnAnalysis | None = None,
 ) -> str | None:
     """Bind a validated keep intent to its own complete clause and referent.
 
@@ -3946,7 +5057,7 @@ def _local_retention_proof(
     kind = item.intent_kind
     if kind not in ("retain_current", "retain_previous") or item.action != "keep":
         return None
-    raw, needle = normalized(text), normalized(item.evidence)
+    raw, needle = (turn.flat if turn is not None else normalized(text)), normalized(item.evidence)
     if not needle or raw.count(needle) != 1:
         return None
     at = raw.index(needle)
@@ -3958,7 +5069,9 @@ def _local_retention_proof(
     )
     if previous_keep and retained is None:
         return None
-    clauses = _resolved_intent_clauses(data.form, raw, context)
+    clauses = (
+        turn.flat_clauses if turn is not None else _resolved_intent_clauses(data.form, raw, context)
+    )
     owned = [
         part
         for part in clauses
@@ -3976,7 +5089,11 @@ def _local_retention_proof(
         r"현재|지금|기존|원래|저장된|등록된|수정\s*전|처음\s*(?:상태|값|금액|기간|설정)", body
     )
     no_change = re.search(r"(?:수정|변경|조정|교체|갱신)(?:은|는|을|를)?\s*하지\s*말", body)
-    control = re.search(r"그대로|유지|돌려놓|돌려줘|(?:으로|로)\s*둘|확정|사용|남겨|진행", body)
+    control = re.search(
+        rf"그대로|대로\s*(?:하고|하며|해\s*(?:주세요|줘요)|{PLACEMENT_KEEP_DIRECTIVE})"
+        rf"|유지|고정|돌려놓|돌려줘|(?:으로|로)\s*{PLACEMENT_KEEP_DIRECTIVE}|확정|사용|남겨|진행",
+        body,
+    )
     if not (control or no_change):
         return None
     if previous_keep:
@@ -4025,8 +5142,10 @@ def _local_retention_proof(
         operation = operation.replace(no_change.group(), "", 1)
     if (
         CONDITIONAL_LINK.search(operation)
+        or re.search(_INDIRECT_INQUIRY, operation)
         or _RULE_QUESTION_OR_UNDECIDED.search(polite_execution_risk_text(operation))
         or _RETAIN_NEGATED.search(operation)
+        or _RETAIN_REPORTED.search(operation)
         or _OPERATION_DENIAL.search(operation)
         or re.search(r"말고|아니|않|나중|추후|검토|할지|할까|보류|취소|철회", operation)
         or _retention_has_different_value(data.form, item.field, expected, operation, context)
@@ -4054,6 +5173,31 @@ def _local_retention_proof(
             if _PENDING_CANCEL.search(span) and not _OPERATION_DENIAL.search(
                 span.replace("취소", "").replace("철회", "")
             ):
+                if _HISTORICAL_REFERENCE.search(span) and (
+                    item.field in ("amount", "crew") or (data.form, item.field) == ("quote", "days")
+                ):
+                    tokens = _scalar_tokens(item.field, span)
+                    if tokens:
+                        if len(tokens) != 1:
+                            return None
+                        a, b, _ = tokens[0]
+                        identity = _scalar_span_evidence(item.field, span, a, b)
+                        if (
+                            not _withdrawal_value_matches(
+                                data.form, item.field, identity, previous, context
+                            )
+                            or not re.fullmatch(
+                                rf"\s*{HISTORY_TIME}\s*{HISTORY_PAST_MODIFIER}\s*",
+                                span[:a],
+                            )
+                            or not complete_withdrawal_body(
+                                re.sub(r"^\s*[은는을를이가]\s*", "", span[a + len(identity) :])
+                                .strip()
+                                .rstrip(",;.!。")
+                                .strip()
+                            )
+                        ):
+                            return None
                 continue
             if not _OPERATION_VERB.search(span) and not _RETAIN.search(span):
                 continue
@@ -4075,6 +5219,74 @@ def _local_retention_proof(
     return body.strip()
 
 
+@dataclass(frozen=True)
+class InputOperationFacts:
+    """Evidence/normalization proof for the exact producer input."""
+
+    evidence_ok: bool
+    type_ok: bool
+    grounded: bool
+    local_scalar: bool
+    competing_retention: bool
+
+
+@dataclass(frozen=True)
+class OperationProof:
+    """Immutable proof of the reviewed candidate, not the producer's assertion."""
+
+    request_key: tuple[str, str]
+    prior_key: str | None
+    candidate_key: str
+    evidence_scope: str
+    local_scalar: bool
+    text_scope: bool
+    competing_retention: bool
+
+
+def _input_operation_facts(
+    item: FieldIntent,
+    data: AssistRequest,
+    context: AssistContext,
+    turn: TurnAnalysis,
+    previous: PreviousCandidate | None,
+    analysis: RequestAnalysis | None = None,
+) -> InputOperationFacts:
+    evidence_ok = turn.evidence_matches(item.evidence)
+    type_ok = grounded = local = False
+    if item.action == "set" and evidence_ok:
+        try:
+            check_value(data.form, item.field, item.value)
+            type_ok = True
+            grounded = _grounded(
+                data.form,
+                item.field,
+                item.value,
+                item.evidence,
+                context,
+                text=turn.text,
+                turn_facts=turn,
+            )
+        except (ValueError, TypeError, KeyError):
+            pass
+        if grounded and (
+            item.field in ("amount", "crew") or (data.form, item.field) == ("quote", "days")
+        ):
+            local = _local_scalar_operation_ok(item, data.form, turn.text, context, turn=turn) or (
+                _verified_crew_total(item, data, turn.text, context, turn=turn)
+            )
+    competing = (
+        turn.text == data.text
+        and evidence_ok
+        and item.action in ("set", "clear")
+        and (
+            analysis.pending_field(item.field).conflicts_with(item.value)
+            if analysis is not None and analysis.bound
+            else _competing_retention_assignment(data, item.field, item.value, context, previous)
+        )
+    )
+    return InputOperationFacts(evidence_ok, type_ok, grounded, local, competing)
+
+
 def _review_one(
     item: FieldIntent,
     source: Source,
@@ -4086,7 +5298,26 @@ def _review_one(
     previous: PreviousCandidate | None = None,
     defer_period_business: bool = False,
     withdrawals: Mapping[str, WithdrawalDecision] | None = None,
+    analysis: RequestAnalysis | None = None,
+    input_facts: InputOperationFacts | None = None,
 ) -> CandidateField:
+    turn = analysis.turn(text) if analysis is not None else None
+    if input_facts is None and turn is not None:
+        input_facts = _input_operation_facts(item, data, context, turn, previous, analysis)
+    field_facts = turn.field(item.field) if turn is not None else None
+
+    def has_evidence() -> bool:
+        return (
+            input_facts.evidence_ok
+            if input_facts is not None
+            else evidence_matches(text, item.evidence)
+        )
+
+    def independent_date_clauses() -> frozenset[str]:
+        if analysis is not None and analysis.bound and text == data.text:
+            return analysis.pending_field(item.field).independent_clauses
+        return _verified_independent_date_clauses(data, context, previous, item.field, text)
+
     common = {
         "field": item.field,
         "source": source,
@@ -4107,7 +5338,7 @@ def _review_one(
             **common,
             action="uncertain",
             value=None,
-            evidence=item.evidence if evidence_matches(text, item.evidence) else "",
+            evidence=item.evidence if has_evidence() else "",
             status="uncertain" if uncertain else "invalid",
             intent_kind="ambiguous",
             reason_code=reason,
@@ -4116,8 +5347,8 @@ def _review_one(
     if intent == "no_mention" and item.action == "keep":
         if item.evidence.strip():
             return reject(
-                "ambiguous_intent" if evidence_matches(text, item.evidence) else "evidence_missing",
-                uncertain=evidence_matches(text, item.evidence),
+                "ambiguous_intent" if has_evidence() else "evidence_missing",
+                uncertain=has_evidence(),
             )
         return CandidateField(
             **common,
@@ -4128,9 +5359,11 @@ def _review_one(
             intent_kind="no_mention",
         )
     if intent == "retain_current":
-        if item.action != "keep" or not evidence_matches(text, item.evidence):
+        if item.action != "keep" or not has_evidence():
             return reject("evidence_missing")
-        local = _local_retention_proof(item, data, text, context, previous)
+        if _conditional_current_retention(item, data, text, context, turn=turn):
+            return reject("ambiguous_intent", uncertain=True)
+        local = _local_retention_proof(item, data, text, context, previous, turn=turn)
         if local is not None:
             return CandidateField(
                 **common,
@@ -4149,9 +5382,7 @@ def _review_one(
             if needle and proof.evidence in needle and normalized(text).count(needle) == 1:
                 return _withdrawal_candidate(data, proof, source)
             return reject("ambiguous_intent")
-        independent_clauses = _verified_independent_date_clauses(
-            data, context, previous, item.field, text
-        )
+        independent_clauses = independent_date_clauses()
         retained = (
             next((field for field in previous.fields if field.field == item.field), None)
             if previous
@@ -4215,13 +5446,11 @@ def _review_one(
             status="valid",
         )
     if intent == "retain_previous":
-        if item.action != "keep" or not evidence_matches(text, item.evidence):
+        if item.action != "keep" or not has_evidence():
             return reject("evidence_missing")
         if proof is not None and proof.definite:
             return reject("ambiguous_intent")
-        independent_clauses = _verified_independent_date_clauses(
-            data, context, previous, item.field, text
-        )
+        independent_clauses = independent_date_clauses()
         if _targeted_retention(
             data.form,
             item.field,
@@ -4250,7 +5479,7 @@ def _review_one(
             return reject(
                 "stale_context" if data.previous_candidate is not None else "reference_missing"
             )
-        if _local_retention_proof(item, data, text, context, previous) is not None:
+        if _local_retention_proof(item, data, text, context, previous, turn=turn) is not None:
             return _candidate_from_previous(retained, previous)
         reference_only = _reference_only_retention(
             data.form,
@@ -4296,7 +5525,7 @@ def _review_one(
             return reject("ambiguous_intent")
         return _candidate_from_previous(retained, previous)
     if intent == "ambiguous" or item.action == "uncertain":
-        if item.evidence and not evidence_matches(text, item.evidence):
+        if item.evidence and not has_evidence():
             return reject("evidence_missing")
         if previous is not None and item.action == "uncertain" and item.correction is None:
             retained = next((field for field in previous.fields if field.field == item.field), None)
@@ -4310,9 +5539,7 @@ def _review_one(
                     context,
                     previous,
                     retained,
-                    independent_clauses=_verified_independent_date_clauses(
-                        data, context, previous, item.field, text
-                    ),
+                    independent_clauses=independent_date_clauses(),
                 )
                 is True
             ):
@@ -4321,9 +5548,16 @@ def _review_one(
     if intent != "explicit_change" or item.action not in ("set", "clear"):
         return reject("ambiguous_intent")
 
-    evidence_ok = evidence_matches(text, item.evidence)
+    evidence_ok = has_evidence()
     if not evidence_ok:
         return reject("evidence_missing")
+    preview = (
+        turn.boundary_preview if turn is not None else _boundary_preview(data.form, text, context)
+    )
+    if (preview is not None or _boundary_preview_body(data.form, text) is not None) and (
+        item.action != "set" or (item.field, item.value) != preview
+    ):
+        return reject("ambiguous_intent", uncertain=True)
     if proof is not None and proof.definite:
         # A withdrawn operation cannot also authorize a set/clear of its
         # object, regardless of which producer proposed it.
@@ -4348,7 +5582,11 @@ def _review_one(
         # A canonical other-field withdrawal/report is an operation,
         # not an implicit title/reason. Literal explicit assignments are
         # still independently checked by the original text validator.
-        if _field_scope(data.form, item.field, text, context) == "other":
+        if (
+            field_facts.scope
+            if field_facts is not None
+            else _field_scope(data.form, item.field, text, context)
+        ) == "other":
             # Reject the unrelated proposal without inventing a new hold.
             # no_mention does not authorize a retain_current release.
             return CandidateField(
@@ -4360,8 +5598,10 @@ def _review_one(
                 intent_kind="no_mention",
             )
         return reject("ambiguous_intent", uncertain=True)
-    if text == data.text and _competing_retention_assignment(
-        data, item.field, item.value, context, previous
+    if text == data.text and (
+        input_facts.competing_retention
+        if input_facts is not None
+        else _competing_retention_assignment(data, item.field, item.value, context, previous)
     ):
         return reject("ambiguous_intent", uncertain=True)
     if item.action == "set" and item.field == "vat" and text == data.text:
@@ -4402,7 +5642,21 @@ def _review_one(
             if text == data.text
             else [turn for turn in text.splitlines() if evidence_matches(turn, item.evidence)]
         )
-        if any(date_set_is_inquiry(data.form, item.field, turn) for turn in origin_turns):
+        if (
+            any(
+                known.field(item.field).date_inquiry
+                if (known := analysis.turn(origin)) is not None
+                else _boundary_preview(data.form, origin, context) is None
+                and date_set_is_inquiry(data.form, item.field, origin)
+                for origin in origin_turns
+            )
+            if analysis is not None
+            else any(
+                _boundary_preview(data.form, origin, context) is None
+                and date_set_is_inquiry(data.form, item.field, origin)
+                for origin in origin_turns
+            )
+        ):
             return reject("ambiguous_intent", uncertain=True)
         if (
             item.field in ("title", "reason")
@@ -4419,6 +5673,30 @@ def _review_one(
             and any(text_set_is_inquiry(item.field, item.value, turn) for turn in origin_turns)
         ):
             return reject("ambiguous_intent", uncertain=True)
+    if item.action == "set" and (
+        item.field in ("amount", "crew") or (data.form, item.field) == ("quote", "days")
+    ):
+        delta = (
+            field_facts.delta
+            if field_facts is not None
+            else _scalar_delta_fact(data, context, item.field, text)
+        )
+        if delta is not None:
+            # 이전 후보는 실제 기준값에서 다시 계산하여 입증한다.
+            if (
+                delta.result is None
+                or item.correction is not None
+                or item.value_source in ("previous", "current")
+                or not (
+                    item.value == delta.result
+                    or source == "rule"
+                    and text == data.text
+                    and item.value == delta.operand
+                )
+                or not evidence_matches(delta.evidence, item.evidence)
+            ):
+                return reject("ambiguous_intent", uncertain=True)
+            return _delta_candidate(delta, data, source)
     if item.action == "set" and item.field in ("title", "reason") and isinstance(item.value, str):
         raw, needle, value = normalized(text), normalized(item.evidence), normalized(item.value)
         labels = field_mentions(data.form, value)
@@ -4466,7 +5744,12 @@ def _review_one(
             return reject("ambiguous_intent")
     if (
         (data.form, item.field) in (("dates", "days"), ("period", "excluded"))
-        and date_replacement_requested(item.field, text)
+        and (
+            field_facts.replacement_requested
+            if field_facts is not None
+            else date_replacement_requested(item.field, text)
+            and _complete_date_list_assignment(data.form, item.field, text, context) is None
+        )
         and item.correction is None
         and (
             item.action != "set"
@@ -4569,7 +5852,11 @@ def _review_one(
             and _REAFFIRM_KEEP.search(normalized(item.value))
         ):
             return reject("ambiguous_intent")
-        if not _grounded(data.form, item.field, item.value, item.evidence, context, text=text):
+        if not (
+            input_facts.grounded
+            if input_facts is not None
+            else _grounded(data.form, item.field, item.value, item.evidence, context, text=text)
+        ):
             return reject("unsupported_normalization")
         if not defer_period_business and not _business_ok(
             data.form, item.field, item.value, data, context, proposed
@@ -4587,8 +5874,18 @@ def _review_one(
     ):
         if item.correction is None:
             correction = _scalar_inferred_relation(item, data.form, text, context, previous)
-        if not _scalar_set_intent_ok(item, text, correction, data.form, context) and not (
-            correction is None and _local_scalar_operation_ok(item, data.form, text, context)
+        if not _scalar_set_intent_ok(
+            item, text, correction, data.form, context, turn=turn, previous=previous
+        ) and not (
+            correction is None
+            and (
+                input_facts.local_scalar
+                if input_facts is not None
+                else (
+                    _local_scalar_operation_ok(item, data.form, text, context, turn=turn)
+                    or _verified_crew_total(item, data, text, context, turn=turn)
+                )
+            )
         ):
             # 폐기된 규칙 후보는 올바르게 입증한 모델 정정을 가로막지 않는다.
             if item.correction is None and correction is None:
@@ -4630,29 +5927,55 @@ def review_fields(
     text: str | None = None,
     previous: PreviousCandidate | None = None,
     withdrawals: Mapping[str, WithdrawalDecision] | None = None,
+    analysis: RequestAnalysis | None = None,
+    operation_proofs: dict[str, OperationProof] | None = None,
 ) -> tuple[dict[str, CandidateField], list[str]]:
     original = text if text is not None else data.text
+    if analysis is not None:
+        _check_analysis(data, context, analysis)
+        if (
+            analysis.bound
+            and original == data.text
+            and analysis.prior_key != (previous.model_dump_json() if previous else None)
+        ):
+            raise ValueError("RequestAnalysis prior binding mismatch")
+    turn = analysis.turn(original) if analysis is not None else None
+    input_proofs = [
+        _input_operation_facts(item, data, context, turn, previous, analysis)
+        if turn is not None and item.field in FORM_FIELDS[data.form]
+        else None
+        for item in fields
+    ]
     if withdrawals is None and original == data.text:
         withdrawals = resolve_withdrawals(data, previous, context)
     proposed: dict[str, Value] = {}
     warnings: list[str] = []
     # 개별 값에 원문 근거가 없는 필드는 다른 필드의 업무 검증에 사용하지 않는다.
-    for item in fields if data.form != "period" else ():
+    for item, facts in zip(fields, input_proofs) if data.form != "period" else ():
         if (
             item.action == "set"
             and item.field in FORM_FIELDS[data.form]
-            and evidence_matches(original, item.evidence)
+            and (
+                facts.evidence_ok
+                if facts is not None
+                else evidence_matches(original, item.evidence)
+            )
         ):
             try:
-                check_value(data.form, item.field, item.value)
-                if _grounded(
-                    data.form, item.field, item.value, item.evidence, context, text=original
+                if facts is None:
+                    check_value(data.form, item.field, item.value)
+                if (
+                    facts.grounded
+                    if facts is not None
+                    else _grounded(
+                        data.form, item.field, item.value, item.evidence, context, text=original
+                    )
                 ):
                     proposed[item.field] = item.value
             except (ValueError, TypeError, KeyError):
                 pass
     checked: dict[str, CandidateField] = {}
-    for item in fields:
+    for item, facts in zip(fields, input_proofs):
         if item.field not in FORM_FIELDS[data.form]:
             warnings.append("화면에서 쓸 수 없는 후보를 제외했어요.")
             continue
@@ -4666,6 +5989,8 @@ def review_fields(
             previous=previous,
             defer_period_business=data.form == "period",
             withdrawals=withdrawals,
+            analysis=analysis,
+            input_facts=facts,
         )
         if item.field in checked:
             checked[item.field] = CandidateField(
@@ -4687,7 +6012,23 @@ def review_fields(
         # Wrong-field date offers must not participate in the combined
         # business projection and invalidate independently grounded exclusions.
         exclusion = checked.get("excluded")
+        calendar = (
+            turn.field("excluded").calendar
+            if turn is not None
+            else _owned_calendar_operation(data, context, "excluded", original)
+        )
         for field, result in list(checked.items()):
+            if (
+                original == data.text
+                and result.status == "valid"
+                and result.action == "set"
+                and result.intent_kind != "retain_previous"
+                and _calendar_boundary_conflict(data, context, field, result.value, calendar)
+            ):
+                checked[field] = _hold(field, "ambiguous_intent", result.source).model_copy(
+                    update={"status": "invalid"}
+                )
+                continue
             if (
                 exclusion is not None
                 and exclusion.status == "valid"
@@ -4696,7 +6037,12 @@ def review_fields(
                 and result.status == "valid"
                 and result.action == "set"
                 and result.intent_kind != "retain_previous"
-                and _field_scope(data.form, field, original, context) == "other"
+                and (
+                    turn.field(field).scope
+                    if turn is not None
+                    else _field_scope(data.form, field, original, context)
+                )
+                == "other"
                 and not _date_assignment_scope_ok(
                     data.form, field, result.value, result.evidence, original, context
                 )
@@ -4706,7 +6052,9 @@ def review_fields(
                 )
         # 먼저 각 후보의 의도·근거·정정을 확인한 뒤 실제 폼을 기준으로
         # 검증된 미적용 후보와 이번 후보만 업무 조합에 투영한다.
-        projected = _projected_candidates(data, context, previous, checked, withdrawals=withdrawals)
+        projected = _projected_candidates(
+            data, context, previous, checked, withdrawals=withdrawals, analysis=analysis
+        )
         _, rejected = resolve_period_candidates(
             data.current, projected, context.today, strict_interior=False
         )
@@ -4730,6 +6078,21 @@ def review_fields(
                     }
                 )
                 warnings.append("원문 근거나 업무 조건을 확인할 수 없는 후보가 있어요.")
+    if operation_proofs is not None and analysis is not None and original == data.text:
+        for name, result in checked.items():
+            matched = [
+                facts
+                for item, facts in zip(fields, input_proofs)
+                if item.field == name
+                and facts is not None
+                and item.action == result.action
+                and item.value == result.value
+                and item.evidence == result.evidence
+                and item.correction == result.correction
+            ]
+            operation_proofs[name] = _operation_proof(
+                result, data, context, previous, analysis, matched[0] if len(matched) == 1 else None
+            )
     return checked, list(dict.fromkeys(warnings))
 
 
@@ -5192,9 +6555,11 @@ def _reverify_scalar_history(
 
 
 def review_previous(
-    data: AssistRequest, context: AssistContext
+    data: AssistRequest, context: AssistContext, *, analysis: RequestAnalysis | None = None
 ) -> tuple[PreviousCandidate | None, dict[str, ReasonCode]]:
     """이전 원문 근거 실패와 기준값 변경을 서로 다른 사유로 남긴다."""
+    if analysis is not None:
+        _check_analysis(data, context, analysis)
     previous = data.previous_candidate
     if previous is None:
         return None, {}
@@ -5236,7 +6601,9 @@ def review_previous(
         and (data.form, item.field) in (("dates", "days"), ("period", "excluded"))
     ]
     ordinary = [item for item in eligible if item not in derived]
-    checked, _ = review_fields(ordinary, "rule", data, context, text=previous.text)
+    checked, _ = review_fields(
+        ordinary, "rule", data, context, text=previous.text, analysis=analysis
+    )
     for item in ordinary:
         if (
             (data.form, item.field) in (("dates", "days"), ("period", "excluded"))
@@ -5773,6 +7140,130 @@ def _verified_group_retention(
     )
 
 
+def _build_pending_field(
+    data: AssistRequest,
+    context: AssistContext,
+    field: str,
+    previous: PreviousCandidate | None,
+    *,
+    turn: TurnAnalysis | None = None,
+) -> PendingFieldFacts:
+    retained = (
+        next((part for part in previous.fields if part.field == field), None) if previous else None
+    )
+    independent = _verified_independent_date_clauses(data, context, previous, field, data.text)
+    conflicts = _retention_conflict_facts(data, field, context, previous, turn=turn)
+    group = bool(
+        retained is not None
+        and _verified_group_retention(data, context, previous, retained, reason="ambiguous_intent")
+    )
+    keep_request = FieldIntent(
+        field=field,
+        action="keep",
+        value=None,
+        evidence=data.text,
+        intent_kind="retain_current",
+        value_source="current",
+    )
+    conditional_keep = _conditional_current_retention(
+        keep_request, data, data.text, context, turn=turn
+    )
+    current_keep = _targeted_retention(
+        data.form,
+        field,
+        data.text,
+        data.text,
+        context,
+        retaining_previous=False,
+        require_current_reference=True,
+        independent_clauses=independent,
+    )
+    if current_keep and not conditional_keep:
+        scoped = _scoped_retention(
+            data.form,
+            field,
+            data.text,
+            data.text,
+            context,
+            retaining_previous=False,
+            require_current_reference=True,
+            independent_clauses=independent,
+        )
+        evidence = (
+            normalized(data.text)[scoped[0].start : scoped[0].end]
+            if scoped is not None and scoped[1]
+            else data.text
+        )
+        return PendingFieldFacts(field, evidence, False, False, group, independent, conflicts)
+    # 현재 유지 지시는 이전 미적용 후보의 존재와 무관하다. 원문의
+    # 독립 절에 소유권과 참조가 확인된 경우 생산자 미언급을 복구한다.
+    raw = turn.flat if turn is not None else normalized(data.text)
+    clauses = (
+        turn.flat_clauses if turn is not None else _resolved_intent_clauses(data.form, raw, context)
+    )
+    local_keeps = []
+    for part in clauses:
+        if part.fields != {field}:
+            continue
+        evidence = raw[part.clause.start : part.clause.end].strip()
+        if not evidence:
+            continue
+        operation = FieldIntent(
+            field=field,
+            action="keep",
+            value=None,
+            evidence=evidence,
+            intent_kind="retain_current",
+            value_source="current",
+        )
+        local = _local_retention_proof(operation, data, data.text, context, previous, turn=turn)
+        if local is not None:
+            local_keeps.append(local)
+    if len(local_keeps) == 1 and not conditional_keep:
+        return PendingFieldFacts(field, local_keeps[0], False, False, group, independent, conflicts)
+    if retained is None:
+        return PendingFieldFacts(field, None, False, False, False, independent, conflicts)
+    unscoped = _unscoped_retention_control(
+        data.form, field, data.text, independent_clauses=independent
+    )
+    implicit = not unscoped and _verified_implicit_retention(
+        data, context, previous, retained, independent_clauses=independent
+    )
+    return PendingFieldFacts(field, None, unscoped, implicit, group, independent, conflicts)
+
+
+def bind_request_analysis(
+    data: AssistRequest,
+    context: AssistContext,
+    analysis: RequestAnalysis,
+    previous: PreviousCandidate | None,
+    previous_rejected: Mapping[str, ReasonCode],
+) -> RequestAnalysis:
+    """Bind already verified prior state; freeze independent field transitions."""
+    _check_analysis(data, context, analysis)
+    if analysis.bound:
+        if analysis.prior_key != (
+            previous.model_dump_json() if previous else None
+        ) or analysis.prior_rejections != tuple(sorted(previous_rejected.items())):
+            raise ValueError("RequestAnalysis prior binding mismatch")
+        return analysis
+    return replace(
+        analysis,
+        bound=True,
+        prior_key=previous.model_dump_json() if previous else None,
+        prior_rejections=tuple(sorted(previous_rejected.items())),
+        withdrawals=MappingProxyType(dict(resolve_withdrawals(data, previous, context))),
+        pending=tuple(
+            _build_pending_field(data, context, field, previous, turn=analysis.current)
+            for field in FORM_FIELDS[data.form]
+        ),
+        conditional_fields=_conditional_assignment_fields(
+            data.form, data.text, context, turn=analysis.current
+        ),
+        unresolved_fields=_unresolved_owned_fields(data, context, previous, turn=analysis.current),
+    )
+
+
 def _pending_transition(
     data: AssistRequest,
     context: AssistContext,
@@ -5784,8 +7275,15 @@ def _pending_transition(
     *,
     allow_group_recovery: bool = True,
     withdrawals: Mapping[str, WithdrawalDecision] | None = None,
+    analysis: RequestAnalysis | None = None,
 ) -> CandidateField | None:
     """검증한 필드 결과와 이전 후보 사이의 유지·철회·보류 전이를 정한다."""
+    facts = (
+        analysis.pending_field(field)
+        if analysis is not None and analysis.bound
+        else _build_pending_field(data, context, field, previous)
+    )
+    field_facts = analysis.current.field(field) if analysis is not None else None
     retained = (
         next((part for part in previous.fields if part.field == field), None) if previous else None
     )
@@ -5798,7 +7296,11 @@ def _pending_transition(
         if cancellation is not None:
             if cancellation.definite:
                 return _withdrawal_candidate(data, cancellation, "rule")
-            if retained is not None or _mentions_field(data.form, field, data.text, context):
+            if retained is not None or (
+                field_facts.mentioned
+                if field_facts is not None
+                else _mentions_field(data.form, field, data.text, context)
+            ):
                 return _hold(field, "ambiguous_intent", "rule")
     if (
         allow_group_recovery
@@ -5806,68 +7308,42 @@ def _pending_transition(
         and retained is not None
         and chosen is not None
         and chosen.status in ("invalid", "uncertain")
-        and _verified_group_retention(data, context, previous, retained, reason=chosen.reason_code)
+        and chosen.reason_code in ("ambiguous_intent", "evidence_missing")
+        and facts.group_previous
     ):
         return _candidate_from_previous(retained, previous)
+    if facts.current_keep_evidence is not None and _not_action(chosen):
+        return CandidateField(
+            field=field,
+            action="keep",
+            value=None,
+            evidence=facts.current_keep_evidence,
+            source="rule",
+            status="valid",
+            alternatives=[],
+            intent_kind="retain_current",
+            value_source="current",
+            origin_request_id=data.request_id,
+        )
     if not _not_action(chosen):
         return chosen
     if retained is not None:
-        independent_clauses = _verified_independent_date_clauses(
-            data, context, previous, field, data.text
-        )
-        if _targeted_retention(
-            data.form,
-            field,
-            data.text,
-            data.text,
-            context,
-            retaining_previous=False,
-            require_current_reference=True,
-            independent_clauses=independent_clauses,
-        ):
-            # 브라우저의 보류 해제는 해당 필드의 검증된 유지 절에
-            # 결합된다. 여러 독립 지시 전체를 keep 근거로 전달하면
-            # 같은 절의 증명과 비교할 수 없다. 이미 검증된 scope
-            # 범위만 사용하며 미지원 문장은 기존 근거를 유지한다.
-            scoped = _scoped_retention(
-                data.form,
-                field,
-                data.text,
-                data.text,
-                context,
-                retaining_previous=False,
-                require_current_reference=True,
-                independent_clauses=independent_clauses,
-            )
-            evidence = (
-                normalized(data.text)[scoped[0].start : scoped[0].end]
-                if scoped is not None and scoped[1]
-                else data.text
-            )
-            return CandidateField(
-                field=field,
-                action="keep",
-                value=None,
-                evidence=evidence,
-                source="rule",
-                status="valid",
-                alternatives=[],
-                intent_kind="retain_current",
-                value_source="current",
-                origin_request_id=data.request_id,
-            )
-        if _unscoped_retention_control(
-            data.form, field, data.text, independent_clauses=independent_clauses
-        ):
+        if facts.unscoped_control:
             return _hold(field, "ambiguous_intent", "rule")
-        if _verified_implicit_retention(
-            data, context, previous, retained, independent_clauses=independent_clauses
-        ):
+        if facts.implicit_previous:
             return _candidate_from_previous(retained, previous)
-        scope = _field_scope(data.form, field, data.text, context)
+        scope = (
+            field_facts.scope
+            if field_facts is not None
+            else _field_scope(data.form, field, data.text, context)
+        )
         if scope == "other":
             return _candidate_from_previous(retained, previous)
-        if scope in ("target", "unbound") or _mentions_field(data.form, field, data.text, context):
+        if scope in ("target", "unbound") or (
+            field_facts.mentioned
+            if field_facts is not None
+            else _mentions_field(data.form, field, data.text, context)
+        ):
             return _hold(field, "ambiguous_intent", source)
         return _candidate_from_previous(retained, previous)
     if data.previous_candidate and any(
@@ -5885,6 +7361,7 @@ def _projected_candidates(
     checked: dict[str, CandidateField],
     *,
     withdrawals: Mapping[str, WithdrawalDecision] | None = None,
+    analysis: RequestAnalysis | None = None,
 ) -> dict[str, CandidateField]:
     """의미/상태 전이를 끝낸 후보만 업무 조합에 전달한다.
 
@@ -5896,7 +7373,15 @@ def _projected_candidates(
         chosen = checked.get(field)
         if previous is not None:
             chosen = _pending_transition(
-                data, context, field, chosen, previous, {}, "rule", withdrawals=withdrawals
+                data,
+                context,
+                field,
+                chosen,
+                previous,
+                {},
+                "rule",
+                withdrawals=withdrawals,
+                analysis=analysis,
             )
         if chosen is not None and chosen.status == "valid" and chosen.action in ("set", "clear"):
             projection[field] = chosen
@@ -5915,6 +7400,68 @@ def _business_projection(
     }
 
 
+def _operation_proof(
+    candidate: CandidateField,
+    data: AssistRequest,
+    context: AssistContext,
+    previous: PreviousCandidate | None,
+    analysis: RequestAnalysis,
+    input_facts: InputOperationFacts | None = None,
+) -> OperationProof:
+    """Compute producer-independent checks before selection, retaining all vetoes.
+
+    A reviewed status alone is insufficient: some existing rule candidates
+    intentionally reach merge with valid status but unproven field ownership.
+    """
+    valid_operation = candidate.status == "valid" and candidate.action in ("set", "clear")
+    set_value = valid_operation and candidate.action == "set"
+    new_operation = valid_operation and candidate.intent_kind != "retain_previous"
+    field = candidate.field
+    text_field = set_value and field in ("title", "reason") and isinstance(candidate.value, str)
+    scalar = set_value and (field in ("amount", "crew") or (data.form, field) == ("quote", "days"))
+    current = analysis.current
+    return OperationProof(
+        request_key=analysis.request_key,
+        prior_key=analysis.prior_key,
+        candidate_key=candidate.model_dump_json(),
+        evidence_scope=(
+            _field_scope(data.form, field, candidate.evidence, context)
+            if previous is not None
+            and candidate.source == "llm"
+            and candidate.status in ("uncertain", "invalid")
+            and candidate.evidence
+            and current.evidence_matches(candidate.evidence)
+            else "none"
+        ),
+        local_scalar=bool(
+            scalar
+            and (
+                input_facts.local_scalar
+                if input_facts is not None
+                else (
+                    _local_scalar_operation_ok(
+                        candidate, data.form, data.text, context, turn=current
+                    )
+                    or _verified_crew_total(candidate, data, data.text, context, turn=current)
+                )
+            )
+        ),
+        text_scope=not text_field or text_value_scope_ok(field, candidate.value, data.text),
+        competing_retention=bool(
+            new_operation
+            and (
+                input_facts.competing_retention
+                if input_facts is not None
+                else analysis.pending_field(field).conflicts_with(candidate.value)
+                if analysis.bound
+                else _competing_retention_assignment(
+                    data, field, candidate.value, context, previous
+                )
+            )
+        ),
+    )
+
+
 def merge_candidates(
     data: AssistRequest,
     context: AssistContext,
@@ -5927,11 +7474,22 @@ def merge_candidates(
     merged_out: list[CandidateField] | None = None,
     previous_rejected: dict[str, ReasonCode] | None = None,
     withdrawals: Mapping[str, WithdrawalDecision] | None = None,
+    analysis: RequestAnalysis | None = None,
+    rule_proofs: Mapping[str, OperationProof] | None = None,
+    model_proofs: Mapping[str, OperationProof] | None = None,
 ) -> list[CandidateField]:
+    if analysis is not None:
+        _check_analysis(data, context, analysis)
     if previous_rejected is None:
-        _, previous_rejected = review_previous(data, context)
+        _, previous_rejected = review_previous(data, context, analysis=analysis)
+    if analysis is not None:
+        analysis = bind_request_analysis(data, context, analysis, previous, previous_rejected)
     if withdrawals is None:
-        withdrawals = resolve_withdrawals(data, previous, context)
+        withdrawals = (
+            analysis.withdrawals
+            if analysis is not None
+            else resolve_withdrawals(data, previous, context)
+        )
     if date_edits is None:
         date_edits = reviewed_date_edit(data, context, previous, previous_rejected)
     prior = (
@@ -5940,8 +7498,46 @@ def merge_candidates(
         else {}
     )
     independent_end = _verified_period_end(data, context, previous)
-    conditional_fields = _conditional_assignment_fields(data.form, data.text, context)
-    unresolved_fields = _unresolved_owned_fields(data, context, previous)
+    conditional_fields = (
+        analysis.conditional_fields
+        if analysis is not None
+        else _conditional_assignment_fields(data.form, data.text, context)
+    )
+    unresolved_fields = (
+        analysis.unresolved_fields
+        if analysis is not None
+        else _unresolved_owned_fields(data, context, previous)
+    )
+
+    def scope(field: str) -> str:
+        return (
+            analysis.current.field(field).scope
+            if analysis is not None
+            else _field_scope(data.form, field, data.text, context)
+        )
+
+    def mentioned(field: str) -> bool:
+        return (
+            analysis.current.field(field).mentioned
+            if analysis is not None
+            else _mentions_field(data.form, field, data.text, context)
+        )
+
+    def proof(
+        candidate: CandidateField | None, proofs: Mapping[str, OperationProof] | None
+    ) -> OperationProof | None:
+        if candidate is None or analysis is None:
+            return None
+        supplied = proofs.get(candidate.field) if proofs is not None else None
+        if (
+            supplied is not None
+            and supplied.request_key == analysis.request_key
+            and supplied.prior_key == analysis.prior_key
+            and supplied.candidate_key == candidate.model_dump_json()
+        ):
+            return supplied
+        return _operation_proof(candidate, data, context, previous, analysis)
+
     end_rule = rule.get("end")
     end_model = model.get("end") if model is not None else None
     end_assignment = (
@@ -5968,32 +7564,44 @@ def merge_candidates(
     for field in FORM_FIELDS[data.form]:
         r = rule.get(field)
         m = model.get(field) if model is not None else None
+        rp, mp = proof(r, rule_proofs), proof(m, model_proofs)
         rule_scope_invalid = False
         if field in ("title", "reason"):
             # 원문에 있는 문자열이어도 실제 다른 필드의 값/참조라면
             # 병합 대안으로 노출하지 않는다. 유효한 독립 후보는 보존한다.
-            def checked_text(item: CandidateField | None, field: str) -> CandidateField | None:
+            def checked_text(
+                item: CandidateField | None, field: str, item_proof: OperationProof | None
+            ) -> CandidateField | None:
                 if (
                     item is not None
                     and item.status == "valid"
                     and item.action == "set"
                     and item.intent_kind != "retain_previous"
                     and isinstance(item.value, str)
-                    and not text_value_scope_ok(field, item.value, data.text)
+                    and not (
+                        item_proof.text_scope
+                        if item_proof is not None
+                        else text_value_scope_ok(field, item.value, data.text)
+                    )
                 ):
                     return _hold(field, "ambiguous_intent", item.source).model_copy(
                         update={"status": "invalid"}
                     )
                 return item
 
-            scoped_rule = checked_text(r, field)
+            scoped_rule = checked_text(r, field, rp)
             rule_scope_invalid = scoped_rule is not r
             # 미언급 모델과 병합할 때는 기존 독립 필드 판정에 원래 규칙
             # 후보를 전달하되, 대상 검증에 실패한 후보 자체는 채택하지 않는다.
             if m is None or not _not_action(m):
                 r = scoped_rule
-            m = checked_text(m, field)
+            m = checked_text(m, field, mp)
         chosen = _merge_pair(r, m) if model is not None else r
+        delta = (
+            analysis.current.field(field).delta
+            if analysis is not None
+            else _scalar_delta_fact(data, context, field, data.text)
+        )
         if (
             r is not None
             and r.status == "uncertain"
@@ -6002,7 +7610,11 @@ def merge_candidates(
             and m.status == "valid"
             and m.intent_kind == "explicit_change"
             and field in ("amount", "crew", "days")
-            and _local_scalar_operation_ok(m, data.form, data.text, context)
+            and (
+                mp.local_scalar
+                if mp is not None
+                else _local_scalar_operation_ok(m, data.form, data.text, context)
+            )
         ):
             chosen = m
         if (
@@ -6029,7 +7641,9 @@ def merge_candidates(
             and m.status == "invalid"
             and m.reason_code == "unsupported_normalization"
             and explicit_text_assignment(field, r.value, data.text)
-            and text_value_scope_ok(field, r.value, data.text)
+            and (
+                rp.text_scope if rp is not None else text_value_scope_ok(field, r.value, data.text)
+            )
             and _rule_field_proof(data.form, r, data.text, context)
         ):
             # 모델의 값 근거가 틀려도 독립적으로 완결된 동일 필드의
@@ -6060,7 +7674,7 @@ def merge_candidates(
         if model is not None and m is not None and _not_action(m) and r is not None:
             if r.status == "valid" and r.action in ("set", "clear"):
                 # 원문 숫자가 있다는 사실만으로 대상 필드가 실제로 변경됐다고 단정하지 않는다.
-                independent = _field_scope(data.form, field, data.text, context) == "other" and (
+                independent = scope(field) == "other" and (
                     (field != "end" and end_assignment)
                     or any(
                         other.field != field
@@ -6074,20 +7688,28 @@ def merge_candidates(
                             and other.status == "uncertain"
                             and bool(other.evidence)
                             and evidence_matches(data.text, other.evidence)
-                            and _field_scope(data.form, other.field, other.evidence, context)
+                            and (
+                                proof(other, model_proofs).evidence_scope
+                                if analysis is not None
+                                else _field_scope(data.form, other.field, other.evidence, context)
+                            )
                             == "target"
                             or field in prior
                             and other.status == "invalid"
                             and other.reason_code == "business_constraint"
                             and evidence_matches(data.text, other.evidence)
-                            and _field_scope(data.form, other.field, other.evidence, context)
+                            and (
+                                proof(other, model_proofs).evidence_scope
+                                if analysis is not None
+                                else _field_scope(data.form, other.field, other.evidence, context)
+                            )
                             == "target"
                             or field in prior
                             and (cancel := withdrawals.get(other.field)) is not None
                             and cancel.definite
                         )
                         and other.intent_kind != "retain_previous"
-                        and _field_scope(data.form, other.field, data.text, context) == "target"
+                        and scope(other.field) == "target"
                         for other in model.values()
                     )
                 )
@@ -6104,11 +7726,7 @@ def merge_candidates(
             elif r.status in ("invalid", "uncertain"):
                 chosen = (
                     m
-                    if not rule_scope_invalid
-                    and (
-                        _field_scope(data.form, field, data.text, context) == "other"
-                        or not _mentions_field(data.form, field, data.text, context)
-                    )
+                    if not rule_scope_invalid and (scope(field) == "other" or not mentioned(field))
                     else _hold(field, r.reason_code or "ambiguous_intent", "rule")
                 )
         # 같은 상태 전이가 생산자별 업무 투영과 병합 후에도 작동한다.
@@ -6139,6 +7757,7 @@ def merge_candidates(
             "llm" if model else "rule",
             allow_group_recovery=group_compatible,
             withdrawals=withdrawals,
+            analysis=analysis,
         )
         if chosen is None:
             chosen = CandidateField(
@@ -6162,7 +7781,12 @@ def merge_candidates(
         replacement = (data.form, field) in (
             ("dates", "days"),
             ("period", "excluded"),
-        ) and date_replacement_requested(field, data.text)
+        ) and (
+            analysis.current.field(field).replacement_requested
+            if analysis is not None
+            else date_replacement_requested(field, data.text)
+            and _complete_date_list_assignment(data.form, field, data.text, context) is None
+        )
         if (
             replacement
             and edit is None
@@ -6222,13 +7846,42 @@ def merge_candidates(
                 )
             else:
                 chosen = _hold(field, "ambiguous_intent", "rule")
+        calendar = (
+            analysis.current.field(field).calendar
+            if analysis is not None
+            else _owned_calendar_operation(data, context, field, data.text)
+        )
+        if calendar is not None and edit is None and field not in withdrawals:
+            calendar_result = _calendar_candidate(calendar, data, context)
+            # 동일한 완전 목록이 이미 검증됐다면 생산자와 원문 근거를
+            # 보존한다. 파생 연산이나 부분 목록만 독립 복구한다.
+            if not (
+                chosen.status == calendar_result.status == "valid"
+                and chosen.intent_kind == "explicit_change"
+                and chosen.action == calendar_result.action
+                and chosen.value == calendar_result.value
+                and chosen.value_source == calendar_result.value_source
+            ):
+                chosen = calendar_result
         if (
-            date_set_is_inquiry(data.form, field, data.text)
+            (
+                analysis.current.field(field).date_inquiry
+                if analysis is not None
+                else _boundary_preview(data.form, data.text, context) is None
+                and date_set_is_inquiry(data.form, field, data.text)
+            )
             and chosen.status in ("valid", "conflict")
             and not (chosen.action == "keep" and chosen.intent_kind == "retain_current")
         ):
             # 독립 날짜 교체/계승도 문의 자체를 확정 후보로 바꾸지 않는다.
             chosen = _hold(field, "ambiguous_intent", chosen.source)
+        final_proof = (
+            rp
+            if rp is not None and rp.candidate_key == chosen.model_dump_json()
+            else mp
+            if mp is not None and mp.candidate_key == chosen.model_dump_json()
+            else None
+        )
         if (
             field in ("start", "end", "valid")
             and chosen.intent_kind != "retain_previous"
@@ -6272,6 +7925,14 @@ def merge_candidates(
             )
         ):
             chosen = _hold(field, "ambiguous_intent", chosen.source)
+        if data.form == "period" and field in ("start", "end") and chosen.action == "set":
+            exclusion_op = (
+                analysis.current.field("excluded").calendar
+                if analysis is not None
+                else _owned_calendar_operation(data, context, "excluded", data.text)
+            )
+            if _calendar_boundary_conflict(data, context, field, chosen.value, exclusion_op):
+                chosen = _hold(field, "ambiguous_intent", chosen.source)
         if field == "vat" and chosen.intent_kind != "retain_previous":
             if chosen.status == "valid" and chosen.action == "set":
                 if not _vat_set_intent_ok(data, chosen, context):
@@ -6279,13 +7940,28 @@ def merge_candidates(
             elif chosen.status == "conflict":
                 # 불확정 세금 방식을 선택 가능한 충돌 대안으로도 내보내지 않는다.
                 chosen = _hold(field, "ambiguous_intent", chosen.source)
+        if delta is not None and field not in withdrawals:
+            # 하나의 독립적으로 입증한 연산 결과는 생산자의 중간
+            # 수량이나 미언급 때문에 바뀌지 않는다. 이어지는 유지
+            # 및 조합 검증은 동일하게 적용한다.
+            chosen = _delta_candidate(delta, data, "rule")
         if chosen.intent_kind != "retain_previous" and (
             chosen.status == "valid"
             and chosen.action in ("set", "clear")
-            and _competing_retention_assignment(data, field, chosen.value, context, previous)
+            and (
+                final_proof.competing_retention
+                if final_proof is not None
+                else analysis.pending_field(field).conflicts_with(chosen.value)
+                if analysis is not None
+                else _competing_retention_assignment(data, field, chosen.value, context, previous)
+            )
             or chosen.status == "conflict"
             and any(
-                _competing_retention_assignment(data, field, alt.value, context, previous)
+                (
+                    analysis.pending_field(field).conflicts_with(alt.value)
+                    if analysis is not None
+                    else _competing_retention_assignment(data, field, alt.value, context, previous)
+                )
                 for alt in chosen.alternatives
             )
         ):
@@ -6307,7 +7983,11 @@ def merge_candidates(
             and field not in previous_rejected
             and field not in conditional_fields | unresolved_fields
             and field not in withdrawals
-            and not _has_new_field_risk(data, context, field)
+            and not (
+                analysis.current.field(field).new_risk
+                if analysis is not None
+                else _has_new_field_risk(data, context, field)
+            )
         ):
             chosen = m
         out.append(chosen)

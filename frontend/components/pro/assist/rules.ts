@@ -1,12 +1,13 @@
 // 기존 규칙 파서는 서버 응답과 같은 후보 모양으로 바꿔 미리보기에만 사용해요.
 import { extraTextScopes, independentPeriodBoundary, independentPeriodExclusionBoundary, independentPeriodInquiry, parseDates, parseExtra, parsePeriod, parseQuote, readDateListQuantity, readExplicitPeriodBoundary, readExplicitPeriodExclusions } from "./parse";
-import { requestIntent } from "./requestIntent";
+import { reportedPeriodExclusion, requestIntent, resolvedIntentSegments } from "./requestIntent";
+import { relativeQuantityOperation, referencedExclusionAddOperation } from "./fieldOperation";
 import {
-  type AssistForm, type AssistResponse, type AssistValue, type FieldIntent,
+  type AssistForm, type AssistResponse, type AssistValue, type AssistCurrent, type FieldIntent,
   type RuleOptions, formKeys, keepField, validSetValue,
 } from "./protocol";
 
-export function ruleFields(form: AssistForm, text: string, opts: RuleOptions): FieldIntent[] {
+export function ruleFields(form: AssistForm, text: string, opts: RuleOptions, current?:AssistCurrent, priorFields:readonly FieldIntent[]=[]): FieldIntent[] {
   const found: Record<string, AssistValue> = {};
   const evidence: Record<string, string> = {};
   const intent = requestIntent(form, form === "extra" ? extraTextScopes(text).intentText : text);
@@ -41,7 +42,7 @@ export function ruleFields(form: AssistForm, text: string, opts: RuleOptions): F
   }
   if (form === "dates" || form === "period") {
     const proof = readDateListQuantity(form,text,opts.today,opts.baseMonth,opts.holidays,opts.noWeekend) ??
-      (form==="period"&&!found.excluded?readExplicitPeriodExclusions(text,opts.today,opts.baseMonth):undefined);
+      (form==="period"&&(!found.excluded||resolvedIntentSegments(form,text).some(s=>reportedPeriodExclusion(s.part)))?readExplicitPeriodExclusions(text,opts.today,opts.baseMonth):undefined);
     const field = form === "dates" ? "days" : "excluded";
     if (proof) {
       if (proof.invalid) delete found[field];
@@ -49,6 +50,11 @@ export function ruleFields(form: AssistForm, text: string, opts: RuleOptions): F
     }
   }
   return formKeys(form).map((field) => {
+    const hasPrior=priorFields.some(item=>item.field===field&&(item.action==="set"||item.action==="clear"));
+    const operation=relativeQuantityOperation(form,text,field,current,opts,hasPrior)??
+      referencedExclusionAddOperation(form,text,field,current,opts,hasPrior);
+    if(operation)return operation.value===undefined?keepField(field):
+      {field,action:"set",value:operation.value,evidence:operation.evidence,intent_kind:"explicit_change",value_source:"derived"};
     const value = found[field];
     const withdrawal=intent.withdrawalProofs.get(field);
     const keep=intent.linkedCurrentKeep.get(field) ??
