@@ -25,6 +25,7 @@ from app.vendor.assist_intent import (
     intent_target_mentions,
     retention_scopes,
 )
+from app.vendor.assist_lexical import skip_space
 from app.vendor.assist_normalize import crew_tokens, duration_quantity_risk, duration_tokens
 from app.vendor.assist_written_money import written_money_tokens
 
@@ -208,14 +209,17 @@ def _mask_quoted_spans(raw: str) -> str:
     return "".join(masked)
 
 
-def _label_marker(raw: str, mark):
+def _label_marker_end(raw: str, mark) -> int | None:
     """필드 표지 뒤의 인용값은 마스킹하기 전 위치로 확인한다."""
     tail = raw[mark.end :]
     marker = _TEXT_LABEL_MARKER.match(tail)
     if marker is not None:
-        return marker
+        return marker.end()
     if mark.fields in ({"title"}, {"reason"}):
-        return re.match(r"\s+(?=['\"“‘])", tail)
+        value = tail.lstrip()
+        offset = len(tail) - len(value)
+        if offset and value.startswith(("'", '"', "“", "‘")):
+            return offset
     return None
 
 
@@ -229,7 +233,7 @@ def _explicit_text_labels(raw: str):
         # 값 자체의 명사(예: 사유 확인 누락)를 필드로 오인하지 않는다.
         # 구분자 또는 명확한 필드+수량은 독립 대입 표지이다.
         if (
-            _label_marker(raw, mark)
+            _label_marker_end(raw, mark) is not None
             or (
                 mark.fields == {"amount"}
                 and (
@@ -261,7 +265,7 @@ def _explicit_text_labels(raw: str):
             i + 1 < len(marks)
             and mark.fields == marks[i + 1].fields
             and not masked[mark.end : marks[i + 1].start].strip()
-            and _label_marker(raw, marks[i + 1])
+            and _label_marker_end(raw, marks[i + 1]) is not None
         )
     ]
 
@@ -274,11 +278,11 @@ def mask_bound_text_literals(raw: str) -> str:
     for label in labels:
         if label.fields not in ({"title"}, {"reason"}):
             continue
-        marker = _label_marker(raw, label)
+        marker = _label_marker_end(raw, label)
         if marker is None:
             continue
-        tail = raw[label.end + marker.end() :]
-        start = label.end + marker.end() + len(tail) - len(tail.lstrip())
+        tail = raw[label.end + marker :]
+        start = label.end + marker + len(tail) - len(tail.lstrip())
         end = ends.get(start)
         if end is not None:
             masked = masked[:start] + " " * (end - start) + masked[end:]
@@ -404,10 +408,10 @@ def _explicit_assignment_spans(raw: str, field: str):
     for i, label in enumerate(labels):
         if label.fields != {field}:
             continue
-        marker = _label_marker(raw, label)
+        marker = _label_marker_end(raw, label)
         if marker is None:
             continue
-        begin = label.end + marker.end()
+        begin = label.end + marker
         stop = _VALUE_CLAUSE_BREAK.search(masked, begin)
         end = stop.start() if stop else len(raw)
         # 구두점 없는 독립 필드는 실제 완결 술어 뒤에서만 자른다.
@@ -436,7 +440,7 @@ def _explicit_assignment_spans(raw: str, field: str):
         # 의도 검증에 맡긴다. 같은 절의 이웃 필드는 값이 아니다.
         if (
             suffix is None
-            and not re.search(r"[:=]", marker.group())
+            and not any(char in raw[label.end : begin] for char in (":", "="))
             and not _literal_quote(clause)
             and (
                 _NOMINAL_CONTROL.search(tail)
@@ -742,8 +746,32 @@ _OTHER_VALUE = {
         r"한두|두세|서너|네댓|대여섯|일|이|삼|사|오|육|칠|팔|구|십)\s*(?:명|인)"
         r"(?=$|[\s,.;!?？은는이가을를으로만도])"
     ),
-    "quote": re.compile(r"\d[\d,.]*\s*(?:만\s*원?|원|억)|포함|별도|면세"),
 }
+_QUOTE_NUMBER_RUN = re.compile(r"[\d,.]+")
+
+
+def _other_quote_value(text: str, *, at_start: bool = False) -> bool:
+    """연속된 숫자 묶음과 단위를 분리해 값 언급을 선형으로 찾는다."""
+    tax_words = ("포함", "별도", "면세")
+    if at_start:
+        if text.startswith(tax_words):
+            return True
+        if not text or not text[0].isdecimal():
+            return False
+    elif any(word in text for word in tax_words):
+        return True
+    for run in _QUOTE_NUMBER_RUN.finditer(text):
+        if at_start and run.start() != 0:
+            return False
+        if any(char.isdecimal() for char in run.group()):
+            end = skip_space(text, run.end())
+            if text.startswith(("만", "원", "억"), end):
+                return True
+        if at_start:
+            return False
+    return False
+
+
 _INQUIRY = re.compile(
     r"가능\s*(?:할지|한지|한가요|하나요|할까요|여부)|"
     r"(?:수\s*있|수\s*없)(?:는지|을지|나요|을까요)|"
@@ -830,6 +858,7 @@ def _other_mentioned(form: str, text: str) -> bool:
     return bool(
         (pattern and pattern.search(text))
         or (form == "dates" and crew_tokens(text))
+        or (form == "quote" and _other_quote_value(text))
         or (form == "quote" and written_money_tokens(text))
     )
 
@@ -872,6 +901,7 @@ def _field_clauses(form: str, sentence: str) -> list[tuple[str, frozenset[str]]]
         if (
             _DATE.match(tail)
             or (other and other.match(tail))
+            or (form == "quote" and _other_quote_value(tail, at_start=True))
             or (form == "quote" and any(a == 0 for a, _, _ in duration_tokens(tail)))
             or (form == "dates" and any(a == 0 for a, _, _ in crew_tokens(tail)))
             or (form == "quote" and any(a == 0 for a, _, _ in written_money_tokens(tail) or []))
@@ -968,7 +998,7 @@ def _date_clause_targets(form: str, clause: str, targets: frozenset[str]) -> fro
         form == "quote"
         and targets in (frozenset(), frozenset(("amount",)))
         and re.search(rf"{_CALENDAR_DATE.pattern}\s*까지\s*유효(?:하|할|한|하게|하도록)", clause)
-        and not _OTHER_VALUE["quote"].search(clause)
+        and not _other_quote_value(clause)
         and all(
             mention.fields == {"amount"}
             and clause[mention.start : mention.end] in ("견적", "견적서")

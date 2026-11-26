@@ -6,6 +6,7 @@
 """
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import pairwise
@@ -17,7 +18,7 @@ from app.vendor.assist_intent import (
     intent_clauses,
     polite_execution_risk_text,
 )
-from app.vendor.assist_lexical import compact_whitespace
+from app.vendor.assist_lexical import compact_whitespace, skip_space
 from app.vendor.assist_schemas import AssistContext
 
 _ISO = re.compile(r"20\d{2}-\d{2}-\d{2}\Z")
@@ -300,39 +301,58 @@ _MOVE_ACTION = re.compile(rf"옮기|옮겨|옮길|미루|미뤄|미룰|당기|�
 # Ordinals are references into the verified list, not alternative date values.
 # Bind any ordinal attached to the rejected date to the actual list member;
 # a separate retained ordinal must be a different, in-range member.
-_ORDINAL = r"(?:첫(?:\s*번째)?|두\s*번째|둘째|세\s*번째|셋째|네\s*번째|넷째|\d+\s*번째)"
-_ORDINAL_OWNER = re.compile(
-    rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를]\s*)?$"
+_ORDINAL_TOKEN = re.compile(r"첫(?:\s*번째)?|두\s*번째|둘째|세\s*번째|셋째|네\s*번째|넷째|\d+")
+_ORDINAL_OWNER_SUFFIX = re.compile(
+    r" ?(?:방문|작업|공사|시공|날짜|날|일정)(?: ?(?:일|날짜))? ?(?:[은는이가을를] ?)?$"
 )
-_ORDINAL_KEEP = re.compile(
-    rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를도]\s*)?(?:기존대로|원래대로|그대로|유지)(?:요|예요|입니다|해\s*주세요)?\s*[.!。]?\s*$"
+_ORDINAL_KEEP_SUFFIX = re.compile(
+    r" ?(?:방문|작업|공사|시공|날짜|날|일정)(?: ?(?:일|날짜))? ?(?:[은는이가을를도] ?)?(?:기존대로|원래대로|그대로|유지)(?:요|예요|입니다|해 ?주세요)? ?[.!。]? ?$"
 )
 
 
-def _ordinal_number(text: str) -> int:
-    compact = "".join(text.split())
-    if compact[0].isdigit():
-        return int(compact.removesuffix("번째"))
-    return {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4}.get(compact[0], 0)
+def _ordinal_mentions(text: str) -> Iterator[tuple[int, int, int]]:
+    """숫자 묶음은 한 번 읽고, 뒤의 서수 표지를 별도로 확인한다."""
+    native = {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4}
+    for token in _ORDINAL_TOKEN.finditer(text):
+        end = token.end()
+        value_text = token.group()
+        if value_text[0].isdecimal():
+            end = skip_space(text, end)
+            if not text.startswith("번째", end):
+                continue
+            end += len("번째")
+            value = 0
+            for digit in value_text:
+                value = value * 10 + int(digit)
+                if value > JOB_MAX_DAYS:
+                    value = JOB_MAX_DAYS + 1
+                    break
+        else:
+            value = native[value_text[0]]
+        yield token.start(), end, value
 
 
 def _ordinal_members_valid(
     text: str, old: "_Mention", new: "_Mention", before: list[date], existing: date
 ) -> bool:
-    prefix = _local_prefix(text, old.start)
-    ordinal = _ORDINAL_OWNER.search(prefix)
+    # 공백 묶음을 한 칸으로 줄여 고정된 후행 문법만 검사한다.
+    prefix, _ = compact_whitespace(_local_prefix(text, old.start))
     position = before.index(existing) + 1
-    if ordinal and _ordinal_number(ordinal["ordinal"]) != position:
-        return False
+    for _, end, ordinal in _ordinal_mentions(prefix):
+        if _ORDINAL_OWNER_SUFFIX.fullmatch(prefix, end) and ordinal != position:
+            return False
     # Only completed standalone retention clauses may refer to another index.
     for part in re.split(r"[,;.!。\n]", text[new.end :]):
-        if not re.search(_ORDINAL, part):
+        part, _ = compact_whitespace(part.strip())
+        ordinal = next(_ordinal_mentions(part), None)
+        if ordinal is None:
             continue
-        keep = _ORDINAL_KEEP.fullmatch(part.strip())
+        start, end, value = ordinal
         if (
-            keep is None
-            or not 1 <= _ordinal_number(keep["ordinal"]) <= len(before)
-            or _ordinal_number(keep["ordinal"]) == position
+            start != 0
+            or not _ORDINAL_KEEP_SUFFIX.fullmatch(part, end)
+            or not 1 <= value <= len(before)
+            or value == position
         ):
             return False
     return True
