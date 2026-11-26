@@ -301,8 +301,12 @@ _MOVE_ACTION = re.compile(rf"옮기|옮겨|옮길|미루|미뤄|미룰|당기|�
 # Bind any ordinal attached to the rejected date to the actual list member;
 # a separate retained ordinal must be a different, in-range member.
 _ORDINAL = r"(?:첫(?:\s*번째)?|두\s*번째|둘째|세\s*번째|셋째|네\s*번째|넷째|\d+\s*번째)"
-_ORDINAL_OWNER = re.compile(rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를]\s*)?$")
-_ORDINAL_KEEP = re.compile(rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를도]\s*)?(?:기존대로|원래대로|그대로|유지)(?:요|예요|입니다|해\s*주세요)?\s*[.!。]?\s*$")
+_ORDINAL_OWNER = re.compile(
+    rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를]\s*)?$"
+)
+_ORDINAL_KEEP = re.compile(
+    rf"(?P<ordinal>{_ORDINAL})\s*(?:방문|작업|공사|시공|날짜|날|일정)(?:\s*(?:일|날짜))?\s*(?:[은는이가을를도]\s*)?(?:기존대로|원래대로|그대로|유지)(?:요|예요|입니다|해\s*주세요)?\s*[.!。]?\s*$"
+)
 
 
 def _ordinal_number(text: str) -> int:
@@ -312,7 +316,9 @@ def _ordinal_number(text: str) -> int:
     return {"첫": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4}.get(compact[0], 0)
 
 
-def _ordinal_members_valid(text: str, old: "_Mention", new: "_Mention", before: list[date], existing: date) -> bool:
+def _ordinal_members_valid(
+    text: str, old: "_Mention", new: "_Mention", before: list[date], existing: date
+) -> bool:
     prefix = _local_prefix(text, old.start)
     ordinal = _ORDINAL_OWNER.search(prefix)
     position = before.index(existing) + 1
@@ -323,9 +329,15 @@ def _ordinal_members_valid(text: str, old: "_Mention", new: "_Mention", before: 
         if not re.search(_ORDINAL, part):
             continue
         keep = _ORDINAL_KEEP.fullmatch(part.strip())
-        if keep is None or not 1 <= _ordinal_number(keep["ordinal"]) <= len(before) or _ordinal_number(keep["ordinal"]) == position:
+        if (
+            keep is None
+            or not 1 <= _ordinal_number(keep["ordinal"]) <= len(before)
+            or _ordinal_number(keep["ordinal"]) == position
+        ):
             return False
     return True
+
+
 # '이동'은 명사로도 쓰이므로 날짜에 직접 연결된 미완성 이동만 보류한다.
 _NOMINAL_MOVE_ACTION = re.compile(
     r"^\s?(?:[은는이가을를]?만|[은는이가을를]|에서|으로|로)?\s?"
@@ -852,7 +864,10 @@ def _validated_date_edit(
     if shifted and replacement != existing + timedelta(days=1):
         return None
     if following and (
-        (following.group("verb") in ("미루", "미뤄", "미룰") or re.fullmatch(_MOVE_LATER, following.group("verb")))
+        (
+            following.group("verb") in ("미루", "미뤄", "미룰")
+            or re.fullmatch(_MOVE_LATER, following.group("verb"))
+        )
         and replacement <= existing
         or following.group("verb") in ("당기", "당겨", "당길")
         and replacement >= existing

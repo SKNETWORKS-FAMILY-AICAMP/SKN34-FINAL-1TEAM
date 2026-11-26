@@ -6,6 +6,14 @@ import {AssistSession} from "./session.ts";
 import {formKeys,type AssistCurrent,type CandidateField,type AssistRequest,type RuleOptions} from "./protocol.ts";
 
 const today="2026-11-26";
+for (const c of [
+  {field:"title" as const,text:'앞서 제안한 항목명 "문틀 보강" 후보를 철회합니다.',valueText:'"문틀 보강"'},
+  {field:"reason" as const,text:"앞서 제안한 사유 '현장 높이 차이' 후보를 철회합니다.",valueText:"'현장 높이 차이'"},
+]) test("selected historical quote remains available as withdrawal proof: "+c.field,()=>{
+  const intent=requestIntent("extra",extraTextScopes(c.text).intentText);
+  assert.equal(intent.withdrawalProofs.get(c.field)?.valueText,c.valueText);
+  assert.equal(parseExtra(c.text,today)[c.field],undefined);
+});
 const opts:RuleOptions={today,baseMonth:"2026-12-01",crewMax:6,daysMax:120,vatModes:["included","excluded","exempt"]};
 type TextField="title"|"reason";
 type Offer=Partial<CandidateField>&{field:string};

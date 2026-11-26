@@ -1075,14 +1075,18 @@ function extraScalarBoundary(text: string, at: number): boolean {
 export function extraTextScopes(text: string): { intentText: string; scalarText: string } {
   let intentText = text;
   const marks=extraTextTargets(text);
+  const clauses=extraTextClauses(text);
   for (const quote of text.matchAll(/"[^"\r\n]*"|'[^'\r\n]*'|“[^”\r\n]*”|‘[^’\r\n]*’/g)) {
     const at = quote.index;
-    const bound = marks.some(hit=>hit.valueStart===at);
+    // 조사 없는 인용값은 새 대입이 증명된 경우에만 가려요. 이전 후보
+    // 철회에 쓰인 값은 원래 후보 및 근거와 대조할 수 있어야 해요.
+    const bound = marks.some(hit=>hit.valueStart===at &&
+      (hit.marker.trim()!=="" || clauses.some(entry=>entry.span?.start===at)));
     if (bound) intentText = intentText.slice(0,at) + "\uE000".repeat(quote[0].length) + intentText.slice(at+quote[0].length);
   }
   // 확정된 전체 명사 값 내부의 필드 단어만 가려요. 조건/이력/미완결
   // 절 및 이웃의 명시 수량은 위의 구간 증명을 통과하지 않아요.
-  for(const entry of extraTextClauses(text)){
+  for(const entry of clauses){
     if(!entry.span)continue;
     const {start,end}=entry.span;
     intentText=intentText.slice(0,start)+"\uE000".repeat(end-start)+intentText.slice(end);
