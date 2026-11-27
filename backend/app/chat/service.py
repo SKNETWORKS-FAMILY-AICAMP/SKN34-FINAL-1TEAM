@@ -148,9 +148,51 @@ def _public(ans) -> AiAnswer:
     )
 
 
+PHOTO_TOO_MANY = "오늘은 사진을 더 올릴 수 없어요. 내일 다시 해 주세요."
+PHOTO_NOT_FOUND = "붙인 사진을 찾을 수 없어요. 다시 올려 주세요."
+
+
+async def _photos(s: AsyncSession, user, ids: list[uuid.UUID]) -> list:
+    """붙인 사진 행. 내가 올린 공간 사진(kind=photo)만 받는다: 남의 파일 · 다른 종류 · 없는 파일은 똑같이 404."""
+    from app.files import service as files
+
+    want = list(dict.fromkeys(ids))
+    rows = await files.owned(s, user.id, want)
+    if len(rows) != len(want) or any(r.kind != "photo" for r in rows.values()):
+        raise AppError(404, "not_found", PHOTO_NOT_FOUND)
+    return [rows[i] for i in want]
+
+
+async def _see(rows: list):
+    """사진을 읽어 PhotoSeen으로. 실패하면 None(답은 '사진을 읽지 못했어요'로 알리고 글 질문만 답한다)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from app.agent import llm
+    from app.agent.v3 import photo
+    from app.agent.v3.llm_mode import PROMPTS
+    from app.files import images, storage
+
+    try:
+        small = []
+        for r in rows:
+            data = await run_in_threadpool(storage.read, r.storage_key)
+            small.append(await run_in_threadpool(images.small, data))
+        system = (PROMPTS / f"{photo.PROMPT_VERSION}.md").read_text(encoding="utf-8")
+        return await llm.see(photo.PhotoSeen, system, [(m, b) for b, m in small])
+    except (llm.LLMError, images.BadImage, OSError, ValueError):
+        return None
+    except (
+        Exception
+    ) as e:  # S3 연결 · 권한 오류(botocore)도 500 대신 '읽지 못했어요'로. 내용은 남기지 않는다
+        if type(e).__module__.startswith(("botocore", "boto3")):
+            return None
+        raise
+
+
 async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
     """POST /ai/turns. 남의 대화 · 남의 프로젝트는 404, 같은 대화 동시 저장은 409."""
     from app.agent import llm
+    from app.agent.v3 import photo
     from app.agent.v3.answer import KB
     from app.agent.v3.schemas import TurnContext
     from app.agent.v3.trades import BY_CODE
@@ -172,7 +214,10 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
     ai_mode = mode()
     vector_versions: list[uuid.UUID] = []
     facts = None
+    photos: list = []
     async with SessionLocal() as s:  # 짧게 열고 닫는다. 답을 만드는 동안 세션을 쥐지 않는다
+        if body.file_ids:
+            photos = await _photos(s, user, body.file_ids)
         if body.chat_id is not None:
             chat = await get_for(s, user.id, body.chat_id)
             rev, waiting_label = chat.rev, chat.waiting
@@ -197,6 +242,19 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
         mode=ai_mode,  # type: ignore[arg-type]
         today=today,
     )
+    # 사진: LLM 모드에서만 읽는다(DB 세션 밖). 읽은 증상에 맞는 질문으로 바꿔 같은 한 턴에 넘긴다
+    seen_lines: list[str] = []
+    question = body.text
+    if photos:
+        if ctx.mode == "llm" and settings.app_env != "local":
+            # 읽는 사진만 센다(유료 호출). 권한 · 대화 · 공사 확인을 지난 뒤, DB 세션 밖에서
+            for _ in photos:
+                await ratelimit.hit(
+                    ratelimit.key("ai-photo", str(user.id)), photo.PER_DAY, 86400, PHOTO_TOO_MANY
+                )
+        seen = await _see(photos) if ctx.mode == "llm" else None
+        seen_lines = photo.lines(seen, read=ctx.mode == "llm")
+        question = photo.question_for(body.text, seen)
 
     async def load_vectors(question: str) -> tuple[str, ...]:
         # 임베딩을 기다리는 동안 DB 세션을 열어 두지 않는다.
@@ -209,10 +267,27 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
         except SQLAlchemyError:
             return ()
 
-    res = await run_turn(
-        body.text, ctx, kb=kb, facts=facts, waiting=waiting, button=body.button,
-        load_vectors=load_vectors if vector_versions and ix.items else None,
-    )  # fmt: skip
+    if photos and question == body.text and photo.is_generic(body.text):
+        # 사진만 올렸는데 답할 질문으로 바꾸지 못했다(읽지 않음 · 읽기 실패 · 자료 없는 증상):
+        # "이 사진 좀 봐 주세요"를 글 질문으로 돌리면 엉뚱한 답이 붙어서, 사진 안내만 답한다
+        from app.agent.v3.schemas import AgentAnswer, Trace
+        from app.agent.v3.turn import TurnResult
+
+        blank = AgentAnswer(trace=Trace(route="guide", source="rule", mode=ctx.mode))
+        res = TurnResult(blank, waiting, None, 0.0, "rule")  # 되물어 둔 칸은 그대로 둔다
+    else:
+        swapped = (
+            question != body.text
+        )  # 사진 증상으로 바꾼 질문은 되물은 칸의 답 · 단추 답으로 읽지 않는다
+        res = await run_turn(
+            question,
+            ctx,
+            kb=kb,
+            facts=facts,
+            waiting=None if swapped else waiting,
+            button=None if swapped else body.button,
+            load_vectors=load_vectors if vector_versions and ix.items else None,
+        )
     ans = res.answer
     chat_id, new_rev = body.chat_id, None
     if not ans.failed:
@@ -234,12 +309,16 @@ async def ai_turn(user, body: AiTurnIn, today: date) -> AiTurnOut:
             ):
                 await s.rollback()
                 raise AppError(409, "conflict", CONFLICT)
-            repository.add_turn(s, chat_id, rev, mask(body.text), ans.plain(), intent)
+            asked = mask(body.text) + (f" (사진 {len(photos)}장)" if photos else "")
+            said = "\n".join(x for x in [*seen_lines, ans.plain()] if x)
+            repository.add_turn(s, chat_id, rev, asked, said, intent)
             await s.commit()
         new_rev = rev + 1
         await _set_json(_key("wait", str(chat_id)), res.waiting, WAIT_TTL)
+    public = _public(ans)
+    public.photo = seen_lines
     out = AiTurnOut(
-        chat_id=chat_id, rev=new_rev, mode=ctx.mode, route=ans.trace.route, answer=_public(ans)
+        chat_id=chat_id, rev=new_rev, mode=ctx.mode, route=ans.trace.route, answer=public
     )
     await _set_json(replay_key, out.model_dump(mode="json"), REPLAY_TTL)
     return out
