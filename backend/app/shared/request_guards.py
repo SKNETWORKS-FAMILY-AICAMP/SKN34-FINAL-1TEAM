@@ -34,6 +34,7 @@ MB = 1024 * KB
 # {이름}은 id 한 칸(빗금 없는 글자)에 맞는다. 받는 경로가 생기면 한 줄씩 더한다.
 LIMITS: dict[str, int] = {
     "/ai/turns": 16 * KB,  # AI 칸 질문(글 + 보던 화면). 사진은 받지 않는다
+    "/vendor/assist/interpret": 32 * KB,  # 업체 도우미 문장·기존 상태·후보
     "/auth/vendor-signup": 11 * MB,
     "/files": 21 * MB,
     "/guest/standard": 4 * KB,  # 로그인 없는 표준견적서 계산 (api.md 1장)

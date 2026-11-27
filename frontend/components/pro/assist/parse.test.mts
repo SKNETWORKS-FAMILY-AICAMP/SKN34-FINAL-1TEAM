@@ -1,7 +1,8 @@
+import { amountToConfirm, assistInputIssues } from "./guard.ts";
 // 업체 도우미 말 해석 시험: pnpm test:unit (node --test). 애매하면 칸을 채우지 않는지까지 봐요.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SAID_AMOUNT, parseDates, parseExtra, parsePeriod, parseQuote } from "./parse.ts";
+import { SAID_AMOUNT, parseDates, parseExtra, parsePeriod, parseQuote, readCrew } from "./parse.ts";
 
 const T = "2026-11-23";
 
@@ -33,6 +34,51 @@ test("공사 날짜 · 추가 금액", () => {
   assert.deepEqual(parseDates("12/4부터 12/8까지, 2명", T, null, [], true), { days: ["2026-12-04", "2026-12-07", "2026-12-08"], crew: 2 });
   const x = parseExtra("곰팡이 방지 처리 12만 원, 부가세 포함, 벽 안쪽까지 곰팡이가 퍼져서", T);
   assert.deepEqual(x, { amount: 120_000, vat: "included", title: "곰팡이 방지 처리", reason: "벽 안쪽까지 곰팡이가 퍼져서" });
+});
+
+test("날짜 축약 목록은 월을 상속하되 목록을 임의의 기간으로 확장하지 않아요", () => {
+  const expected = ["2026-12-11", "2026-12-12", "2026-12-13"];
+  assert.deepEqual(parseDates("12/11,12,13일", T, "2026-11-01"), { days: expected, crew: undefined });
+  assert.deepEqual(parseDates("12월11,12,13일", T, "2026-11-01"), { days: expected, crew: undefined });
+  assert.deepEqual(parseDates("12/11,13일", T, "2026-11-01"), { days: ["2026-12-11", "2026-12-13"], crew: undefined });
+  assert.equal(parseDates("12/11,32,13일", T, "2026-11-01"), null);
+  assert.equal(parseDates("2/30,31,1일", T, "2026-11-01"), null);
+  assert.deepEqual(parseDates("12월7일부터9일까지, 네 명", T, "2026-11-01"), {
+    days: ["2026-12-07", "2026-12-08", "2026-12-09"], crew: 4,
+  });
+  assert.deepEqual(parsePeriod("12월7일부터9일까지", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("12월7일~9일", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("12/7~9일", T, "2026-11-01"), {
+    start: "2026-12-07", end: "2026-12-09", excluded: [], outside: [],
+  });
+});
+
+test("한국어 인원 수량만 읽고 응답·애매한 인원 범위를 제외해요", () => {
+  for (const [word, crew] of [["한", 1], ["두", 2], ["세", 3], ["네", 4]] as const) {
+    assert.deepEqual(parseDates(`작업자 ${word} 명`, T), { days: [], crew });
+  }
+  assert.equal(parseDates("네, 일정은 그대로", T), null);
+  assert.equal(parseDates("두세 명", T), null);
+  assert.equal(parseDates("두 세 명", T), null);
+  assert.equal(parseDates("두~세 명", T), null);
+  assert.equal(parseDates("104명", T), null);
+  assert.equal(parseDates("123명", T), null);
+  assert.deepEqual(parseDates("12/8부터 12/10까지, 두세 명", T), {
+    days: ["2026-12-08", "2026-12-09", "2026-12-10"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8부터 12/10까지, 2~3명", T), {
+    days: ["2026-12-08", "2026-12-09", "2026-12-10"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8, 12/9, 2명~3명", T), {
+    days: ["2026-12-08", "2026-12-09"], crew: undefined,
+  });
+  assert.deepEqual(parseDates("12/8, 12/9, 104명", T), {
+    days: ["2026-12-08", "2026-12-09"], crew: undefined,
+  });
 });
 
 test("리뷰 회귀: 부정 · 정정 표현", () => {
@@ -103,20 +149,104 @@ test("리뷰 회귀: 추가 금액 항목 이름", () => {
   const x = parseExtra("곰팡이 방지 12만 원이 아니라 15만 원", T);
   assert.equal(x.title, "곰팡이 방지");
   assert.equal(x.amount, 150_000);
-  // 리뷰(PR #176): 천 단위 쉼표를 문장 구분으로 보지 않아요
-  const mold = parseExtra("곰팡이 처리 1,000,000원, 부가세 포함, 벽면 곰팡이 발견해서", T);
-  assert.equal(mold.title, "곰팡이 처리");
-  assert.equal(mold.amount, 1_000_000);
-  assert.equal(mold.vat, "included");
-  assert.equal(mold.reason, "벽면 곰팡이 발견해서");
-  // QA: 천 단위 쉼표에서 토막을 나누지 않고, 억 금액은 항목 이름에 남기지 않아요
-  const big = parseExtra("걸레받이 교체 1,000,000,000원 부가세 별도, 기존 것이 썩어서", T);
-  assert.equal(big.title, "걸레받이 교체");
-  assert.equal(big.amount, 1_000_000_000);
-  assert.equal(big.reason, "기존 것이 썩어서");
-  const eok = parseExtra("합판 보강 2억 원, 부가세 포함", T);
-  assert.equal(eok.title, "합판 보강");
-  assert.equal(eok.amount, undefined); // 억은 읽지 않아요(화면이 '금액을 읽지 못했어요'로 알려요)
+});
+
+test("#179 추가금: 명시적 제목 대상을 사유·금액과 분리해 읽어요", () => {
+  assert.deepEqual(parseExtra("사유 말고 공사 제목을 몰딩 재시공으로 바꿔 주세요.", T), {
+    title: "몰딩 재시공",
+  });
+  assert.deepEqual(parseExtra("제목은 문틀 보강, 금액은 30만 원으로 변경해 주세요.", T), {
+    title: "문틀 보강", amount: 300_000,
+  });
+  assert.equal(parseExtra("추가 항목은 곰팡이 방지 처리로 적어 주세요.", T).title, "곰팡이 방지 처리");
+  assert.equal(parseExtra("공사 제목: 누수 보수", T).title, "누수 보수");
+  assert.equal(parseExtra("작업명은 현관 몰딩 교체", T).title, "현관 몰딩 교체");
+  assert.equal(parseExtra("제목은 문틀 보강, 벽 안쪽까지 곰팡이가 퍼져서", T).reason,
+    "벽 안쪽까지 곰팡이가 퍼져서");
+});
+
+test("명시적 사유의 값과 입력 지시문, 다른 필드 경계를 구분해요", () => {
+  for (const suffix of ["", "로 넣어 주세요", "라고 적어 주세요", "으로 입력합니다", "로 기재해 주세요", "으로 확정할게요", "로 하겠습니다"]) {
+    const text = "항목은 몰딩 보수, 사유는 기존 판재 균열" + suffix + ", 금액은 32만 원, 부가세 별도.";
+    assert.equal(parseExtra(text, T).reason, "기존 판재 균열", text);
+  }
+  for (const text of [
+    "사유는 기존 판재 균열로 넣을까요?",
+    "사유는 기존 판재 균열 또는 누수",
+    "사유는 기존 판재 균열, 사유는 배관 파손",
+    "사유는 기존 판재 균열로 넣어 주세요. 사유는 취소합니다.",
+    "사유는 앞서 제안한 그대로 유지해 주세요.",
+    "사유는 기존 판재 균열로 넣어 주세요. 그 요청은 취소합니다.",
+    "사유는 기존 판재 균열로 넣으려고 검토 중입니다.",
+    "사유는 누수 발견 추가 금액 37만 원",
+    "사유는 균열 발견 부가세 별도",
+    "사유는 철거 후 손상 금액 삼십만 원",
+  ]) assert.equal(parseExtra(text, T).reason, undefined, text);
+  assert.equal(parseExtra("사유는 기존 자재 비용 상승", T).reason, "기존 자재 비용 상승");
+});
+
+test("명시적 항목명에서 확정·기재 지시를 값으로 포함하지 않아요", () => {
+  for (const suffix of ["으로 확정해 주세요", "으로 확정합니다", "으로 기재하겠습니다", "으로 하겠습니다", "이라고 적어 주세요"]) {
+    assert.equal(parseExtra("항목명은 현관 보강" + suffix + ". 추가 비용이 45만 원까지 가능한지 확인 부탁드려요.", T).title, "현관 보강");
+  }
+  for (const text of [
+    "항목명은 현관 보강으로 확정할까요?",
+    "항목명은 현관 보강으로 확정하지 마세요.",
+    "항목명은 현관 보강으로 확정할 예정입니다.",
+    "항목명은 현관 보강 추가 금액 37만 원",
+    "항목명은 현관 보강 부가세 별도",
+  ]) assert.equal(parseExtra(text, T).title, undefined, text);
+});
+
+test("#179 추가금: 명확하지 않은 제목과 다른 필드의 지시를 제목으로 사용하지 않아요", () => {
+  for (const text of [
+    "제목은 문틀 보강?",
+    "제목은 문틀 보강으로 바꿔 주세요. 잠깐, 제목 변경은 취소할게요.",
+    "제목은 문틀 보강으로 바꿀까요?",
+    "제목은 문틀 보강 또는 몰딩 보수",
+    "제목은 문틀 보강으로 바꿀까 고민 중",
+    "제목은 문틀 보강으로 바꾸면 될 것 같아요",
+    "제목은 문틀 보강으로 변경할 예정입니다",
+    "제목은 문틀 보강으로 변경한 게 아닙니다.",
+    "제목을 몰딩 재시공으로 바꾸지 마세요.",
+    "제목은 그대로 유지해 주세요.",
+    "제목은 누수 보수, 제목은 몰딩 재시공",
+    "제목은 누수 보수 말고 몰딩 재시공",
+    "추가금 사유만 지워 주세요.",
+    "추가금 사유는 지우지 말아 주세요.",
+    "사유 칸에는 기존 벽체 손상이라고 적어 주세요.",
+    "금액은 30만 원으로 변경해 주세요.",
+  ]) {
+    assert.equal(parseExtra(text, T).title, undefined, text);
+  }
+  assert.equal(parseExtra("금액은 30만 원으로 변경해 주세요.", T).amount, 300_000);
+  assert.equal(parseExtra("벽 안쪽까지 곰팡이가 퍼져서", T).reason, "벽 안쪽까지 곰팡이가 퍼져서");
+  assert.equal(parseExtra("벽 안쪽까지 곰팡이가 퍼져서", T).title, undefined);
+});
+
+test("이전 제목을 가리키는 말은 새 제목으로 쓰지 않아요", () => {
+  for (const text of [
+    "제목은 방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.",
+    "항목은 아까 말씀드린 걸로 해주세요.",
+    "제목은 좀 전에 정한 내용으로 진행해 주세요.",
+    "방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.",
+  ]) {
+    assert.equal(parseExtra(text, T).title, undefined, text);
+  }
+  assert.equal(parseExtra("제목은 문선 보강으로 해주세요.", T).title, "문선 보강");
+  assert.equal(parseExtra("제목은 방금 얘기한 걸로 가고요, 금액은 25만4천원입니다.", T).amount, 254000);
+});
+
+test("추가금의 과거 금액 보고와 금액만 정정하는 서술은 제목이 아니에요", () => {
+  for (const phrase of [
+    "아까 287만 원이라고 했는데 제가 계산을 잘못했네요. 293만 4천 원으로 정정 부탁해요.",
+    "방금 287만 원이라고 했는데, 293만 4천 원으로 수정해 주세요.",
+    "30만 원으로 변경해 주세요.",
+    "정확히는 30만 원이에요.",
+    "아, 금액만 26만 원으로 다시 정정할게요. 아까 세금 조건은 유지해 주세요.",
+  ]) assert.equal(parseExtra(phrase, T).title, undefined, phrase);
+  assert.equal(parseExtra("몰딩 보강 30만 원", T).title, "몰딩 보강");
+  assert.equal(parseExtra("제목은 몰딩 보강, 금액은 30만 원으로 정정해 주세요.", T).title, "몰딩 보강");
 });
 
 // #174(dev)에서 온 시험 문장
@@ -220,4 +350,178 @@ test("리뷰 회귀: 한글 숫자 금액은 항목 이름에 남기지 않아�
   assert.equal(parseExtra("합판 보강 천만 원, 부가세 별도", T).title, "합판 보강");
   assert.equal(parseExtra("몰딩 교체 삼십만원", T).title, "몰딩 교체");
   assert.equal(parseExtra("이중 초배 추가 5만 원", T).title, "이중 초배 추가"); // '이중'의 '이'는 숫자가 아니에요
+});
+
+test("천 단위 쉼표 금액과 부가세 표기를 추가금 항목명에서 분리해요", () => {
+  // 리뷰(PR #176): 천 단위 쉼표를 문장 구분으로 보지 않아요
+  const mold = parseExtra("곰팡이 처리 1,000,000원, 부가세 포함, 벽면 곰팡이 발견해서", T);
+  assert.equal(mold.title, "곰팡이 처리");
+  assert.equal(mold.amount, 1_000_000);
+  assert.equal(mold.vat, "included");
+  assert.equal(mold.reason, "벽면 곰팡이 발견해서");
+  // QA: 천 단위 쉼표에서 토막을 나누지 않고, 억 금액은 항목 이름에 남기지 않아요
+  const big = parseExtra("걸레받이 교체 1,000,000,000원 부가세 별도, 기존 것이 썩어서", T);
+  assert.equal(big.title, "걸레받이 교체");
+  assert.equal(big.amount, 1_000_000_000);
+  assert.equal(big.reason, "기존 것이 썩어서");
+  const eok = parseExtra("합판 보강 2억 원, 부가세 포함", T);
+  assert.equal(eok.title, "합판 보강");
+  assert.equal(eok.amount, undefined); // 억은 읽지 않아요(화면이 '금액을 읽지 못했어요'로 알려요)
+});
+
+test("복합 금액과 인원은 뒷자리만 후보로 만들지 않아요", () => {
+  for (const [text, value] of [["1천500만 원", 15_000_000], ["2천300만 원", 23_000_000], ["2천3백5십만 원", 23_500_000]] as const) {
+    assert.equal(parseQuote(text, T).amount, value);
+    assert.equal(parseExtra(text, T).amount, value);
+  }
+  for (const text of ["1.5천500만 원", "천500만 원", "1천3000만 원", "견적 천만, 부가세 별도"]) {
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+  }
+  assert.equal(parseDates("12명", T)?.crew, 12);
+  assert.equal(parseDates("10명", T)?.crew, 10);
+  assert.equal(parseDates("2~3명", T)?.crew, undefined);
+  assert.equal(parseDates("앞서 정한 세 명 그대로", T)?.crew, 3);
+});
+
+test("인원 범위와 잘린 숫자는 날짜와 분리해도 확정하지 않아요", () => {
+  for (const phrase of ["2〜3명", "2—3명", "2－3명", "2~3인", "2인〜3인", "두세 인", "1,003명", "1,03명"]) {
+    assert.equal(readCrew(phrase).mentioned, true, phrase);
+    assert.equal(readCrew(phrase).value, undefined, phrase);
+    assert.deepEqual(parseDates("12/8부터 9일까지, " + phrase, T), {
+      days: ["2026-12-08", "2026-12-09"], crew: undefined,
+    }, phrase);
+  }
+  assert.deepEqual(parseDates("12/8,3명", T), { days: ["2026-12-08"], crew: 3 });
+  assert.equal(readCrew("12인").value, 12);
+});
+
+test("날짜에 명시한 연도를 유지하고 축약한 날짜는 그 연도를 상속해요", () => {
+  const expected = { days: ["2027-12-08", "2027-12-09"], crew: 3 };
+  for (const text of ["2027년 12월 8일부터 9일까지, 3명", "2027년 12월 8일부터 12월 9일까지, 3명",
+    "2027-12-08부터 2027-12-09까지, 3명",
+    "2027/12/08, 9일, 3명", "2027.12.08, 9일, 3명"]) {
+    assert.deepEqual(parseDates(text, T), expected, text);
+  }
+  assert.deepEqual(parsePeriod("2027년 12월 8일부터 9일까지", T), {
+    start: "2027-12-08", end: "2027-12-09", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("2027년 1월 30일부터 2월 2일까지", T), {
+    start: "2027-01-30", end: "2027-02-02", excluded: [], outside: [],
+  });
+  assert.deepEqual(parsePeriod("2026-12-31부터 2027-01-02까지", T), {
+    start: "2026-12-31", end: "2027-01-02", excluded: [], outside: [],
+  });
+  assert.deepEqual(parseDates("2027-12-08", T), { days: ["2027-12-08"], crew: undefined });
+  assert.deepEqual(parseDates("2028년 2월 28일,29일", T), { days: ["2028-02-28", "2028-02-29"], crew: undefined });
+  assert.equal(parseQuote("유효기간은 2027년 12월 8일까지", T).valid, "2027-12-08");
+  assert.equal(parseQuote("유효기간은 2027-12-08까지", T).valid, "2027-12-08");
+});
+
+test("명시적인 과거 날짜나 잘못된 날짜는 다른 연도나 부분 날짜로 바꾸지 않아요", () => {
+  for (const text of ["2025년 12월 8일", "2025-12-08", "2027년 2월 29일", "2027-13-02",
+    "2027년 2월 30일부터 3월 2일까지", "2027년 12월 8일, 32일", "2025년 12월 8일, 2027년 12월 9일"]) {
+    assert.equal(parseDates(text, T), null, text);
+  }
+  assert.equal(parsePeriod("2025년 12월 8일부터 9일까지", T), null);
+  assert.equal(parsePeriod("2027년 12월 31일부터 1월 2일까지", T), null);
+  assert.equal(parseQuote("2025년 12월 8일까지 유효", T).valid, undefined);
+});
+
+test("읽지 못한 한글 금액은 조사나 띄어쓰기와 상관없이 두 금액 폼에서 저장을 막아요", () => {
+  const unresolved = [
+    "견적 이천만으로", "견적 오백만으로", "견적 천 만으로", "견적 천만요",
+    "이 천 오 백 만으로", "삼백만은", "십오만으로", "삼만으로",
+    "금액은 이만으로", "추가금액은 오만으로", "견적 100만 원에서 삼만으로",
+    "견적 100만 원에서 이천만으로", "이천오백만입니다", "일억으로",
+  ];
+  for (const phrase of unresolved) {
+    const text = phrase + ", 부가세 별도";
+    assert.equal(SAID_AMOUNT.test(text), true, text);
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    assert.equal(amountToConfirm(text, T), undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.match(assistInputIssues(form, text, { today: T }).amount ?? "", /금액을 확인하지 못했어요/, text);
+    }
+  }
+});
+
+test("금액과 무관한 만·이만 표현 및 정상 복합 금액 정정·유지는 차단하지 않아요", () => {
+  for (const text of [
+    "기간만 변경해 주세요", "부가세만 별도", "이만 마무리할게요", "견적 이만 마무리",
+    "일만 먼저 진행해 주세요", "견적은 이만큼만", "금액은 그대로",
+  ]) {
+    assert.equal(SAID_AMOUNT.test(text), false, text);
+    assert.equal(assistInputIssues("quote", text, { today: T }).amount, undefined, text);
+  }
+  for (const [text, expected] of [
+    ["견적 1천500만 원, 공사 기간은 미정", 15_000_000],
+    ["견적 2천300만 원 그대로", 23_000_000],
+    ["견적 1 천 500 만 원", 15_000_000],
+    ["견적 1천500만 원에서 2천300만 원으로 변경", 23_000_000],
+    ["견적 455만 5 천 원", 4_555_000],
+  ] as const) {
+    assert.equal(parseQuote(text, T).amount, expected, text);
+    assert.equal(assistInputIssues("quote", text, { today: T }, amountToConfirm(text, T)).amount, undefined, text);
+  }
+  const correction = "아까 1천500만 원이라고 했는데 2천300만 원으로 정정해 주세요";
+  assert.equal(amountToConfirm(correction, T), 23_000_000);
+  assert.equal(assistInputIssues("quote", correction, { today: T }, amountToConfirm(correction, T)).amount, undefined);
+});
+
+test("추측·보류·취소한 복합 금액은 규칙 후보와 확인 금액을 만들지 않아요", () => {
+  for (const phrase of [
+    "견적 1천500만 원으로 할까?", "아마 견적 2천300만 원",
+    "1천500만 원으로 할지 고민 중", "1천500만 원은 미정",
+    "1천500만 원 취소", "견적 2천300만 원으로 하지 말아 주세요",
+  ]) {
+    const text = phrase + ", 부가세 별도";
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(amountToConfirm(text, T), undefined, text);
+    assert.match(assistInputIssues("quote", text, { today: T }).amount ?? "", /금액을 확인하지 못했어요/, text);
+  }
+});
+
+test("명시적인 원 단위 한글 금액은 서버의 정확한 후보를 확인할 때만 허용해요", () => {
+  for (const [text, value] of [
+    ["현장 추가 물량까지 다시 잡았어요. 이번 견적 금액은 천이백육십만 원으로 넣어 주세요.", 12_600_000],
+    ["천만 원이요", 10_000_000], ["삼백만원입니다", 3_000_000],
+    ["이 천 오 백 만 원으로", 25_000_000], ["오십육만칠천팔백구십 원", 567_890],
+    ["일억 이천삼백사십오만 육천칠백팔십구 원", 123_456_789], ["십억 원", 1_000_000_000],
+    ["오 원", 5], ["이천오백만원입니다", 25_000_000], ["공사 3일, 금액 삼백만 원", 3_000_000],
+  ] as const) {
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.equal(amountToConfirm(text, T, form), value, text);
+      assert.equal(assistInputIssues(form, text, { today: T }, value).amount, undefined, text);
+      assert.ok(assistInputIssues(form, text, { today: T }, value + 1).amount, text);
+      assert.ok(assistInputIssues(form, text, { today: T }).amount, text);
+    }
+  }
+  assert.equal(parseExtra("합판 보강 일억 이천삼백사십오만 육천칠백팔십구 원", T).title, "합판 보강");
+});
+
+test("한글 금액의 잘못된 단위·복수·범위·조건·혼합·부분 표기는 금액 확인을 보류해요", () => {
+  for (const text of [
+    "견적 천만으로", "견적 일백백만원", "견적 일억만 원", "견적 이십오백만원",
+    "견적 십억 일 원", "견적 영 원", "견적 삼백만 500원", "견적 1억 삼백만원",
+    "견적 삼백만 5,000원", "견적 천500만원", "견적은삼 500만원", "견적은삼백만 500원",
+    "견적 삼.백만원", "견적 삼점 오백만원", "견적 삼백만원자재",
+    "견적 삼백만원,사백만원", "견적 삼백만원,금액은사백만원", "견적 삼백만원~사백만원",
+    "견적 삼~사백만원", "견적 삼~400만원", "견적 삼백~400만원", "견적 삼백만원, 이만",
+    "견적 삼백만원 또는 400만원", "견적 삼백만원, 4000000",
+    "견적 삼백만원 이상", "견적 삼백만원 내외", "견적 한 삼백만원", "견적 -삼백만원",
+    "견적 삼백만원으로 할까?", "견적 삼백만원으로 넣지 마세요", "견적 삼백만원, 취소해 주세요",
+    "견적 삼백만원은 미정", "아까 300만원이라고 했는데 사백만원으로 고칠게요",
+    "아까 삼백만원이라고 했는데 400만원으로 고칠게요",
+  ]) {
+    assert.equal(parseQuote(text, T).amount, undefined, text);
+    assert.equal(parseExtra(text, T).amount, undefined, text);
+    for (const form of ["quote", "extra"] as const) {
+      assert.equal(amountToConfirm(text, T, form), undefined, text);
+      assert.ok(assistInputIssues(form, text, { today: T }).amount, text);
+      assert.ok(assistInputIssues(form, text, { today: T }, 3_000_000).amount, text);
+    }
+  }
 });

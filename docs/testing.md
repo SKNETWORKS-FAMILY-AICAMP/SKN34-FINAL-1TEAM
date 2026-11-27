@@ -44,10 +44,19 @@ uv run pytest -q
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm lint
+pnpm test:unit
 pnpm build
 ```
 
 API를 바꿨으면 로컬 API를 실행한 뒤 `pnpm gen:api`로 생성 타입을 갱신한다. `lib/backend/schema.d.ts`를 손으로 고치지 않는다.
+
+### 업체 도우미 (#177·#178)
+
+프런트의 `pnpm test:unit`은 파서 회귀와 후보 상태·부분 적용·취소·오래된 응답·직접 수정 보존을 검사하며 CI의 Frontend 단계에서도 실행한다. `pnpm exec playwright test --config playwright.assist.config.ts`는 실제 네 폼을 데스크톱과 360px에서 실행한다. 이 브라우저 검사는 시험 전용 HTTP 서버를 사용하고 예시 저장 우회 모드는 끈다. 적용 전 쓰기 0회와 적용 후 견적 임시 저장을 구분하며, 실제 인증·DB·실모델 품질을 대신 검증하지 않는다. 로컬에는 Chrome과 Node 24.18 이상이 필요하다.
+
+백엔드는 `uv run pytest tests/test_vendor_assist_api.py tests/test_vendor_assist_validation.py tests/test_vendor_assist_normalize.py tests/test_vendor_assist_quality.py tests/test_vendor_assist_merge_fix.py tests/test_vendor_assist_merge_regressions.py tests/test_vendor_assist_llm.py tests/test_vendor_assist_integration.py tests/test_vendor_assist_db.py`로 요청·승인·소유권·호출 정책·정규화·검증·HTTP 계약을 확인한다. DB 테스트는 실제 로그인 쿠키로 본인 자원과 타 업체의 404, 해석 전후 업무 데이터 불변을 검사한다. 공통 DB fixture가 있으므로 위의 격리 테스트 DB 설정을 따른다. 평가 지표와 실행기는 루트에서 `python -m pytest evaluation/tests/test_vendor_assist_eval.py evaluation/tests/test_vendor_assist_quality_eval.py`로 확인한다. 이 두 모듈은 dev·합성 자료만 사용한다. 별도 `test_vendor_assist_corpus.py`는 held-out까지 읽는 전체 자료 점검이므로 최종 검수 범위에서 실행한다.
+
+실모델 평가 명령과 단가 입력은 [업체 도우미 평가 안내](../evaluation/vendor_assist/README.md)에 있다. AI 정답 초안은 검수 전으로 표시하고, 미검수 dev 진단에는 `--live --allow-unreviewed`를 명시한다. held-out은 사람이 정답을 검수한 뒤 최종 고정 버전에서 사용한다.
 
 API 계약은 FastAPI `/openapi.json`의 **메서드·경로와 입력/성공 응답 스키마**를 기준으로 검사한다. 실행 시 오류 응답은 [API 안내](api/README.md#오류와-요청-제한)의 `error.code`·`fields` 형태도 별도로 확인해야 한다. 현재 FastAPI 커스텀 422 오류 형식과 자동 OpenAPI의 `HTTPValidationError`(`detail`) 스키마는 완전히 같지 않다. 로그인 쿠키, 역할·업체 승인, 본인 소유권, Origin 검사, 버전 409와 호출 순서는 [단일 API 안내](api/README.md)를 따른다.
 

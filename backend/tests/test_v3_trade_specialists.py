@@ -1,6 +1,7 @@
 """공종별 검색·프롬프트 연결. DB와 유료 호출 없이 검증한다."""
 
 import asyncio
+import sys
 import uuid
 from dataclasses import replace
 from datetime import date
@@ -101,18 +102,30 @@ def test_new_trade_folder_is_routable_without_shared_registration(tmp_path, monk
     folder.mkdir()
     (folder / "spec.py").write_text(
         "def build(spec_type, slot_type):\n"
-        '    return spec_type("waterproofing", "방수", "knowledge", "방수막", ("방수",), 5, route_priority=1)\n'
+        '    return spec_type("waterproofing", "방수", "knowledge", "방수막", ("방수",), 5, route_priority=1)\n',
+        encoding="utf-8",
     )
     (folder / "prompt_v1.md").write_text("방수 전용 지침", encoding="utf-8")
     monkeypatch.setattr(specialists, "__path__", [*specialists.__path__, str(tmp_path)])
-    specs = specialists.load_specs(tmp_path, trades.TradeSpec, trades.Slot)
-    monkeypatch.setattr(trades, "SPECS", (*trades.SPECS, *specs))
-    monkeypatch.setitem(trades.BY_CODE, specs[0].code, specs[0])
-    registered = specialists.load_specialists(tmp_path, trades.BY_CODE)
-    assert "waterproofing" in registered
-    assert registered["waterproofing"].prompt_path == folder / "prompt_v1.md"
-    assert trades.trades_in("방수막은 어떻게 관리해요?")[0] == "waterproofing"
-    assert Button(route="trade", trade="waterproofing").trade == "waterproofing"
+    package = f"{specialists.__name__}.waterproofing"
+    assert package not in sys.modules
+    assert not hasattr(specialists, "waterproofing")
+    try:
+        specs = specialists.load_specs(tmp_path, trades.TradeSpec, trades.Slot)
+        monkeypatch.setattr(trades, "SPECS", (*trades.SPECS, *specs))
+        monkeypatch.setitem(trades.BY_CODE, specs[0].code, specs[0])
+        registered = specialists.load_specialists(tmp_path, trades.BY_CODE)
+        assert "waterproofing" in registered
+        assert registered["waterproofing"].prompt_path == folder / "prompt_v1.md"
+        assert trades.trades_in("방수막은 어떻게 관리해요?")[0] == "waterproofing"
+        assert Button(route="trade", trade="waterproofing").trade == "waterproofing"
+    finally:
+        # 임시 폴더에서 가져온 모듈을 다른 테스트에 남기지 않는다.
+        for name in tuple(sys.modules):
+            if name == package or name.startswith(package + "."):
+                sys.modules.pop(name)
+        if hasattr(specialists, "waterproofing"):
+            delattr(specialists, "waterproofing")
 
 
 def test_vector_lookup_is_used_only_for_opted_in_trade(monkeypatch):

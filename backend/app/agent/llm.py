@@ -1,6 +1,7 @@
 """LLM SDK 호출은 이 파일 한 곳 (AGENTS.md 4절). LLM_LIVE=false면 스텁만 써서 유료 호출 0회."""
 
 import math
+import time
 from typing import Literal
 
 import httpx
@@ -8,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 
-Role = Literal["orchestrator", "trade", "quote_explanation", "schedule"]
+Role = Literal["orchestrator", "trade", "quote_explanation", "schedule", "vendor_assist"]
 
 JEV_URL = "https://openrouter.ai/api/alpha/decisions"
 
@@ -20,6 +21,8 @@ EMBED_DIMENSIONS = 1536  # 지식 조각 임베딩과 같은 차원 (data_ingest
 
 def model_for(role: Role) -> tuple[str, str]:
     """역할에 맞는 (모델, 추론 effort). 짧은 구조화 출력 역할은 작은 모델로 비용을 줄인다."""
+    if role == "vendor_assist":
+        return settings.openai_vendor_assist_model, settings.openai_vendor_assist_effort
     light = {r.strip() for r in settings.openai_light_roles.split(",") if r.strip()}
     if settings.openai_light_model and role in light:
         return settings.openai_light_model, settings.openai_light_effort
@@ -114,9 +117,17 @@ async def jev_choice(text: str, instructions: str, criteria: dict[str, str]) -> 
 
 
 async def structured[T: BaseModel](
-    role: Role, schema: type[T], messages: list[tuple[str, str]]
+    role: Role,
+    schema: type[T],
+    messages: list[tuple[str, str]],
+    *,
+    usage: dict[str, object] | None = None,
 ) -> T:
-    """messages(("system" | "user", 글))를 보내고 schema 모양으로 받는다."""
+    """구조화 출력 하나를 받는다. usage는 요청한 호출자에게만 계측값을 채운다."""
+    if usage is not None:
+        usage.update(
+            model=None, input_tokens=None, output_tokens=None, cached_tokens=None, elapsed_ms=None
+        )
     if not settings.llm_live:
         return _stub(role, schema)
     # 실호출일 때만 SDK를 불러온다 (CI · 로컬 스텁에서는 import도 하지 않음)
@@ -129,12 +140,37 @@ async def structured[T: BaseModel](
         api_key=settings.openai_api_key,
         reasoning_effort=effort,
         timeout=30,
-        max_retries=1,
-    ).with_structured_output(schema, method="json_schema", strict=True)
+        max_retries=0 if role == "vendor_assist" else 1,
+    ).with_structured_output(
+        schema, method="json_schema", strict=True, include_raw=usage is not None
+    )
+    if usage is not None:
+        usage["model"] = name
+    started = time.perf_counter()
     try:  # 공급자 오류 · 시간 초과 · 모양 틀림을 한곳에서 LLMError로. 입력값은 남기지 않음
-        return schema.model_validate(await model.ainvoke(messages))
+        result = await model.ainvoke(messages)
+        if usage is not None:
+            raw = result.get("raw") if isinstance(result, dict) else None
+            _capture_usage(raw, usage)
+            result = result.get("parsed") if isinstance(result, dict) else None
+        return schema.model_validate(result)
     except Exception as e:
         raise LLMError(f"{role} 호출 실패") from e
+    finally:
+        if usage is not None:
+            usage["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+
+
+def _capture_usage(raw: object, usage: dict[str, object]) -> None:
+    """LangChain 원본 메시지의 실제 사용량만 기록하고 미제공 수치는 None으로 둔다."""
+    metadata = getattr(raw, "usage_metadata", None) or {}
+    response = getattr(raw, "response_metadata", None) or {}
+    token_usage = response.get("token_usage") or {}
+    details = metadata.get("input_token_details") or {}
+    prompt_details = token_usage.get("prompt_tokens_details") or {}
+    usage["input_tokens"] = metadata.get("input_tokens", token_usage.get("prompt_tokens"))
+    usage["output_tokens"] = metadata.get("output_tokens", token_usage.get("completion_tokens"))
+    usage["cached_tokens"] = details.get("cache_read", prompt_details.get("cached_tokens"))
 
 
 CHAT_STUB_TEXT = "지금은 AI 답변을 쓸 수 없어요. 버튼으로 이어서 진행해 주세요."

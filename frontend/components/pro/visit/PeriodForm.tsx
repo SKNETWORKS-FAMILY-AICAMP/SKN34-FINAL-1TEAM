@@ -20,7 +20,8 @@ import { DECLINE_LABEL } from "@/lib/labels";
 import { MOCK } from "@/lib/mock/v3c/mode";
 import { enc, newKey, send } from "../send";
 import { AssistBox } from "../assist/AssistBox";
-import { parsePeriod } from "../assist/parse";
+import { manuallyEditedPeriodFields } from "../assist/periodHold";
+import { formWriteBlock, useFormHolds } from "../assist/formHolds";
 import { LOC_NOTE } from "../text";
 import { Eyebrow, Group, PhoneOnly, Row, Rows, Small, TwoCol, WebOnly } from "../ui/parts";
 import { Switch } from "@/components/ui/Switch";
@@ -29,7 +30,6 @@ import { PeriodCalendar, PeriodLegend, type Period } from "./PeriodCalendar";
 import s from "./visit.module.css";
 
 const INSTANT_DESC = "켜면 고객이 고른 반나절은 열어 둔 다른 요청 기간에서 바로 빠져요. 끄면 한 번 더 수락해요.";
-const HOLD = "말씀하신 기간을 넣지 못했어요. 달력에서 기간을 다시 눌러 주세요.";
 const PICK_NOTE = "고객이 7일 안에 고르지 않으면 이 기간이 풀려 다른 요청에 다시 열려요.";
 
 export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: string; openDecline?: boolean }) {
@@ -41,8 +41,8 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
   const [busy, setBusy] = useState(false);
   const [idem] = useState(newKey);
   const [decline, setDecline] = useState(false);
-  // 도우미가 말한 기간을 넣지 못함. 달력에 남은 옛 기간으로 보내지 않게, 달력을 다시 누르기 전까지 보내기를 막아요
-  const [hold, setHold] = useState<string | null>(null);
+  const holds = useFormHolds("period");
+  const hold = formWriteBlock(holds.state);
   // ?decline=1(알림 · 작업함에서 바로 '못 받아요')은 그린 뒤에 열어요(처음 그릴 때 연 창은 개발 모드 두 번 그리기에서 바로 닫혀요)
   useEffect(() => { if (openDecline) setDecline(true); }, [openDecline]);
   const ready = !!(p.start && p.end);
@@ -53,7 +53,7 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
 
   async function sendWindow() {
     if (busy) return;
-    if (hold) { setErr(hold); return; } // 기간 오류 칸 하나에만 보여요
+    if (formWriteBlock(holds.current.current)) return;
     if (!ready) { setErr(p.start ? "끝나는 날을 눌러 주세요." : "갈 수 있는 기간의 시작 · 끝을 눌러 주세요."); return; }
     setErr(null);
     setBusy(true);
@@ -67,26 +67,8 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
     }
   }
 
-  // 업체 도우미: 말로 적은 기간을 달력에 표시만 해요. 보내기는 아래 단추로 직접 눌러요
-  function assist(text: string): string {
-    const today = dateSeoul(now);
-    const got = parsePeriod(text, today, v.wish_start);
-    // 날짜를 말했는데 못 넣었으면, 달력에 남은 옛 기간으로 보내지 않게 달력을 다시 누를 때까지 보내기를 막아요
-    const saidDay = /\d\s*(?:일|월|\/)|오늘|내일|모레|이번\s*주|다음\s*주|요일/.test(text);
-    if (!got || got.start < today) {
-      if (saidDay) { setHold(HOLD); setErr(HOLD); }
-      return !got ? `되는 기간을 날짜로 말해 주세요. 예: 12/2부터 12/5까지 돼요, 12/4는 안 돼요${saidDay ? ` ${HOLD}` : ""}` : `지난 날은 고를 수 없어요. 오늘 뒤 날짜로 말해 주세요. ${HOLD}`;
-    }
-    setHold(null);
-    setErr(null);
-    const day = (d: string) => `${Number(d.slice(8, 10))}일`;
-    const ex = got.excluded.length ? `, ${got.excluded.map(day).join(" · ")} 빼고` : "";
-    const out = got.outside.length ? ` ${got.outside.map(day).join(" · ")}은 기간 밖이라 넣지 않았어요.` : "";
-    setP({ start: got.start, end: got.end, excluded: got.excluded });
-    return `달력에 ${rangeText(got.start, got.end, { weekday: true })}${ex}로 표시했어요.${out} 맞으면 '보내기'를 직접 눌러 주세요. 달력을 눌러 고칠 수도 있어요.`;
-  }
 
-  const sendBtn = (size: "lg" | "sm") => <Button size={size} onClick={sendWindow} busy={busy} aria-describedby={err ? "period-err" : undefined}>{busy ? "보내는 중" : sendLabel}</Button>;
+  const sendBtn = (size: "lg" | "sm") => <Button size={size} onClick={sendWindow} busy={busy} aria-describedby={hold || err ? "period-err" : undefined}>{busy ? "보내는 중" : sendLabel}</Button>;
   const declineBtn = (size: "lg" | "sm") => <Button size={size} variant="secondary" onClick={() => setDecline(true)} disabled={busy}>못 받아요</Button>;
 
   return (
@@ -115,13 +97,28 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
                   <Eyebrow>{factLine(v)}</Eyebrow>
                   <Small>{LOC_NOTE}</Small>
                 </PhoneOnly>
-                <AssistBox hint="되는 기간과 안 되는 날을 말로 적으면 달력에 표시해요." examples={["12/2부터 12/5까지 돼요, 12/4는 안 돼요"]} onText={assist} />
+                <AssistBox key={v.id} form="period" resourceId={v.id}
+                  hint="되는 기간과 안 되는 날을 말하면 변경 후보를 보여 드려요."
+                  examples={["12/2부터 12/5까지 돼요, 12/4는 안 돼요"]}
+                  current={{ start: p.start, end: p.end, excluded: p.excluded }}
+                  options={{ today: dateSeoul(now), baseMonth: v.wish_start }}
+                  readManualVersions={() => holds.manualVersions.current}
+                  onInputIssues={holds.receive}
+                  onApply={(changes, response) => {
+                    setP((old) => ({
+                      start: "start" in changes ? typeof changes.start === "string" ? changes.start : null : old.start,
+                      end: "end" in changes ? typeof changes.end === "string" ? changes.end : null : old.end,
+                      excluded: "excluded" in changes ? Array.isArray(changes.excluded) ? changes.excluded : [] : old.excluded,
+                    }));
+                    holds.applied(changes, response);
+                    setErr(null);
+                  }} />
                 <h2 className={s.calT}>갈 수 있는 기간</h2>
                 <PeriodLegend />
                 <PeriodCalendar
                   label="갈 수 있는 기간 고르기"
                   value={p}
-                  onChange={(x) => { setP(x); setHold(null); setErr(null); }}
+                  onChange={(x) => { setP(x); holds.manual(manuallyEditedPeriodFields(p, x)); setErr(null); }}
                   today={dateSeoul(now)}
                   wish={v.wish_start && v.wish_end ? { from: v.wish_start, to: v.wish_end } : null}
                   taken={v.taken}
@@ -129,7 +126,7 @@ export function PeriodForm({ v, now, openDecline }: { v: VendorVisitV3; now: str
                   wide
                 />
                 <Small>시작 · 끝을 누르고, 안 되는 날은 한 번 더 눌러요.</Small>
-                {err ? <p id="period-err" className={s.err} role="alert"><Icon name="error" size={16} />{err}</p> : null}
+                {hold || err ? <p id="period-err" className={s.err} role="alert"><Icon name="error" size={16} />{hold ?? err}</p> : null}
               </Group>
               <PhoneOnly>
                 <Group>

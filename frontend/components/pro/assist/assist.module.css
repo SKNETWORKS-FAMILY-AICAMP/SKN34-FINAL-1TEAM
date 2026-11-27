@@ -9,3 +9,16 @@
 .input { flex: 1 1 0; min-width: 0; min-height: 40px; padding: 8px 12px; border: 1px solid var(--mj-line); border-radius: 10px; background: var(--mj-surface); font: inherit; resize: none; }
 .ex { display: flex; flex-wrap: wrap; gap: 6px; }
 .exBtn { min-height: 40px; padding: 0 12px; border: 1px solid var(--mj-line); border-radius: 999px; background: var(--mj-surface); font-size: var(--mj-type-label); color: var(--mj-text-sub); text-align: left; }
+.preview { display: grid; gap: 8px; border-top: 1px solid var(--mj-line); padding-top: 10px; }
+.previewHead, .fieldTitle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.previewHead span, .fieldTitle span, .help, .current, .evidence { color: var(--mj-text-sub); font-size: var(--mj-type-label); }
+.fieldRow { display: grid; gap: 4px; padding: 10px; border-radius: 8px; background: var(--mj-surface); border: 1px solid var(--mj-line); }
+.checkLine { display: flex; gap: 8px; align-items: center; min-height: 40px; cursor: pointer; overflow-wrap: anywhere; }
+.checkLine input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--mj-primary); }
+.checkLine small { color: var(--mj-text-sub); }
+.alternatives { display: grid; gap: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.warning { font-size: var(--mj-type-label); color: var(--mj-text); overflow-wrap: anywhere; }
+.evidence { overflow-wrap: anywhere; }
+.input { line-height: 1.4; }
+@media (max-width: 400px) { .row { flex-wrap: wrap; } .row > button { flex: 1 1 100%; } }
