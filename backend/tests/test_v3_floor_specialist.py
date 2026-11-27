@@ -24,6 +24,17 @@ def test_floor_words_route_new_customer_terms():
     assert trades.trades_in("PVC 타일이랑 장판 뭐가 나아요?")[0] == "floor"
     assert trades.trades_in("헤링본 마루로 하고 싶어요")[0] == "floor"
     assert trades.trades_in("현관 바닥 타일 바꾸려고요") == ["tile"]  # 바닥 타일은 타일 공종
+    assert trades.trades_in("PVC 장판 두께는요?") == ["floor"]
+
+
+def test_floor_words_skip_wall_tile_and_sheet_film():
+    # 헤링본 · PVC 시트는 벽 타일 · 시트지(필름)에도 써서 바닥으로 잡지 않아요(PR 리뷰)
+    assert trades.trades_in("헤링본 벽 타일 붙이려는데 줄눈은 어떻게 해요?") == ["tile"]
+    assert "floor" not in trades.trades_in("욕실 벽에 헤링본 타일 깔면 비싸요?")
+    for q in ("주방 상부장에 PVC 시트지 붙여도 돼요?", "붙박이장 PVC 시트지 들떴어요",
+              "싱크대 문짝 PVC 시트 필름 시공 얼마예요?"):  # fmt: skip
+        got = trades.trades_in(q)
+        assert got[0] == "film" and "floor" not in got
 
 
 def _record(monkeypatch):
