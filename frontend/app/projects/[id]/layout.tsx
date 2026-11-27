@@ -22,7 +22,8 @@ export default async function ProjectLayout({ children, params }: { children: Re
       <AppHeader only="web" />
       <ProjectBand
         name={shell.name}
-        href={`/projects/${shell.id}`}
+        shortName={shell.shortName}
+        href={`/projects/${shell.id}/assistant`}
         steps={steps}
         current={shell.current}
         tracks={shell.tracks}

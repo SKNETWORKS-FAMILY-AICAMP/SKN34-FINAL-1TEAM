@@ -15,7 +15,7 @@
 //   (보드 업체 칸 · 실측 칸(BoardVisitRequest) · 표준견적서 창). 업체 이름을 누르면 업체 자세히(리뷰 · 사례) 화면이에요.
 // - 질문은 POST /ai/turns(로그인한 고객 AI). 금액 · 날짜는 API 값 그대로이고, 저장 · 확정 · 승인은 사람이 보드 단추를 눌러요.
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AiAnswer } from "@/components/ai/AiAnswer";
 import { vsPct } from "@/components/compare/text";
@@ -32,7 +32,7 @@ import { termByName } from "@/lib/guide";
 import { boardTarget, CLOSED_VISITS, norm, pickRule, pickStateOf, type PickState } from "./boardLink";
 import { quickChips } from "./chips";
 import { Jaejae } from "./Jaejae";
-import { Plan, PLAN_STEPS } from "./Plan";
+import { MOK_TODO, Plan, PLAN_STEPS } from "./Plan";
 import { BoardVisitRequest } from "./BoardVisitRequest";
 import { StandardDialog, type StdData } from "./StandardDialog";
 import { VendorDialog, type VendorOpen } from "./VendorDialog";
@@ -70,6 +70,12 @@ export type FlowData = {
   std: StdData | null;
   /** 만든 바로 뒤(?open=standard)면 표준견적서 창을 열고 시작해요 */
   openStd: boolean;
+  /** 옛 화면 주소에서 넘어오면 처음에 열 창(#236) */
+  openWin?: "plan" | "schedule" | "docs" | "review" | "log" | null;
+  /** 공사 일정 창의 보기(공사 날짜 · 추가 금액 · 끝 확인) */
+  scheduleView?: "dates" | "extra" | "done" | null;
+  /** 업체 자세히 창(옛 업체 화면 주소) */
+  openVendor?: VendorOpen;
   /** 다른 화면에서 넘어올 때 열 보드 칸(?step=2 업체 · 3 실측). 업체 보기 · 실측 요청 화면은 이 화면으로 와요(2026-11-26) */
   step: number | null;
   /** 창에 쓰는 값: 기본 정보 고치기(지역 · 저장된 답 · 잠김) · 공정표 · 공사 전 체크(서버가 읽어 넘겨요) */
@@ -95,15 +101,26 @@ function stepOf(d: FlowData, trade = "dobae"): number {
   return 2;
 }
 
+/** 재재 대화 → 공정 탭(이 기기에만 적어 둬요) */
+const CHAT_TRADE_KEY = (chatId: string) => `mj_ai_chat_trade_${chatId}`;
+
 export function ProjectFlow({ data }: { data: FlowData }) {
   const router = useRouter();
   const { p, ov, compare, schedule, visits, vendors, mokVendors, draft, mokDraft, today, std } = data;
   const pid = enc(p.id);
-  const now = stepOf(data);
-  // 목공도 하는 공사면 보드 머리에 목공 지금 칸도 같이(보드 칸 내용은 도배 기준)
-  const mokNow = ov.trades.some((t) => t.trade === "mokgong") ? stepOf(data, "mokgong") : null;
-  // 보드 칸 주소(?step, 옛 업체 · 실측 화면에서 넘어옴)로 오면 폰에서도 플랜을 펼쳐 그 칸을 바로 보여요(#221 리뷰)
-  const [open, setOpen] = useState(data.step != null);
+  // 공정 탭(2026-11-27 사용자): 공정이 둘 이상이면 탭마다 대화 · 보드 · 표준견적서를 따로 보여요. 고른 탭은 주소(?trade=)에 둬서 위 띠와 같이 써요
+  const sp = useSearchParams();
+  const pathname = usePathname();
+  const tradeKeys = (["mokgong", "dobae"] as Trade[]).filter((t) => ov.trades.some((x) => x.trade === t));
+  const multi = tradeKeys.length > 1;
+  const want = sp.get("trade");
+  const active: Trade = tradeKeys.includes(want as Trade) ? (want as Trade) : tradeKeys.includes("dobae") ? "dobae" : (tradeKeys[0] ?? "dobae");
+  const isMok = active === "mokgong";
+  // 주소만 바꿔요(서버에서 화면 값을 다시 읽지 않아 탭이 바로 바뀌어요). useSearchParams가 따라와요
+  const pickTrade = (t: Trade) => window.history.replaceState(null, "", `${pathname}?trade=${t}`);
+  const now = stepOf(data, active);
+  // 보드 칸(?step) · 업체 자세히(?vendor)로 넘어오면 폰에서도 플랜을 펼쳐 그 칸을 바로 보여요(#237 리뷰)
+  const [open, setOpen] = useState(data.step != null || !!data.openVendor);
   const [tab, setTab] = useState(data.step ?? Math.min(now, 7));
   const [stdOpen, setStdOpen] = useState(data.openStd && !!std);
   const [trade, setTrade] = useState<Trade>("dobae");
@@ -111,9 +128,14 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   /** AI 답에 나온 업체(보드에서 강조) */
   const [hi, setHi] = useState<string[]>([]);
   /** 업체 자세히 창(보드에서 업체 이름을 누르면) */
-  const [vOpen, setVOpen] = useState<VendorOpen>(null);
+  const [vOpen, setVOpen] = useState<VendorOpen>(data.openVendor ?? null);
   /** 재재 화면 창(기본 정보 · 공정표 · 채팅 · 리뷰 · 공사 일정 · 용어). 다른 화면으로 옮기지 않아요 */
-  const [win, setWin] = useState<Win>(null);
+  const [win, setWin] = useState<Win>(() => {
+    const w = data.openWin;
+    if (!w) return null;
+    if (w === "schedule") return { kind: "schedule", view: data.scheduleView ?? "dates" };
+    return { kind: w };
+  });
   /** 실측 요청 · 실측 취소 창(UC-VND-06) */
   const [cancel, setCancel] = useState<{ id: string; name: string; request: boolean } | null>(null);
   const [busyKey, setBusy] = useState<string | null>(null);
@@ -122,41 +144,104 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   const busy = busyKey ?? (refreshing ? "refresh" : null);
   const [err, setErr] = useState<string | null>(null);
   /** 보드에서 처리한 결과 한 줄(대화에 붙어요) */
-  const [done, setDone] = useState<string[]>([]);
+  const [doneAll, setDoneAll] = useState<{ text: string; trade: Trade }[]>([]);
+  const done = doneAll.filter((d) => d.trade === active).map((d) => d.text);
+  /** 보드에서 처리한 결과 줄은 그 일을 한 공정 탭에만 보여요 */
+  const setDone = (fn: (x: string[]) => string[]) => setDoneAll((all) => {
+    const mine = all.filter((d) => d.trade === active).map((d) => d.text);
+    const next = fn(mine);
+    return [...all.filter((d) => d.trade !== active), ...next.map((text) => ({ text, trade: active }))];
+  });
+  // 재재와 나눈 말은 공정 탭마다 따로(탭을 바꿔도 남아요)
   /** to: 이 답으로 고른 보드 칸(폰에서 '플랜에서 보기' 링크) */
-  const [asks, setAsks] = useState<{ q: string; out?: AiTurnOut; err?: string; to?: number }[]>([]);
-  const [chatId, setChatId] = useState<string | null>(null);
+  /** past: 새로고침 전에 나눈 답 글(서버에 저장된 대화를 다시 읽은 것, #225) */
+  type Ask = { q: string; out?: AiTurnOut; err?: string; to?: number; past?: string };
+  const [asksBy, setAsksBy] = useState<Partial<Record<Trade, Ask[]>>>({});
+  const asks = asksBy[active] ?? [];
+  const setAsks = (fn: (a: Ask[]) => Ask[]) => setAsksBy((m) => ({ ...m, [active]: fn(m[active] ?? []) }));
+  const [chatIds, setChatIds] = useState<Partial<Record<Trade, string>>>({});
+  const chatId = chatIds[active] ?? null;
+  const setChatId = (id: string) => {
+    setChatIds((m) => ({ ...m, [active]: id }));
+    // 이 대화가 어느 공정 탭 것인지 이 기기에 적어 둬요(새로고침 뒤 같은 탭에 다시 보여요)
+    try { window.localStorage.setItem(CHAT_TRADE_KEY(id), active); } catch { /* 못 적으면 도배 탭으로 */ }
+  };
+  // 새로고침 · 다시 들어와도 재재와 나눈 대화가 남게, 이 공사의 저장된 대화를 읽어 공정 탭마다 가장 최근 것 하나를 이어요(#225).
+  // 못 읽으면 빈 대화로 시작해요. 남의 공사 대화는 서버가 404라 오지 않아요.
+  // 다 읽기 전에는 묻지 않아요(읽는 중에 물으면 chat_id 없이 새 대화가 생겨 이전 대화가 가려져요, #244 리뷰)
+  const [restored, setRestored] = useState(false);
+  useEffect(() => {
+    let off = false;
+    (async () => {
+      let list: { chat_id: string; updated_at: string }[] = [];
+      try {
+        list = await call<{ chat_id: string; updated_at: string }[]>("GET", `/ai/threads?project_id=${pid}`);
+      } catch { /* 목록을 못 읽으면 빈 대화로 시작해요 */ }
+      const latest: Partial<Record<Trade, string>> = {};
+      for (const c of [...list].sort((a, b) => b.updated_at.localeCompare(a.updated_at))) {
+        let t: Trade = "dobae";
+        try { t = window.localStorage.getItem(CHAT_TRADE_KEY(c.chat_id)) === "mokgong" ? "mokgong" : "dobae"; } catch { /* 기본 도배 */ }
+        if (!latest[t]) latest[t] = c.chat_id;
+      }
+      // 공정마다 따로 읽어요(한 공정이 실패해도 다른 공정 대화는 살아요)
+      await Promise.all((Object.entries(latest) as [Trade, string][]).map(async ([t, id]) => {
+        let past: Ask[] = [];
+        try {
+          const d = await call<{ chat_id: string; messages: { role: "user" | "assistant"; text: string; turn: number }[] }>("GET", `/ai/threads/${enc(id)}`);
+          for (const m of [...d.messages].sort((a, b) => a.turn - b.turn)) {
+            if (m.role === "user") past.push({ q: m.text });
+            else if (past.length && past[past.length - 1].past == null) past[past.length - 1].past = m.text;
+          }
+        } catch { past = []; /* 글은 못 읽어도 같은 대화에 이어 물어요 */ }
+        if (off) return;
+        setAsksBy((m) => (m[t]?.length ? m : { ...m, [t]: past.map((x) => ({ ...x, past: x.past ?? "" })) }));
+        setChatIds((m) => (m[t] ? m : { ...m, [t]: id }));
+      }));
+      if (!off) setRestored(true);
+    })();
+    return () => { off = true; };
+  }, [pid]);
+  // 탭을 바꾸면 보드의 업체 · 실측 칸도 그 공정으로
+  useEffect(() => { setTrade(active); }, [active]);
   const [text, setText] = useState("");
   const end = useRef<HTMLDivElement>(null);
-  // 보드 칸 주소로 넘어온 첫 화면은 대화 끝으로 내리지 않아요(폰에서 위에 펼친 플랜이 가려져요). 묻거나 처리하면 다시 내려요
-  const toPlanFirst = useRef(data.step != null);
+  // 보드 칸(?step) · 업체 창(?vendor)으로 넘어온 첫 화면은 대화 끝으로 내리지 않아요(폰에서 위에 펼친 플랜이 가려져요, #237 리뷰)
+  const toPlanFirst = useRef(data.step != null || !!data.openVendor);
+  // 새로 물은 질문만 세요. 다시 불러온 예전 대화(past)는 넘어온 플랜을 가리지 않아요(#244 리뷰: 복원 뒤 폰에서 대화 끝으로 내려가던 것)
+  const fresh = asks.filter((a) => a.past == null).length;
   useEffect(() => {
-    if (toPlanFirst.current && !asks.length && !done.length) { window.scrollTo(0, 0); return; }
+    // 넘어온 뒤 묻거나 처리하기 전까지는 플랜이 보이게 두어요(개발 모드에서 두 번 돌아도 같아요)
+    if (toPlanFirst.current && !fresh && !done.length) { window.scrollTo(0, 0); return; }
     toPlanFirst.current = false;
     end.current?.scrollIntoView({ block: "end" });
-  }, [asks.length, now, done.length]);
+  }, [asks.length, fresh, now, done.length]);
   // 비교 칸에서 재재가 말한 업체가 보이게 옮겨요(업체 칸은 VendorRows가 옮겨요)
   useEffect(() => {
     if ((tab === 3 || tab === 4) && hi.length) requestAnimationFrame(() => document.querySelector("#jj-board [data-hi]")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
   }, [tab, hi]);
-  // 주소로 넘어온 값(?step 보드 칸 · ?open=standard 표준견적서 창)은 여기 한 곳에서 적용해요(#221 리뷰).
+  // 주소로 넘어온 값(?step 보드 칸 · ?vendor 업체 창 · ?open 창 · ?view 공사 일정 화면 · ?open=standard)은 여기 한 곳에서만 적용해요(#237 리뷰).
   // 재재 화면에 있는 채로 이런 주소로 다시 오면 화면을 새로 만들지 않아 useState 처음 값이 안 바뀌어요. 그래서 값이 바뀔 때마다
-  // 그 칸 · 창을 열고(폰은 플랜을 펼쳐요), 지금 단계 자동 이동이 덮지 않게 맞춘 뒤, 주소를 정리해요(새로고침 · 뒤로 가기에 다시 열리지 않게)
+  // ① 주소가 가리키는 칸 · 창만 열고(다른 창은 닫아요) ② 지금 단계(now) 자동 이동이 덮지 않게 맞춘 뒤 ③ 주소를 정리해요
   const lastNow = useRef(now);
-  const cameKey = data.step != null || data.openStd ? JSON.stringify([data.step, data.openStd]) : "";
+  const came = data.step != null || data.openVendor || data.openWin || data.openStd;
+  const cameKey = came ? JSON.stringify([data.step, data.openVendor?.vendorId, data.openVendor?.trade, data.openWin, data.scheduleView, data.openStd]) : "";
   useEffect(() => {
     if (!cameKey) return;
+    // 다른 공정 주소로 오면 공정 탭이 바뀌어 now도 같이 바뀌어요. 바로 뒤 now effect가 주소 칸을 지금 단계로 덮지 않게 맞춰 둬요
     lastNow.current = now;
-    if (data.step != null) {
-      setTab(data.step);
-      setOpen(true);
+    if (data.step != null) setTab(data.step);
+    setVOpen(data.openVendor ?? null);
+    setWin(data.openWin ? (data.openWin === "schedule" ? { kind: "schedule", view: data.scheduleView ?? "dates" } : { kind: data.openWin }) : null);
+    setStdOpen(data.openStd && !!std);
+    if (data.step != null || data.openVendor) {
+      setOpen(true); // 폰은 대화 위에 플랜을 펼쳐요
       requestAnimationFrame(() => document.getElementById("jj-board")?.scrollIntoView({ block: "start" }));
     }
-    if (data.openStd && std) setStdOpen(true);
-    router.replace(`/projects/${pid}/assistant`, { scroll: false });
+    // 한 번만 써요(새로고침 · 뒤로 가기에 다시 열리지 않게)
+    router.replace(`/projects/${pid}/assistant${multi ? `?trade=${active}` : ""}`, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 넘어온 값(cameKey)이 바뀔 때만
   }, [cameKey]);
-  // 단계가 넘어가면 보드도 지금 단계로 옮겨요. 지금 칸 값이 실제로 바뀔 때만(개발 모드 StrictMode는 effect를 두 번 돌려서 '처음 한 번 건너뛰기'로는 넘어온 칸이 지워져요)
+  // 단계가 넘어가면 보드도 지금 단계로 옮겨요. 지금 칸 값이 실제로 바뀔 때만(개발 모드 StrictMode는 effect를 두 번 돌려요)
   useEffect(() => { if (lastNow.current === now) return; lastNow.current = now; setTab(Math.min(now, 7)); }, [now]);
 
   /** 대화의 '오른쪽에서 보기': 보드를 그 단계로 바꾸고(폰은 펼쳐) 그 자리로 옮겨요 */
@@ -221,10 +306,10 @@ export function ProjectFlow({ data }: { data: FlowData }) {
     } catch (e) { setErr(errorText(e)); } finally { setBusy(null); }
   }
 
-  const asking = asks.length > 0 && !asks[asks.length - 1].out && !asks[asks.length - 1].err;
+  const asking = asks.length > 0 && !asks[asks.length - 1].out && !asks[asks.length - 1].err && asks[asks.length - 1].past == null;
   async function ask(q: string, button: AiButton | null = null, fromInput = false) {
     const t = q.trim().slice(0, 1000);
-    if (!t || asking) return; // 답을 기다리는 동안 새 질문을 막아요(답이 엇갈리지 않게 · 대화 하나로)
+    if (!t || asking || !restored) return; // 답을 기다리는 동안 · 이전 대화를 읽는 동안 새 질문을 막아요(답이 엇갈리지 않게 · 대화 하나로)
     if (fromInput) setText(""); // 입력칸에서 보낼 때만 비워요(질문 버튼은 글이 같아도 쓰던 글을 남겨요)
     setAsks((a) => [...a, { q: t }]);
     try {
@@ -243,7 +328,13 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   const vs = all.filter((v) => !CLOSED.includes(v.status));
   // 목공 실측(팀 피드백 5): 목공을 고른 공사만. 견적서 비교 · 확정은 아직 도배만이라 실측 칸까지만 보여요
   const mvs = mokVendors ? (visits?.visits ?? []).filter((v) => v.trade === "mokgong" && !CLOSED.includes(v.status)) : [];
-  const both = [...vs, ...mvs];
+  // 대화 카드는 고른 공정 탭 것만(공정이 하나면 그대로)
+  const both = multi ? (isMok ? mvs : vs) : [...vs, ...mvs];
+  const showDobae = !multi || !isMok;
+  const showMok = !multi || isMok;
+  // 공정별 표준견적서 금액(시장 단가 견적의 그 공정 합계). 없으면 전체 금액
+  const stdParts = multi && std?.parts && std.parts.parts.length > 1 ? std.parts : null;
+  const tradeStd = stdParts?.parts.find((x) => x.trade === active)?.quote.total ?? null;
   const mokPicked = listOf("mokgong").filter((v) => v.state === "ok" && v.shortlisted);
   const closed = all.filter((v) => CLOSED.includes(v.status));
   const ready = [...(vendors?.local ?? []), ...(vendors?.nearby ?? [])].filter((v) => v.state === "ok");
@@ -253,8 +344,8 @@ export function ProjectFlow({ data }: { data: FlowData }) {
     .sort((a, b) => Number(!!b.vendor_id && hi.includes(b.vendor_id)) - Number(!!a.vendor_id && hi.includes(a.vendor_id)));
   const extras = deal ? deal.extras.items.filter((i) => (i.answer === "pending" || i.answer === "asked") && !i.superseded) : [];
   // 표준견적서 금액은 창 · 비교 칸과 같은 값 하나(업체 견적서 시장 단가, #207). 부분 공사처럼 없을 때만 기존 표준견적서
-  // 목공도 하는 공사는 모든 공정 합계(부분 공사는 시장 단가가 없어 공정별 합계 sum)
-  const stdTotal = std ? (std.market?.total ?? std.view.sum?.total ?? std.view.total) : compare?.standard_total ?? null;
+  // 공정이 둘 이상이면 공종별 표준견적서를 합친 금액(서버 합계)
+  const stdTotal = std ? (std.parts && std.parts.parts.length > 1 ? std.parts.total : std.market?.total ?? std.view.sum?.total ?? std.view.total) : compare?.standard_total ?? null;
   const toPick = both.filter((v) => v.status === "offered" || v.status === "proposed");
   // 업체 답 · 실측 · 견적서를 기다리기만 하는 때(고를 것 · 볼 견적서 · 확정이 없을 때): 기다리는 동안 할 거리를 보여요(팀 피드백 4)
   const waiting = !deal && !toPick.length && !quoted.length && both.some((v) => ["requested", "picked", "booked", "visited"].includes(v.status));
@@ -266,15 +357,29 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   const cards: { key: string; alert?: boolean; node: ReactNode }[] = [];
   cards.push({ key: "home", node: (
     <>
-      <p>집 정보와 표준견적서는 끝났어요. 표준견적서 <b className="mj-num">{stdTotal != null ? won(stdTotal) : "—"}</b>(부가세 포함, 업체 견적이 아니에요).</p>
+      {tradeStd != null
+        ? <><p>집 정보와 표준견적서는 끝났어요. <b>{TRADE_WORD[active]}</b> 표준견적서 <b className="mj-num">{won(tradeStd)}</b>(업체 견적이 아니에요).</p><p className={s.why}>전체 표준견적서 <b className="mj-num">{stdTotal != null ? won(stdTotal) : "—"}</b>은 공종별 금액을 합친 금액이에요(부가세 포함).</p></>
+        : <p>집 정보와 표준견적서는 끝났어요. 표준견적서 <b className="mj-num">{stdTotal != null ? won(stdTotal) : "—"}</b>(부가세 포함, 업체 견적이 아니에요).</p>}
       {std ? <button type="button" className={s.boardLink} onClick={() => setStdOpen(true)}>표준견적서 바로 보기</button> : <Link href={`/projects/${pid}/standard`}>표준견적서 보기</Link>}
     </>
   ) });
-  if (ov.todo?.text) cards.push({ key: "todo", alert: true, node: <p><b>{ov.todo.text}</b></p> });
-  if (!vs.length && !deal && closed.length) {
+  // 지금 할 일은 그 공정 것만(다른 공정 할 일은 그 탭에서)
+  const myTodo = multi ? ov.trades.find((t) => t.trade === active)?.todo : ov.todo;
+  if (myTodo?.text) cards.push({ key: "todo", alert: true, node: <p><b>{myTodo.text}</b></p> });
+  // 공사 순서는 목공 → 도배(→ 바닥)예요. 앞 공정이 뒤처져 있으면 뒤 공정 탭에서 먼저 알려요(막지는 않아요)
+  const mokStep = multi ? stepOf(data, "mokgong") : 8;
+  if (multi && !isMok && mokStep < 6 && now > mokStep) {
+    cards.push({ key: "order", alert: true, node: (
+      <>
+        <p><b>공사 순서는 목공 → 도배예요.</b> 목공이 아직 <b>{PLAN_STEPS[Math.min(mokStep, 7)]}</b> 단계라 도배보다 뒤에 있어요. 목공(몰딩 · 걸레받이 · 문)을 도배 뒤에 하면 새 벽지가 상할 수 있어요.</p>
+        <button type="button" className={s.boardLink} onClick={() => pickTrade("mokgong")}>목공 먼저 진행하기</button>
+      </>
+    ) });
+  }
+  if (showDobae && !vs.length && !deal && closed.length) {
     cards.push({ key: "closed", alert: true, node: <p>{closed.map((v) => v.vendor_name).join(" · ")} 실측 요청은 닫혔어요(거절 · 기한 지남 등). 다른 업체를 담아 다시 물어봐 주세요.</p> });
   }
-  if (!vs.length && !deal) {
+  if (showDobae && !vs.length && !deal) {
     cards.push({ key: "vendors", node: (
       <>
         <p>{ready.length ? <>이 조건으로 가견적을 낸 업체가 <b>{ready.length}곳</b> 있어요.</> : "이 지역에 가견적을 낸 업체가 아직 없어요."} <b>가견적</b>은 업체가 확인한 단가로 믿집이 계산한 <b>실측 전 금액</b>이에요.</p>
@@ -284,14 +389,19 @@ export function ProjectFlow({ data }: { data: FlowData }) {
       </>
     ) });
   }
-  if (mokPicked.length && !mvs.length) {
+  if (multi && isMok && !mokPicked.length && !mvs.length) {
+    cards.push({ key: "mok-pick", node: <><p>목공 업체를 담아 주세요. 업체 줄의 <b>담기</b> 단추를 누르면 실측 날짜를 고를 수 있어요.</p>{go(2)}</> });
+  }
+  if (showMok && mokPicked.length && !mvs.length) {
     cards.push({ key: "mok", node: <><p>목공 <b>{mokPicked.length}곳</b>을 담았어요. 실측 칸에서 목공 날짜도 골라 바로 요청해요.</p>{go(3, "목공 실측 날짜 고르기")}</> });
   }
   for (const v of both) {
     if (v.status === "requested") cards.push({ key: v.id, node: <p><b>{v.vendor_name}</b>에 실측 날짜를 물어봤어요. 업체가 되는 기간을 보내면 먼저 알려 드릴게요. 궁금한 건 <button type="button" className={s.inlineLink} onClick={() => setWin({ kind: "chat", vendorName: v.vendor_name, visitId: v.id })}>업체 채팅</button>으로 물어보세요.</p> });
-    else if (v.status === "offered" || v.status === "proposed") cards.push({ key: v.id, alert: true, node: <><p><b>{iga(v.vendor_name)} {v.status === "proposed" ? "다른 실측 날을 제안했어요." : "실측 되는 날을 보냈어요."}</b> 내 도배 플랜에서 집에 계실 반나절을 골라 주세요.</p>{go(3)}</> });
+    else if (v.status === "offered" || v.status === "proposed") cards.push({ key: v.id, alert: true, node: <><p><b>{iga(v.vendor_name)} {v.status === "proposed" ? "다른 실측 날을 제안했어요." : "실측 되는 날을 보냈어요."}</b> 내 {TRADE_WORD[v.trade as Trade] ?? "도배"} 플랜에서 집에 계실 반나절을 골라 주세요.</p>{go(3)}</> });
     else if (v.status === "picked") cards.push({ key: v.id, node: <><p><b>{v.vendor_name}</b>에 고른 날을 보냈어요. 업체가 현장 정보를 보고 수락하면 실측이 확정돼요.</p><p className={s.why}>주차 · 엘리베이터 사정으로 업체가 다른 날을 제안하면 먼저 알려 드릴게요. 그 사이 <button type="button" className={s.inlineLink} onClick={() => setWin({ kind: "chat", vendorName: v.vendor_name, visitId: v.id })}>업체 채팅</button>으로 주고받을 수 있어요.</p></> });
-    else if (v.status === "booked") cards.push({ key: v.id, node: <><p><b>{v.vendor_name}</b> 실측이 잡혔어요. 실측 때 업체가 벽 크기와 상태를 재고 견적서를 보내요.</p><p className={s.why}>실측 전날: 가구 앞 벽이 보이게 비워 두고, 벽지 철거 · 폐기물이 견적에 들어가는지 물어보세요.</p></> });
+    else if (v.status === "booked") cards.push({ key: v.id, node: <>{v.trade === "mokgong"
+      ? <><p><b>{v.vendor_name}</b> 실측이 잡혔어요. 실측 때 업체가 몰딩 · 걸레받이 · 문 치수와 상태를 재고 견적서를 보내요.</p><p className={s.why}>실측 전날: 문과 벽 아래가 보이게 짐을 떼어 두고, 철거 · 폐기물이 견적에 들어가는지 물어보세요.</p></>
+      : <><p><b>{v.vendor_name}</b> 실측이 잡혔어요. 실측 때 업체가 벽 크기와 상태를 재고 견적서를 보내요.</p><p className={s.why}>실측 전날: 가구 앞 벽이 보이게 비워 두고, 벽지 철거 · 폐기물이 견적에 들어가는지 물어보세요.</p></>}</> });
     else if (v.status === "visited") cards.push({ key: v.id, node: <p><b>{v.vendor_name}</b> 실측을 마쳤어요. 실측 견적서를 기다리고 있어요.</p> });
   }
   if (waiting) {
@@ -301,17 +411,17 @@ export function ProjectFlow({ data }: { data: FlowData }) {
         <p>기다리는 동안 미리 해 두면 좋은 것들이에요. 다른 업체도 둘러보고 더 담으면 실측을 같이 물어볼 수 있어요(공정마다 3곳까지).</p>
         <div className={s.row}>
           <button type="button" className={s.boardLink} onClick={() => toBoard(2)}>다른 업체 둘러보기</button>
-          <button type="button" className={s.boardLink} onClick={() => setWin({ kind: "term", name: "실크 벽지" })}>벽지 자재 알아보기</button>
+          <button type="button" className={s.boardLink} onClick={() => setWin({ kind: "term", name: multi && isMok ? "천장 몰딩" : "실크 벽지" })}>{multi && isMok ? "몰딩 알아보기" : "벽지 자재 알아보기"}</button>
           <button type="button" className={s.boardLink} onClick={() => setWin({ kind: "plan" })}>공사 순서 다시 보기</button>
           {std ? <button type="button" className={s.boardLink} onClick={() => setStdOpen(true)}>표준견적서 다시 보기</button> : null}
         </div>
       </>
     ) });
   }
-  if (quoted.length && !deal) {
+  if (showDobae && quoted.length && !deal) {
     cards.push({ key: "compare", alert: true, node: <><p><b>실측 견적서가 {quoted.length}곳에서 도착했어요.</b> 표준견적서와 먼저 비교해 뒀어요. 내 도배 플랜에서 보고 확정해요.</p>{go(4)}</> });
   }
-  if (deal) {
+  if (showDobae && deal) {
     const d = deal.deal;
     cards.push({ key: "deal", node: <p><b>{euro(d.vendor_name)}</b> 확정했어요. 확정 금액 <b className="mj-num">{won(d.quote.total)}</b>.</p> });
     if (deal.dates_state === "waiting") cards.push({ key: "dates-wait", node: <p>{iga(d.vendor_name)} 공사 날짜를 올리면 알려 드릴게요.</p> });
@@ -342,8 +452,15 @@ export function ProjectFlow({ data }: { data: FlowData }) {
     if (d.status === "done") cards.push({ key: "review", node: d.review_open ? <><p><b>공사를 완료했어요.</b> 수고 많으셨어요. {d.vendor_name} 리뷰를 남기면 다음 고객이 업체를 고를 때 도움이 돼요.</p><button type="button" className={s.boardLink} onClick={() => setWin({ kind: "review" })}>리뷰 남기기</button></> : <p>리뷰까지 마쳤어요. 하자가 보이면 {d.vendor_name}에 채팅으로 알려 주세요. 수고 많으셨어요.</p> });
   }
 
+  // 공정마다 확정 견적이 모두 나오면 합친 최종 금액(서버 overview.money 값 그대로)
+  if (multi && ov.money.all_confirmed) {
+    cards.push({ key: "final", node: <p><b>최종 견적 합계 <span className="mj-num">{won(ov.money.total)}</span></b> · {ov.money.by_trade.map((m) => `${TRADE_WORD[m.trade as Trade] ?? m.trade} ${won(m.total)}`).join(" + ")}. 공종별 확정 견적서를 합친 금액이에요.</p> });
+  }
+
   // ── 오른쪽 보드: 단계별 고르기 · 단추 ──
   function board(step: number): ReactNode {
+    // 목공 탭: 견적서 비교부터는 아직 도배만 이 화면에서 해요(#206)
+    if (multi && isMok && step >= 4) return <p className={s.note}>목공 견적서 비교 · 확정 · 공사 일정은 이 화면에서 아직 준비 중이에요. 실측 칸까지 여기서 하고, 그 뒤는 업체 채팅과 내 공사 화면에서 이어 가요.</p>;
     if (step === 0) return (
       <>
         <Button size="sm" variant="secondary" onClick={() => setWin({ kind: "edit" })}>{p.locked ? "기본 정보 보기(요청 뒤라 잠겼어요)" : "기본 정보 고치기"}</Button>
@@ -352,13 +469,13 @@ export function ProjectFlow({ data }: { data: FlowData }) {
     );
     if (step === 1) return (
       <>
-        {std ? <Button size="sm" onClick={() => setStdOpen(true)}>표준견적서 보기 · {won(stdTotal ?? std.view.total)}</Button> : <Link href={`/projects/${pid}/standard`}>표준견적서 보기 · {stdTotal != null ? won(stdTotal) : "—"}</Link>}
+        {std ? <Button size="sm" onClick={() => setStdOpen(true)}>{tradeStd != null ? `${TRADE_WORD[active]} 표준견적서 보기 · ${won(tradeStd)}` : `표준견적서 보기 · ${won(stdTotal ?? std.view.total)}`}</Button> : <Link href={`/projects/${pid}/standard`}>표준견적서 보기 · {stdTotal != null ? won(stdTotal) : "—"}</Link>}
         <Button size="sm" variant="secondary" onClick={() => setWin({ kind: "plan" })}>예상 공정표 보기</Button>
       </>
     );
     if (step === 2) return (
       <>
-        {mokVendors ? (
+        {mokVendors && !multi ? (
           <div className={s.trades} role="tablist" aria-label="공정별 업체">
             {(["dobae", "mokgong"] as Trade[]).map((t) => {
               const n = listOf(t).filter((v) => v.shortlisted).length;
@@ -388,20 +505,20 @@ export function ProjectFlow({ data }: { data: FlowData }) {
     if (step === 3) return (
       <>
         {/* 아직 요청하지 않은 담은 업체(draft)에는 실측 요청 뒤에도 보낼 수 있어요 */}
-        {!deal && draft?.vendors.length ? (
+        {showDobae && !deal && draft?.vendors.length ? (
           <>
             {vs.length ? <p className={s.note}>아직 요청하지 않은 도배 업체 {draft.vendors.length}곳에도 보낼 수 있어요.</p> : null}
             <BoardVisitRequest pid={pid} trade="dobae" draft={draft} today={today} busy={busy} act={act} />
           </>
         ) : null}
-        {!vs.length && !deal && !draft?.vendors.length ? <p className={s.note}>먼저 업체 칸에서 도배 업체를 담아 주세요. <button type="button" className={s.boardLink} onClick={() => { setTrade("dobae"); setTab(2); }}>업체 칸으로</button></p> : null}
-        {mokVendors && mokDraft?.vendors.length ? (
+        {showDobae && !vs.length && !deal && !draft?.vendors.length ? <p className={s.note}>먼저 업체 칸에서 도배 업체를 담아 주세요. <button type="button" className={s.boardLink} onClick={() => { setTrade("dobae"); setTab(2); }}>업체 칸으로</button></p> : null}
+        {showMok && mokVendors && mokDraft?.vendors.length ? (
           <>
             {mvs.length ? <p className={s.note}>아직 요청하지 않은 목공 업체 {mokDraft.vendors.length}곳에도 보낼 수 있어요.</p> : null}
             <BoardVisitRequest pid={pid} trade="mokgong" draft={mokDraft} today={today} busy={busy} act={act} />
           </>
         ) : null}
-        {mokVendors && !mvs.length && !mokDraft?.vendors.length ? <p className={s.note}>목공 업체를 담으면 여기서 목공 실측 날짜도 골라요. <button type="button" className={s.boardLink} onClick={() => { setTrade("mokgong"); setTab(2); }}>목공 업체 칸으로</button></p> : null}
+        {showMok && mokVendors && !mvs.length && !mokDraft?.vendors.length ? <p className={s.note}>목공 업체를 담으면 여기서 목공 실측 날짜도 골라요. <button type="button" className={s.boardLink} onClick={() => { setTrade("mokgong"); setTab(2); }}>목공 업체 칸으로</button></p> : null}
         {toPick.map((v) => (
           <div key={v.id} data-hi={v.vendor_id && hi.includes(v.vendor_id) ? "1" : undefined}>
             {v.vendor_id && hi.includes(v.vendor_id) ? <span className={s.hiTag}>재재가 말한 업체</span> : null}
@@ -510,16 +627,26 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   }
 
   const auto: Record<number, string[]> = { 0: ["집 정보 정리"], 1: ["표준견적서 계산"], 2: vs.length ? ["업체에 실측 날짜 물어보기"] : [], 4: quoted.length ? ["견적서를 표준견적서와 비교"] : [], 5: deal ? ["확정 공정표 만들기"] : [] };
-  const terms = ["실크 벽지", "가견적", "실측 견적서", "보양", "하자담보책임기간"].map((n) => termByName(n)).filter((t) => t !== undefined);
+  const terms = (multi && isMok ? ["천장 몰딩", "걸레받이", "가견적", "실측 견적서", "하자담보책임기간"] : ["실크 벽지", "가견적", "실측 견적서", "보양", "하자담보책임기간"]).map((n) => termByName(n)).filter((t) => t !== undefined);
   // 입력칸 위 질문 버튼(#180): 마지막 답의 추천 질문, 없으면 지금 칸의 시작 질문. 물은 건 빼요
   const lastOut = [...asks].reverse().find((a) => a.out)?.out ?? null;
-  const quick = quickChips(now, asks.filter((a) => !a.err).map((a) => a.q), lastOut?.answer.suggest ?? null); // 오류로 끝난 질문은 다시 누를 수 있게 남겨요
+  const quick = quickChips(now, asks.filter((a) => !a.err).map((a) => a.q), lastOut?.answer.suggest ?? null, active); // 오류로 끝난 질문은 다시 누를 수 있게 남겨요
 
   return (
     <div className={s.page}>
-      <button type="button" className={s.planBar} aria-expanded={open} aria-controls="jj-board" onClick={() => setOpen((v) => !v)}><b>{Math.min(now + 1, 8)}/8 · 내 도배 플랜</b>{mokNow != null ? <span className={s.planMok}>목공 {Math.min(mokNow + 1, 8)}/8 · {PLAN_STEPS[Math.min(mokNow, 7)]}</span> : null}<span>{open ? "접기" : "보기"}</span></button>
+      <button type="button" className={s.planBar} aria-expanded={open} aria-controls="jj-board" onClick={() => setOpen((v) => !v)}><b>{Math.min(now + 1, 8)}/8 · 내 {TRADE_WORD[active]} 플랜</b><span>{open ? "접기" : "보기"}</span></button>
+      {/* 폰 · 태블릿: 위 띠가 숨겨져서 공정 탭을 여기 둬요(웹은 위 띠의 탭) */}
+      {multi ? (
+        <div className={s.flowTabs} role="tablist" aria-label="공정">
+          {tradeKeys.map((t) => (
+            <button key={t} type="button" role="tab" aria-selected={active === t} className={active === t ? `${s.flowTab} ${s.flowTabOn}` : s.flowTab} onClick={() => pickTrade(t)}>
+              {TRADE_WORD[t]} <span className="mj-num">{Math.min(stepOf(data, t) + 1, 8)}/8</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className={s.body}>
-        <section className={s.chat} aria-label="재재와 대화">
+        <section className={s.chat} aria-label={multi ? `재재와 대화 · ${TRADE_WORD[active]}` : "재재와 대화"}>
           <AiActionContext.Provider value={onAiAction}>
           <div className={s.msgs} role="log" aria-live="polite">
             {cards.map((c) => (
@@ -534,7 +661,7 @@ export function ProjectFlow({ data }: { data: FlowData }) {
               <div key={`a${i}`} className={s.msgs} style={{ padding: 0 }}>
                 <p className={s.me}>{a.q}</p>
                 <div className={s.bot}><div className={s.face}><Jaejae mouth={a.out ? "smile" : "flat"} /></div><div className={s.bubble}><span className={s.who}>재재</span>
-                  {a.out ? <><AiAnswer answer={a.out.answer} projectId={p.id} onPick={(q, b) => void ask(q, b ?? null)} />{a.to != null ? go(a.to) : null}</> : a.err ? <p className="mj-error">{a.err}</p> : <p className={s.typing}>줄자로 재는 중…</p>}</div></div>
+                  {a.past != null ? <p className={s.past}>{a.past || "답을 다시 불러오지 못했어요."}</p> : a.out ? <><AiAnswer answer={a.out.answer} projectId={p.id} onPick={(q, b) => void ask(q, b ?? null)} />{a.to != null ? go(a.to) : null}</> : a.err ? <p className="mj-error">{a.err}</p> : <p className={s.typing}>줄자로 재는 중…</p>}</div></div>
               </div>
             ))}
           </div>
@@ -542,20 +669,20 @@ export function ProjectFlow({ data }: { data: FlowData }) {
           <div className={s.dock}>
             {quick.length ? (
               <div className={s.quick} role="group" aria-label="이런 걸 물어보세요">
-                {quick.map((q) => <button key={q} type="button" className={s.chip} disabled={asking} onClick={() => void ask(q)}>{q}</button>)}
+                {quick.map((q) => <button key={q} type="button" className={s.chip} disabled={asking || !restored} onClick={() => void ask(q)}>{q}</button>)}
               </div>
             ) : null}
             <form className={s.input} onSubmit={(e) => { e.preventDefault(); void ask(text, null, true); }}>
               <label className="mj-sr" htmlFor="pflow-in">재재에게 물을 말</label>
               <textarea id="pflow-in" rows={1} maxLength={1000} value={text} placeholder="궁금한 걸 물어보세요. 예: 가견적이 비싼데 줄일 방법 없을까요?" onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(text, null, true); } }} />
-              <Button type="submit" disabled={!text.trim() || asking}>{asking ? "답 기다리는 중" : "보내기"}</Button>
+              <Button type="submit" disabled={!text.trim() || asking || !restored}>{!restored ? "대화 불러오는 중" : asking ? "답 기다리는 중" : "보내기"}</Button>
             </form>
           </div>
           {/* 새 말이 오면 여기까지 내려요. 입력칸(dock) 뒤에 두어 마지막 말풍선이 입력칸에 가려지지 않아요 */}
           <div ref={end} />
         </section>
-        <Plan now={now} scope={p.id} open={open} auto={auto} tab={tab} onTab={setTab} render={board}
+        <Plan title={`내 ${TRADE_WORD[active]} 플랜`} todo={multi && isMok ? MOK_TODO : undefined} now={now} scope={multi && isMok ? `${p.id}_mokgong` : p.id} open={open} auto={auto} tab={tab} onTab={setTab} render={board}
           extra={<div className={s.row}><button type="button" className={s.textBtn} onClick={() => setWin({ kind: "log" })}>결정 기록</button><button type="button" className={s.textBtn} onClick={() => setWin({ kind: "docs" })}>서류</button></div>} />
       </div>
       <div className={s.chips} aria-label="믿집 백과">
@@ -567,7 +694,7 @@ export function ProjectFlow({ data }: { data: FlowData }) {
       ) : null}
       <VendorDialog pid={pid} open={vOpen} onClose={() => setVOpen(null)} busy={busy} act={act}
         pick={pickOf(vOpen?.trade ?? "dobae")} />
-      {std ? <StandardDialog open={stdOpen} onClose={() => setStdOpen(false)} onPick={() => { setStdOpen(false); toBoard(2); }} data={std} pid={pid} locked={p.locked} basis={vendors?.standard_total ?? null}
+      {std ? <StandardDialog open={stdOpen} onClose={() => setStdOpen(false)} onPick={() => { setStdOpen(false); toBoard(2); }} data={std} pid={pid} locked={p.locked} basis={vendors?.standard_total ?? null} trade={multi ? active : undefined}
         onEdit={() => { setStdOpen(false); setWin({ kind: "edit" }); }} onPlan={() => { setStdOpen(false); setWin({ kind: "plan" }); }} /> : null}
       <Windows win={win} onClose={() => setWin(null)} onOpen={setWin} data={{ ...data.win, pid, projectId: p.id, today, locked: p.locked, schedule, startDate: deal?.deal.start_date ?? null }}
         onDone={(said) => { setWin(null); setDone((x) => [...x, said]); startRefresh(() => router.refresh()); }} />
