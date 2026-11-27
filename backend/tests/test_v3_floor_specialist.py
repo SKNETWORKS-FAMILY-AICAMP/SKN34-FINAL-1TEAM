@@ -11,11 +11,7 @@ def test_floor_folder_replaces_builtin_setting():
     assert [x.code for x in trades.SPECS].count("floor") == 1
     assert s.ko == "바닥" and s.depth == "knowledge" and not s.calc  # 계산 엔진이 붙기 전
     assert s.check_where == "실측 때 바닥 업체"
-    assert [x.key for x in s.slots] == [
-        "floor.kind", "floor.maru_type", "floor.sheet_thick", "floor.existing",
-        "floor.remove", "floor.baseboard", "floor.threshold",
-    ]  # fmt: skip
-    assert all(x.options[-1] in ("아직 몰라요", "잘 몰라요") for x in s.slots)
+    assert s.slots == ()  # 되묻기 칸은 쓰는 곳(바닥 되묻기 도구)과 같이 더해요
     sp = registered()["floor"]
     assert sp.retrieve and sp.run and sp.prompt_path and sp.prompt_path.is_file()
 
