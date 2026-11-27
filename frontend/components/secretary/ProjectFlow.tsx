@@ -20,6 +20,7 @@ import type { ProjectVendors, ProjectVisits, VisitDraft, VisitProject } from "@/
 import { call, errorText, type Schemas } from "@/lib/backend/client";
 import { dateShort, euro, won } from "@/lib/format";
 import { termByName, termHref } from "@/lib/guide";
+import { attachTargets } from "./attach";
 import { quickChips } from "./chips";
 import { Jaejae } from "./Jaejae";
 import { Plan } from "./Plan";
@@ -73,8 +74,9 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   const [asks, setAsks] = useState<{ q: string; out?: AiTurnOut; err?: string }[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [attach, setAttach] = useState(false);
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [asks.length, now]);
+  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [asks.length, now, attach]); // 사진 칸을 열면 입력칸이 높아져서 다시 내려요
 
   async function act(key: string, fn: () => Promise<unknown>) {
     if (busy) return;
@@ -239,6 +241,10 @@ export function ProjectFlow({ data }: { data: FlowData }) {
   // 입력칸 위 질문 버튼(#180): 마지막 답의 추천 질문, 없으면 지금 칸의 시작 질문. 물은 건 빼요
   const lastOut = [...asks].reverse().find((a) => a.out)?.out ?? null;
   const quick = quickChips(now, asks.filter((a) => !a.err).map((a) => a.q), lastOut?.answer.suggest ?? null); // 오류로 끝난 질문은 다시 누를 수 있게 남겨요
+  // 사진 · 문서 버튼(#181 1단계): 재재는 아직 사진을 보지 않아서, 사진을 받는 업체 채팅으로 이어 줘요
+  // 채팅 id는 요청 목록(visits)이 아니라 요청판(board) 줄에 있어요. 닫힌 요청은 빼요
+  const boardOpen = (visits?.board ?? []).filter((r) => !CLOSED.includes(r.status)).map((r) => ({ vendor_name: r.vendor_name, thread_id: r.thread_id ?? null }));
+  const targets = attachTargets(deal ? { vendor_name: deal.deal.vendor_name, thread_id: deal.deal.thread_id ?? null } : null, boardOpen);
 
   return (
     <div className={s.page}>
@@ -275,7 +281,13 @@ export function ProjectFlow({ data }: { data: FlowData }) {
                 {quick.map((q) => <button key={q} type="button" className={s.chip} disabled={asking} onClick={() => void ask(q)}>{q}</button>)}
               </div>
             ) : null}
+            <div id="pflow-attach" className={s.attach} role="group" aria-label="사진 보내기" hidden={!attach}>
+              {targets.length ? targets.map((t) => <Button key={t.href} size="sm" variant="weak" href={t.href}>{t.label}</Button>)
+                : <p className={s.note}>{vs.length ? "업체와 실측 날짜가 확정되면 그 업체 채팅에서 사진을 보낼 수 있어요." : "업체에 실측을 요청할 때 집 사진을 붙여 보낼 수 있어요. 실측 날짜가 확정되면 그 업체 채팅에서도 보낼 수 있어요."}</p>}
+              <p className={s.note}>재재는 아직 사진을 보고 답하지 못해요. 사진 속 동 · 호수 · 얼굴은 가리고 보내 주세요.</p>
+            </div>
             <form className={s.input} onSubmit={(e) => { e.preventDefault(); void ask(text, null, true); }}>
+              <button type="button" className={s.clip} aria-expanded={attach} aria-controls="pflow-attach" onClick={() => setAttach((v) => !v)}>사진</button>
               <label className="mj-sr" htmlFor="pflow-in">재재에게 물을 말</label>
               <textarea id="pflow-in" rows={1} maxLength={1000} value={text} placeholder="궁금한 걸 물어보세요. 예: 가견적이 비싼데 줄일 방법 없을까요?" onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask(text, null, true); } }} />
